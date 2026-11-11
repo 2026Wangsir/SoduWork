@@ -51,6 +51,7 @@ export default function ModelCatalog() {
   const [editP, setEditP] = useState(null)     // provider | 'new'
   const [addM, setAddM] = useState(null)       // {providerId, model?}
   const [del, setDel] = useState(null)         // {kind:'p'|'m', id, name}
+  const [discover, setDiscover] = useState(null)  // provider whose upstream list to import
   const [defaultOpen, setDefaultOpen] = useState(false)
   // Keep provider cards compact and expand model lists on demand.
   const [expandedProviders, setExpandedProviders] = useState(() => new Set())
@@ -168,6 +169,7 @@ export default function ModelCatalog() {
               <footer className="model-provider-actions admin-card-actions">
                 <div className="model-card-action-group">
                   <button type="button" className="admin-card-action is-primary" onClick={() => setAddM({ providerId: p.id })}><Icon name="plus" />{tx("加模型")}</button>
+                  <button type="button" className="admin-card-action" onClick={() => setDiscover(p)}><Icon name="search" />{tx("发现模型")}</button>
                   <button type="button" className="admin-card-action" onClick={() => setEditP(p)}><Icon name="settings" />{tx("配置服务")}</button>
                   <button type="button" className="admin-card-action" onClick={() => toggleP(p)}>{p.enabled ? tx("停用服务") : tx("启用服务")}</button>
                 </div>
@@ -197,6 +199,8 @@ export default function ModelCatalog() {
         }} />}
       {addM && <ModelForm providerId={addM.providerId} initial={addM.model || null}
         onClose={() => setAddM(null)} onSaved={() => { setAddM(null); load() }} />}
+      {discover && <DiscoverForm provider={discover}
+        onClose={() => setDiscover(null)} onSaved={() => { setDiscover(null); load() }} />}
       {del && <Confirm title={del.kind === 'p' ? tx("删除模型服务") : tx("删除模型")} danger confirmText={tx("删除")}
         text={del.kind === 'p'
           ? tx("确定删除「{0}」？它底下的模型会一起删掉，正在用这些模型的人会挑不到。", [del.name])
@@ -480,6 +484,82 @@ function ModelForm({ providerId, initial, onClose, onSaved }) {
           <div className="muted" style={{ fontSize: 14.5, marginTop: 6, lineHeight: 1.7 }}>{tx("可配置尺寸、时长、清晰度、比例等服务参数；每次调用仍可覆盖这些默认值。")}</div></div>
       </>}
       <div className="muted" style={{ fontSize: 14.5, marginTop: 10, lineHeight: 1.7 }}>{tx("密钥配置在模型服务上，这个服务底下的所有模型共用。")}</div></div>
+    </Modal>
+  )
+}
+
+function DiscoverForm({ provider, onClose, onSaved }) {
+  const uiLocale = useLocale();
+  const [phase, setPhase] = useState('loading')   // loading | ready | empty | error
+  const [rows, setRows] = useState([])            // [{name, checked}]
+  const [detail, setDetail] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    api.discoverModels(provider.id)
+      .then((r) => {
+        if (!alive) return
+        if (!r.ok) { setDetail(r.detail || tx("读取失败")); setPhase('error'); return }
+        const list = (r.models || []).map((name) => ({ name, checked: true }))
+        if (list.length === 0) { setPhase('empty'); return }
+        setRows(list); setPhase('ready')
+      })
+      .catch((e) => { if (alive) { setDetail(String(e && e.message || e)); setPhase('error') } })
+    return () => { alive = false }
+  }, [provider.id])
+
+  const checkedCount = rows.filter((r) => r.checked).length
+  function toggleAll(next) { setRows((current) => current.map((r) => ({ ...r, checked: next }))) }
+
+  async function importSelected() {
+    const picked = rows.filter((r) => r.checked)
+    if (picked.length === 0) { toast(tx("先勾选要添加的模型")); return }
+    setBusy(true)
+    let added = 0, failed = 0
+    for (const row of picked) {
+      try {
+        await api.saveModelDef({ providerId: provider.id, name: row.name,
+          label: row.name, expectedRevision: 'new', enabled: true })
+        added += 1
+      } catch (e) { failed += 1 }
+    }
+    setBusy(false)
+    toast(failed === 0
+      ? tx("已添加 {0} 个模型", [added])
+      : tx("添加了 {0} 个，{1} 个失败", [added, failed]))
+    if (added > 0) onSaved(); else onClose()
+  }
+
+  return (
+    <Modal title={tx("从服务发现模型")} icon="search" onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>{tx("关闭")}</button>
+        {phase === 'ready' && <button className="btn btn-primary" disabled={busy || checkedCount === 0}
+          onClick={importSelected}>{busy ? tx("添加中…") : tx("添加选中的 {0} 个", [checkedCount])}</button>}</>}>
+      <div className="model-config-form">
+        <div className="muted" style={{ fontSize: 14.5, lineHeight: 1.7, marginBottom: 10 }}>
+          {tx("列出「{0}」上游提供的模型标识，勾选后加入目录；已存在的不会重复出现。", [provider.name || provider.id])}
+        </div>
+        {phase === 'loading' && <Loading />}
+        {phase === 'error' && <div className="model-discover-note">{detail}</div>}
+        {phase === 'empty' && <div className="model-discover-note">{tx("这个服务的模型都已经在目录里了。")}</div>}
+        {phase === 'ready' && <>
+          <div className="model-discover-toolbar">
+            <button type="button" className="admin-card-action" onClick={() => toggleAll(true)}>{tx("全选")}</button>
+            <button type="button" className="admin-card-action" onClick={() => toggleAll(false)}>{tx("全不选")}</button>
+            <span className="muted">{tx("共 {0} 个", [rows.length])}</span>
+          </div>
+          <div className="model-discover-list" role="region" tabIndex={0} aria-label={tx("发现的模型列表")}>
+            {rows.map((row) => (
+              <label className="model-discover-row" key={row.name}>
+                <input type="checkbox" checked={row.checked}
+                  onChange={(e) => setRows((current) => current.map((r) => r.name === row.name ? { ...r, checked: e.target.checked } : r))} />
+                <code title={row.name}>{row.name}</code>
+              </label>
+            ))}
+          </div>
+        </>}
+      </div>
     </Modal>
   )
 }

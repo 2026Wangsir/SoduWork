@@ -21,6 +21,7 @@ import mailSettings from './mail-settings.js'
 import runtime from './runtime.js'
 import adminUiFollowup from './admin-ui-followup.js'
 import modelCapabilities from './model-capabilities.js'
+import modelDiscovery from './model-discovery.js'
 import supplement0 from './supplement-1.js'
 import supplement1 from './supplement-2.js'
 import supplement2 from './supplement-3.js'
@@ -30,4 +31,4 @@ import part0 from './messages-1.js'
 import part1 from './messages-2.js'
 import part2 from './messages-3.js'
 import part3 from './messages-4.js'
-export const messages = Object.assign({}, automationTemplates, part0, part1, part2, part3, supplement0, supplement1, supplement2, supplement3, supplement4, runtime, adminUiFollowup, modelCapabilities, orgMemory, requirementGovernance, requirementCollaboration, publicPages, pluginAccess, pluginLocales, cloudRunnerManagement, connectorManagement, repositoryIssueSync, mailSettings, quotaManagement, accessCatalog, operationsOverview, governanceOverview, insightsMetrics, usageCenter, modelRuntimeOverview, capabilityCatalog, legalDocuments)
+export const messages = Object.assign({}, automationTemplates, part0, part1, part2, part3, supplement0, supplement1, supplement2, supplement3, supplement4, runtime, adminUiFollowup, modelCapabilities, modelDiscovery, orgMemory, requirementGovernance, requirementCollaboration, publicPages, pluginAccess, pluginLocales, cloudRunnerManagement, connectorManagement, repositoryIssueSync, mailSettings, quotaManagement, accessCatalog, operationsOverview, governanceOverview, insightsMetrics, usageCenter, modelRuntimeOverview, capabilityCatalog, legalDocuments)
