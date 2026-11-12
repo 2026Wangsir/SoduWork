@@ -688,6 +688,16 @@
     _rememberConversationDraft();
     if (!first && !chatId && !_ref && _sessionId) chatId = _sessionId;
     const launchOptions = { ...(options || {}) };
+    if (!first && chatId && !launchOptions.taskRef && !launchOptions.taskSession && !launchOptions.requireTaskBinding && _api()?.openApplication) {
+      const capturedEpoch = _viewEpoch;
+      const result = await _api().openApplication(String(chatId)).catch(error => ({ ok: false, reason: error.message }));
+      if (capturedEpoch !== _viewEpoch) return false;
+      if (!result?.ok || result.handled) {
+        if (!result?.ok) global.petSay?.(result?.reason || '应用会话暂时无法打开');
+        return false;
+      }
+    }
+
     // Repaint the last known transcript while the native handle is reattached.
     // Local and cloud handles are both re-attachable, so the loading skeleton
     // should only be used when this conversation has never been rendered here.

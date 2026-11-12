@@ -53,13 +53,23 @@
   }
 
   async function followSession(sessionId) {
-    if (!sessionId || sessionId === currentSessionId) return;
-    try {
-      if (global.NativeChat && typeof NativeChat.enter === 'function' && await NativeChat.enter('', sessionId)) currentSessionId = sessionId;
-    } catch (_) { /* The conversation may already be closed; retain current state. */ }
+    if (!sessionId) return false;
+    await ready;
+    await global.SoduWorkAppConversations?.ready();
+    if (global.NativeChat?.sessionInfo?.().sessionId === sessionId) return true;
+    if (global.NativeChat && typeof NativeChat.enter === 'function' && await NativeChat.enter('', sessionId)) {
+      currentSessionId = sessionId;
+      return true;
+    }
+    return false;
   }
 
-  api.workPreview.onComposerSession(({ sessionId }) => { void followSession(sessionId); });
+  api.workPreview.onComposerSession(async ({ sessionId, navigationId }) => {
+    let ok = false, reason = '';
+    try { ok = await followSession(sessionId); }
+    catch (error) { reason = String(error.message || error); }
+    if (navigationId) await api.workPreview.composerNavigationResult({ id: navigationId, sessionId, ok, reason });
+  });
   api.workPreview.onComposerPut((payload) => { if (payload.text) fill(payload.text, payload.append); });
   // Serialize admission, not execution: rapid page clicks must observe the
   // preceding submission's busy state before choosing their conversation.

@@ -370,6 +370,20 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
    * accept renderer-supplied file paths.
    */
   pluginDraft.installIpc(ipcMain, session, app);
+  const applicationEntries = require('../conversation/app-entry.cjs').create({ app, session,
+    identityOf: sendIdentityOf || identityOf, preview: require('../work-preview'),
+    history: _sharedHistory, accountHistory: _accountSync,
+    reattach: (handle, sender, origin) => {
+      require('./app-mcp-grant.cjs').bind(handle, sender, origin.pluginId, app, { identityOf: sendIdentityOf || identityOf });
+      _attach(handle, require('../conversation/app-surfaces.cjs').forSender(BrowserWindow, sender));
+      _wire(BrowserWindow, handle);
+      _push(BrowserWindow, handle, { kind: 'application-navigation' }, handle.snapshot());
+    } });
+  ipcMain.handle('pi-session-open-application', async (event, id) => {
+    try { return await applicationEntries.navigate(event, id); }
+    catch (error) { return { ok: false, reason: String(error.message || error) }; }
+  });
+
   async function openConversation(event, raw, expectedIdentity, automationContext) {
     const preview = require('../work-preview');
     const appRequest = raw?.appRequestId ? preview.appRequestContext(event, raw.appRequestId) : null;
@@ -579,6 +593,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
           ].map((item) => String(item || '').trim()).filter(Boolean));
           if (!opts.requireTaskBinding || !requestedTaskId || boundTaskIds.has(requestedTaskId)) {
             await assertHistoryCurrent();
+            if (preview.appConversationOrigin?.(event?.sender)) await applicationEntries.remember(live, event?.sender, identity);
             require('./app-mcp-grant.cjs').bind(live, event?.sender, appPluginId, app, { identityOf: sendIdentityOf || identityOf });
             _bindUsage(live, identity, live.usageAgentKey || opts.adapterId || 'pi');
             if (event) _attach(live, require('../conversation/app-surfaces.cjs').forSender(BrowserWindow, event.sender));
@@ -866,6 +881,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
         require('../conversation/requirement-context').assertOwner(app, opened.session, identity);
         accessConsent?.assertValid();
         await assertHistoryCurrent();
+        if (preview.appConversationOrigin?.(event?.sender)) await applicationEntries.remember(opened.session, event?.sender, identity);
         require('./app-mcp-grant.cjs').bind(opened.session, event?.sender, appPluginId, app, { identityOf: sendIdentityOf || identityOf });
         _bindUsage(opened.session, identity, opts.adapterId || 'pi');
         if (event) _attach(opened.session, require('../conversation/app-surfaces.cjs').forSender(BrowserWindow, event.sender));
@@ -886,7 +902,17 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       accessConsent?.finish();
     }
   }
-  ipcMain.handle('pi-session-open', (event, raw) => openConversation(event, raw));
+  ipcMain.handle('pi-session-open', async (event, raw) => {
+    // Only foreground history navigation redirects. Runner, automation and
+    // requirement binding calls retain their execution/open contracts.
+    if (raw?.chatId && !raw.taskRef && !raw.taskSession && !raw.requireTaskBinding && !raw.appRequestId) {
+      try {
+        const result = await applicationEntries.navigate(event, raw.chatId);
+        if (!result.ok || result.handled) return { ...result, applicationOpened: result.handled === true };
+      } catch (error) { return { ok: false, reason: String(error.message || error) }; }
+    }
+    return openConversation(event, raw);
+  });
   /*
    * Immediate automation runs are opened by the schedule renderer after the Hub
    * has durably claimed the occurrence.  Keep the renderer's trusted event (so
@@ -1228,7 +1254,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
   ipcMain.handle('pi-session-release', (event, ref) => {
     const s = session.get(ref);
     if (!s) return { ok: true, kept: false };
-    _detach(s);
+    if (event.senderFrame === event.sender?.mainFrame && s.attachedWindow?.webContents === event.sender) _detach(s);
     return { ok: true, kept: true, active: _isActive(s), sessionId: s.sessionId };
   });
 

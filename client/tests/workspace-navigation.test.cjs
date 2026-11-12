@@ -31,6 +31,36 @@ function setup() {
     switchOwner: value => { owner = value; scope = 'scope-' + value; } };
 }
 
+test('application history navigation leaves the main page, draft and attachment untouched', async () => {
+  const f = setup(), opens = [], navigated = [];
+  f.shell.active = 'skills';
+  f.global.soduWorkAPI.conversationSession = { openApplication: async id => {
+    navigated.push(id); return { ok: true, handled: id === 'app-chat' };
+  } };
+  await f.navigation.record('skills');
+  assert.equal(await f.navigation.open('create', { chatId: 'app-chat', taskSession: true }, (...args) => opens.push(args)), true);
+  assert.deepEqual(opens, []); assert.equal(f.state.resolve({ panel: 'workspace' }).view, 'skills');
+  await f.navigation.open('create', { chatId: 'ordinary-chat' }, (...args) => opens.push(args));
+  assert.equal(opens.length, 1); assert.equal(opens[0][1].chatId, 'ordinary-chat');
+  assert.deepEqual(navigated, ['app-chat', 'ordinary-chat']);
+  await f.navigation.open('create', { chatId: 'app-chat', taskSession: true, taskId: 'bound-task' }, (...args) => opens.push(args));
+  assert.equal(opens.length, 2); assert.equal(navigated.length, 2, 'explicit requirement navigation keeps its binding flow');
+});
+
+test('denied or stale application navigation never opens an empty main chat or overrides a later page', async () => {
+  const f = setup(), opens = [], errors = [];
+  f.global.petSay = reason => errors.push(reason);
+  let resolve;
+  f.global.soduWorkAPI.conversationSession = { openApplication: () => new Promise(done => { resolve = done; }) };
+  const pending = f.navigation.open('create', { chatId: 'app-chat' }, (...args) => opens.push(args));
+  f.navigation.open('skills', {}, (...args) => opens.push(args));
+  resolve({ ok: true, handled: false });
+  assert.equal(await pending, false); assert.deepEqual(opens.map(row => row[0]), ['skills']);
+  f.global.soduWorkAPI.conversationSession.openApplication = async () => ({ ok: false, reason: 'App unavailable' });
+  assert.equal(await f.navigation.open('create', { chatId: 'app-chat' }, (...args) => opens.push(args)), false);
+  assert.deepEqual(errors, ['App unavailable']); assert.equal(opens.length, 1);
+});
+
 test('conversation snapshots contain identity, chat id and reading position, never messages', async () => {
   const { state, navigation } = setup();
   await navigation.record('create');

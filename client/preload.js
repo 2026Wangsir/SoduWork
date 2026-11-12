@@ -25,6 +25,7 @@ function timedPageInvoke(channel, ...args) {
  * Expose a runtime-neutral conversation facade; retain piSession as a compatibility alias.
  */
 const conversationSession = {
+  openApplication: sessionId => ipcRenderer.invoke('pi-session-open-application', sessionId),
   localHistorySupported: true,
   probe: (adapterId) => ipcRenderer.invoke('pi-session-probe', adapterId || 'pi'),
   runtimes: options => timedPageInvoke('pi-session-runtimes', options || {}),
@@ -181,6 +182,7 @@ const workPreview = {
   composerDock: (opts) => ipcRenderer.invoke('work-preview-composer-dock', opts || {}),
   composerStep: (payload) => ipcRenderer.invoke('work-preview-composer-step', payload || {}),
   composerSent: () => ipcRenderer.invoke('work-preview-composer-sent'),
+  composerNavigationResult: result => ipcRenderer.invoke('app-composer-navigation-result', result),
   onComposerSession: (cb) => ipcRenderer.on('app-composer-session', (_e, msg) => { try { cb(msg || {}); } catch (_) {} }),
   onComposerPut: (cb) => ipcRenderer.on('app-composer-put', (_e, msg) => { try { cb(msg || {}); } catch (_) {} }),
   onComposerMode: (cb) => ipcRenderer.on('app-composer-mode', (_e, msg) => { try { cb(msg || {}); } catch (_) {} }),
