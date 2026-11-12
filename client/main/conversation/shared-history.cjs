@@ -4,12 +4,14 @@ const path = require('node:path');
 const access = require('./history-access');
 const { accountId } = require('../device-auth-request');
 
-function create({ app, session, store = require('./replica-store.cjs').createWorker(
+function create({ app, session, identityOf = () => require('./requirement-context').cachedIdentity(app), store = require('./replica-store.cjs').createWorker(
   path.join(app.getPath('userData'), 'conversation-replicas', 'history.sqlite')) }) {
   const observed = new Map();
   let closed = false, closing;
   const localReader = require('../app-readonly-history.cjs').create({ app, session, localOnly: true,
-    access: { actor: () => ({}), assertCurrent() {}, assertOwner: access.assertReadable } });
+    access: { actor: () => access.actor(app, identityOf()),
+      // The outer reader fences protected pages; ordinary archives stay offline-readable.
+      assertCurrent() {}, assertOwner: access.assertReadable } });
   const isNative = row => row && !row.accountProjection && !row.remoteProjection && !row.cloud;
   async function register(rows) {
     const result = [];
@@ -30,7 +32,8 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     const registered = await register(native);
     const byId = new Map();
     for (const row of registered) for (const id of [row.id, ...row.historyAliasIds]) byId.set(id, row);
-    return rows.map(row => byId.get(row.id) || row).filter(row => !row.deleted && (row.archived === true) === archived);
+    return access.visible(app, rows.map(row => byId.get(row.id) || row), identityOf())
+      .filter(row => !row.deleted && (row.archived === true) === archived);
   }
   async function resolve(id) {
     let row = await store.get(id);
@@ -46,12 +49,17 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     return (await register([native]))[0];
   }
   async function lifecycle(id, action, identity) {
+    const captured = access.actor(app, identity || identityOf());
     const row = await resolve(id);
     if (!row) return null;
+    if (!isLocalIdentity(row, id)) return null;
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    access.assertLocalMutation(app, row.id, captured, row);
     for (const alias of [row.id, ...row.historyAliasIds]) {
       if (session.findBySessionId(alias)?.inFlight?.()) throw Error('这条会话还在执行，完成或停止后再操作');
     }
-    return store.lifecycle(row.id, action, { account: accountId(identity), hub: identity?.hub, device: identity?.clientId });
+    const who = captured.identity;
+    return store.lifecycle(row.id, action, { account: accountId(who), hub: who?.hub, device: who?.clientId });
   }
   async function remoteLifecycle(rows, identity = require('./requirement-context').cachedIdentity(app)) {
     const remote = rows.filter(row => row.cloud || row.remoteProjection || row.accountProjection);
@@ -93,12 +101,16 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     return [...states.values()];
   }
   async function read(id, options = {}) {
+    const captured = access.actor(app, identityOf());
     const row = await resolve(id);
     if (!row || row.deleted) throw Error('这条会话已经不存在了');
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    access.assertReadable(app, row.id, captured, row);
     const after = Number(options.after || 0);
     if (!Number.isSafeInteger(after) || after < 0) throw Error('Invalid local history cursor');
     if (row.cached) {
       const page = await store.messages(row.id, { after: after - 1, limit: options.limit || 100 });
+      access.assertLocalCurrent(app, captured, row, identityOf());
       return { ...page, nextCursor: page.next == null ? null : page.next + 1, cursor: page.items.at(-1)?.position + 1 || after };
     }
     // Encode the segment in the cursor so phones and passive desktop views
@@ -110,6 +122,7 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     if (segment >= parts.length) throw Error('Invalid local history segment');
     const page = await localReader('conversations.read', { id: row.id, offset, after: offset,
       limit: options.limit || 100, segmentId: parts[segment] });
+    access.assertLocalCurrent(app, captured, row, identityOf());
     const next = page.nextOffset ?? page.nextAfter;
     const cursor = segment * span + (page.cursor ?? offset + (page.items || []).length);
     return { ...page, cursor,
@@ -120,6 +133,7 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
   async function open(id) {
     const row = await resolve(id);
     if (!row || row.deleted) return null;
+    access.assertReadable(app, row.id, access.actor(app, identityOf()), row);
     return require('./local-history-view.cjs').create({ row, read });
   }
   async function preserveLegacyOutbox(job, identity) {
@@ -158,6 +172,8 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     const displayed = remote ? original : require('./acceptance-session').projectHistory(app, original);
     const [row] = await register([{ ...displayed, id, cloud: false, accountProjection: false,
       accountConversation: false,
+      ...(remote ? { historyProtection: 'account' } : {}),
+      ...(original.taskProjectionId && !original.taskId ? { taskId: original.taskProjectionId } : {}),
       remoteProjection: false, cached: !!remote, source: remote ? { hub: identity?.hub, id: original.id, account: accountId(identity) } : null,
       creator: { account: accountId(identity), hub: identity?.hub }, historyAliasIds: remote ? [] : original.historyAliasIds || [] }]);
     if (row.deleted || !remote) return;
@@ -221,18 +237,25 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
         refreshedAt = Date.now();
       }).finally(() => { refreshing = null; });
     await refreshing;
-    return { ...await store.directory(after, limit), workspace: await store.workspace() };
+    const page = await store.directory(after, limit), workspace = await store.workspace();
+    return { ...page, items: access.visible(app, page.items, identityOf()), workspace };
   }
   return { resolve, read, open, register, projectRows, lifecycle, remoteLifecycle, capture, observe, store, directory, preserveLegacyOutbox,
-    list: options => store.list(options),
-    page: options => store.page(options),
+    async list(options) {
+      const page = await store.list(options);
+      return { ...page, items: access.visible(app, page.items, identityOf()) };
+    },
+    async page(options) {
+      const page = await store.page(options);
+      return { ...page, chats: await access.visibleAsync(app, page.chats, identityOf) };
+    },
     async indexedRows(archived, limit) {
       const items = []; let after;
       do {
         const page = await store.list({ archived, after, limit: Math.min(200, Math.max(1, limit - items.length)) });
-        items.push(...page.items); after = page.next;
+        items.push(...access.visible(app, page.items, identityOf())); after = page.next;
       } while (after && items.length < limit);
-      return items;
+      return access.visible(app, items, identityOf());
     },
     close() { return closing ||= (async () => {
       for (const entry of observed.values()) entry.dispose();

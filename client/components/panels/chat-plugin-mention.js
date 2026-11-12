@@ -83,7 +83,8 @@
     let loadedAt = 0;
     let failed = '';
     let warning = '';
-    let restoreToken = 0;
+    let catalogRevision = 0;
+    let destroyed = false;
     const inputDrafts = new Map();
     const initialActions = typeof o.actions === 'function' ? o.actions() : o.actions;
     actions = normalizeActions(initialActions);
@@ -314,12 +315,12 @@
       copy.className = 'nplugin-option-copy';
       const title = document.createElement('b');
       if (!isAction(item)) title.setAttribute('data-user-content', '');
-      title.textContent = isAction(item) ? '/' + item.command + ' · ' + item.name :
+      title.textContent = isAction(item) ? _uiText('/' + item.command) + ' · ' + _uiText(item.name) :
         (item.process && item.process.enterprise
         ? '【' + (item.process.label || _uiText('企业流程')) + '】' : '') + model.displayText(item, 'name', _uiText);
       const description = document.createElement('span');
       if (item.description) description.setAttribute('data-user-content', '');
-      description.textContent = model.displayText(item, 'description', _uiText) || (!isAction(item) &&
+      description.textContent = (isAction(item) ? _uiText(item.description) : model.displayText(item, 'description', _uiText)) || (!isAction(item) &&
         item.workflow.length ? item.workflow.map((step) => step.name).filter(Boolean).slice(0, 3).join(' · ')
           : '企业已发布的工作方法');
       copy.append(title, description);
@@ -384,7 +385,21 @@
       navigation.highlight(menu, input, '.nplugin-option', 'is-active', active, false);
     }
 
+    function reconcileSelection(payload) {
+      const byId = new Map(catalog.map(item => [item.pluginId, item]));
+      const removed = selected.filter(item => !byId.has(item.pluginId) &&
+        item.pluginId.startsWith('local:') && payload.personalComplete === true);
+      removed.forEach(item => {
+        inputDrafts.delete(item.pluginId);
+        eventRoot?.PluginInputSheet?.close(item.pluginId);
+      });
+      const missing = new Set(removed.map(item => item.pluginId));
+      selected = selected.filter(item => !missing.has(item.pluginId)).map(item => byId.get(item.pluginId) || item);
+      if (removed.length || selected.length) renderStrip();
+    }
+
     async function load(force) {
+      if (destroyed) return;
       if (loaded && !force) return;
       if (loading) return loadTask || undefined;
       loading = true;
@@ -393,16 +408,27 @@
         warning = '';
         renderMenu();
         try {
-          const actionPayload = typeof o.actions === 'function' ? await o.actions() : o.actions;
-          const actionRows = Array.isArray(actionPayload) ? actionPayload.slice() : [];
-          if (!actionRows.some((item) => String(item && (item.actionId || item.id) || '') ===
-              'work.plugin.create')) actionRows.push(pluginBuilderAction());
-          actions = normalizeActions(actionRows);
-          const payload = typeof o.catalog === 'function' ? await o.catalog() : { items: [] };
-          catalog = normalizeCatalog(payload);
-          warning = catalogWarning(payload);
-          loaded = true;
-          loadedAt = Date.now();
+          do {
+            const revision = catalogRevision;
+            const actionPayload = typeof o.actions === 'function' ? await o.actions() : o.actions;
+            if (destroyed) return;
+            const actionRows = Array.isArray(actionPayload) ? actionPayload.slice() : [];
+            if (!actionRows.some((item) => String(item && (item.actionId || item.id) || '') ===
+                'work.plugin.create')) actionRows.push(pluginBuilderAction());
+            actions = normalizeActions(actionRows);
+            let payload;
+            try { payload = typeof o.catalog === 'function' ? await o.catalog() : { items: [] }; }
+            catch (error) { if (revision !== catalogRevision) continue; throw error; }
+            if (destroyed) return;
+            // A mutation invalidates the whole response, including deleted entries.
+            if (revision !== catalogRevision) continue;
+            catalog = normalizeCatalog(payload);
+            warning = catalogWarning(payload);
+            loaded = true;
+            loadedAt = Date.now();
+            reconcileSelection(payload);
+            break;
+          } while (query || selected.length);
         } catch (error) {
           failed = String(error && error.message || error || '加载失败');
           if (catalog.length && failed) {
@@ -411,7 +437,7 @@
           }
         } finally {
           loading = false;
-          renderMenu();
+          if (!destroyed) renderMenu();
         }
       });
       loadTask = task;
@@ -493,7 +519,7 @@
     }
 
     async function choose(item, keepText = false) {
-      if (!item || !usable(item)) return;
+      if (destroyed || !item || !usable(item)) return;
       if (isAction(item)) {
         const detail = selectAction(item);
         close();
@@ -582,10 +608,21 @@
       if ((!target || typeof target.closest !== 'function' || !target.closest('.nplugin-menu'))
           && target !== input) close();
     };
-    const onCatalogChanged = () => {
+    const onCatalogChanged = event => {
+      catalogRevision += 1;
       loaded = false;
       loadedAt = 0;
-      if (query) load(true);
+      const removed = event?.detail?.removed === true ? String(event.detail.pluginId || '') : '';
+      if (removed) {
+        catalog = catalog.filter(item => item.pluginId !== removed);
+        inputDrafts.delete(removed);
+        eventRoot?.PluginInputSheet?.close(removed);
+        if (selected.some(item => item.pluginId === removed)) {
+          selected = selected.filter(item => item.pluginId !== removed);
+          renderStrip();
+        }
+      }
+      if (query || selected.length) void load(true);
     };
     const onLocaleChanged = () => { renderStrip(); renderMenu(); };
 
@@ -622,7 +659,7 @@
         // Plus-menu/programmatic selection preserves edits made while the catalog loads.
         // Slash-menu selection still consumes its explicit query through choose().
         const keepText = Boolean(options && options.keepText);
-        if (!current()) return null;
+        if (destroyed || !current()) return null;
         close();
         const key = String(pluginId || '');
         let action = actions.find((row) => row.actionId === key);
@@ -639,7 +676,7 @@
           return action;
         }
         await load(true);
-        if (!current()) return null;
+        if (destroyed || !current()) return null;
         action = actions.find((row) => row.actionId === key);
         if (action) {
           selectedAction = action;
@@ -661,7 +698,6 @@
       restore(items) {
         const source = Array.isArray(items) ? items : [];
         const ids = new Set(source.map((item) => String(item && item.pluginId || '')).filter(Boolean));
-        const token = ++restoreToken;
         source.forEach(item => {
           if (item?.pluginId && item.inputValues && typeof item.inputValues === 'object') {
             inputDrafts.set(item.pluginId, { ...item.inputValues });
@@ -693,17 +729,14 @@
         renderStrip();
         const catalogHasAll = [...ids].every((id) => catalog.some((item) => item.pluginId === id));
         if (!catalogHasAll && !loading) {
-          void load(true).then(() => {
-            if (token !== restoreToken) return;
-            const fresh = catalog.filter((item) => ids.has(item.pluginId)).slice(0, MAX_SELECTED);
-            if (fresh.length) { selected = fresh; renderStrip(); }
-          }).catch(() => {});
+          // Reconcile against the current draft only; a partial catalog cannot
+          // confirm deletion, and a late response must not restore cleared items.
+          void load(true);
         }
       },
       clear() {
         // Empty drafts need no repaint and must not close an open slash menu.
         if (!selected.length && !selectedAction) return;
-        restoreToken += 1;
         selected = [];
         selectedAction = null;
         inputDrafts.clear();
@@ -723,7 +756,6 @@
           .map(item => item.pluginId));
         const removable = [...ids].filter(id => !keepIds.has(id));
         if (!removable.length) { close(); return; }
-        restoreToken += 1;
         selected = selected.filter(item => !removable.includes(item.pluginId));
         removable.forEach(id => inputDrafts.delete(id));
         renderStrip();
@@ -736,6 +768,8 @@
         /* The picker returns display-safe selection data only. Electron main
            resolves ids, immutable versions, instructions and grants exactly
            once when the turn reaches the queue head. */
+        if (selected.length) await load(false);
+        if (destroyed) return null;
         const scopeProject = String(projectId || currentProjectId()).trim();
         const selectedForTurn = selected.slice();
         const blocked = selectedForTurn.map((item) => ({
@@ -755,7 +789,7 @@
         return {
           // Parameters travel as bounded turn data; the transcript keeps the user's text.
           text: originalText,
-          items: selectedForTurn.map((item) => ({
+          items: selectedForTurn.filter(item => selected.some(current => current.pluginId === item.pluginId)).map((item) => ({
             pluginId: item.pluginId,
             inputValues: { ...(turnValues.get(item.pluginId) || {}) },
             name: item.name,
@@ -765,6 +799,7 @@
         };
       },
       destroy() {
+        destroyed = true;
         input.removeEventListener('input', update);
         input.removeEventListener('click', update);
         input.removeEventListener('keydown', onKeydown, true);

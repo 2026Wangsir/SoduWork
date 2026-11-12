@@ -638,8 +638,9 @@ test('revoking execution visibility closes evidence and invalidates pending acti
 });
 
 test('automation uses fresh authorized requirements and opens the exact existing schedule', async () => {
-  let value = {...task('a'), canEditRequirement: true, title: 'Opened snapshot'};
-  const f = fixture({getTask: async () => value}), seeds = [], routes = [];
+  let value = {...task('a'), canEditRequirement: true, title: 'Opened snapshot', requirementVersion: 7};
+  const writes = [];
+  const f = fixture({getTask: async () => value, patchTask: async (...args) => writes.push(args)}), seeds = [], routes = [];
   f.context.WorkAutomationSheet = {open: async seed => seeds.push(seed)};
   f.context.openSchedulesEntry = options => routes.push(options);
   await f.api.open('a');
@@ -647,9 +648,41 @@ test('automation uses fresh authorized requirements and opens the exact existing
   f.click('[data-rq-automation]'); await new Promise(setImmediate);
   assert.equal(seeds[0].proposal.title, value.title);
   assert.deepEqual(Array.from(seeds[0].proposal.acceptance), ['Fresh criterion']);
+  assert.equal(seeds[0].proposal.enabled, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(seeds[0].sourceRequirement)), {
+    id: 'a', title: 'Updated by teammate', requirementVersion: 7,
+  });
+  await seeds[0].onCreated?.({id: 'new-independent-draft'});
+  assert.deepEqual(writes, []);
   await f.api.open('a'); value = {...value, automationScheduleId: 'schedule-existing'};
   f.click('[data-rq-automation]'); await new Promise(setImmediate);
   assert.equal(routes[0].scheduleId, 'schedule-existing'); assert.equal(seeds.length, 1);
+});
+
+test('archived requirements cannot open a new automation draft', async () => {
+  let value = {...task('a'), canManageRequirementAutomation: true};
+  const f = fixture({getTask: async () => value}); let launched = 0;
+  f.context.WorkAutomationSheet = {open: async () => {launched++;}};
+  await f.api.open('a');
+  value = {...value, archivedAt: Date.now()};
+  f.click('[data-rq-automation]'); await new Promise(setImmediate);
+  assert.equal(launched, 0);
+  assert.match(f.active().querySelector('[data-rq-error]').textContent, /无法管理.*自动化/);
+  await f.api.open('a');
+  assert.doesNotMatch(f.content().innerHTML + f.active().querySelector('.rq-detail-footer').innerHTML, /data-rq-automation/);
+});
+
+test('archived requirements retain authorized viewing of an existing automation without writes', async () => {
+  const calls = [], value = {...task('a'), archivedAt: Date.now(), canManageRequirementAutomation: true,
+    automationScheduleId: 'existing-automation'};
+  const f = fixture({getTask: async () => value, patchTask: async () => calls.push('patch'),
+    createSchedule: async () => calls.push('create')});
+  f.context.WorkAutomationSheet = {open: async () => calls.push('draft')};
+  f.context.openSchedulesEntry = options => calls.push(options);
+  await f.api.open('a');
+  assert.match(f.content().innerHTML + f.active().querySelector('.rq-detail-footer').innerHTML, /查看自动化/);
+  f.click('[data-rq-automation]'); await new Promise(setImmediate);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{scheduleId: 'existing-automation'}]);
 });
 
 test('automation rechecks revoked edit permission and ignores a late response after account change', async () => {

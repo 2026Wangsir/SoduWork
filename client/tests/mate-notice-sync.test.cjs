@@ -29,6 +29,7 @@ function fixture({ values = new Map(), received = [], sent = [] } = {}) {
   ctx.window = ctx; vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/store-lifecycle.js'), 'utf8'), ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/store.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/notice-persistence.js'), 'utf8'), ctx);
   const helper = path.join(__dirname, '../core/mate-notice-sync.js');
   if (fs.existsSync(helper)) vm.runInContext(fs.readFileSync(helper, 'utf8'), ctx);
   return { ctx, values, calls, events, timers, bubbles, alerts, api: ctx.SoduWorkAPI,
@@ -43,6 +44,27 @@ function fixture({ values = new Map(), received = [], sent = [] } = {}) {
 const message = (changes = {}) => ({ id: 'server-1', messageId: 'client-1', senderId: 'user-b', recipientId: 'user-a',
   senderName: '发件人', recipientName: '接收人', text: '完整需求说明', kind: 'task_assignment', taskId: 'task-1',
   createdAt: 100, status: 'accepted', deliveredAt: null, readAt: null, attachments: [], ...changes });
+
+test('both production renderers load durable notice storage before reconciliation', () => {
+  for (const name of ['desk.html', 'index.html']) {
+    const html = fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
+    const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)].map(match => match[1]);
+    const storage = scripts.indexOf('core/notice-persistence.js');
+    assert.ok(storage > scripts.indexOf('core/store.js'), name + ' loads the notice store first');
+    assert.ok(storage >= 0 && storage < scripts.indexOf('core/mate-notice-sync.js'), name + ' enables persistence before reconciliation');
+    assert.equal(scripts.filter(file => file === 'core/notice-persistence.js').length, 1);
+  }
+});
+
+test('storage capability fallback keeps local notices and receipt acknowledgements working', async () => {
+  const f = fixture({ received: [message()] });
+  assert.equal(f.ctx.SoduWorkNoticePersistence.create(), null);
+  assert.equal(f.sync.persistent, false);
+  await f.sync.refresh('received');
+  assert.equal(f.sync.rows('received').length, 1);
+  assert.ok(f.values.get('user-a:notices').includes('server-1'));
+  assert.ok(f.calls.some(call => call[0] === 'delivered' && call[1] === 'server-1'));
+});
 
 test('publication notices survive reconnect and self-recipient delivery without duplicate sender receipts', async () => {
   const item = message({ kind: 'plugin_lifecycle', taskId: '', senderId: 'user-a',

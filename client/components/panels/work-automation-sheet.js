@@ -106,6 +106,8 @@
     const context = arguments[4] || state;
     const parsed = raw || {};
     const prior = previous || {};
+    const source = context.seed.sourceRequirement || prior.sourceRequirement;
+    const sourceRequirement = source?.id ? source : null;
     const original = fullText(sourceText == null ? fallback : sourceText);
     // The editable instructions remain the source of truth for detailed requests.
     // A short parser summary cannot replace long or conversation-derived source.
@@ -126,7 +128,9 @@
       requiredCapabilities: [...new Set(prior.requiredCapabilities || [])],
       retryLimit: Number.isFinite(Number(prior.retryLimit)) ? Number(prior.retryLimit) : 2,
       retryDelayMinutes: Number(prior.retryDelayMinutes || 5),
-      enabled: prior.enabled !== false,
+      enabled: sourceRequirement ? false : prior.enabled !== false,
+      ...(sourceRequirement ? { sourceRequirement: { id: sourceRequirement.id, title: sourceRequirement.title,
+        requirementVersion: sourceRequirement.requirementVersion } } : {}),
     });
     return global.WorkAutomationBindings.resolve(parsed, fallback, next, context);
   }
@@ -217,6 +221,7 @@
     if (!cards().valid(ticket)) return false;
     const prior = global.WorkAutomationBindings.fromContext(s.proposal || {}, s.bindingContext, context);
     const proposal = proposalOf(parsed, directive, prior, instruction, context);
+    if (proposal.sourceRequirement?.id) proposal.creationRequestId = record.snapshot.cardId;
     parseError ||= parsed?._parseError || '';
     cards().finish(ticket, { phase: parseError ? 'error' : 'draft', proposal, error: parseError });
     return visible();
@@ -434,11 +439,14 @@
           '<small>Agent、Runner、权限和插件版本会在这里一次说清</small></div></div>' +
         '<div class="waz-error" id="wazError" role="alert"' + (error ? '' : ' hidden') + '>' +
           esc(error || '') + '</div></div>' +
-        '<footer class="waz-foot"><label class="waz-enable"><input type="checkbox" name="enabled"' +
-          (p.enabled !== false ? ' checked' : '') + '><span><b>创建后启用</b>' +
-          '<small>关闭时只保存，不会自动运行</small></span></label>' +
+        '<footer class="waz-foot">' + (p.sourceRequirement?.id
+          ? '<div class="waz-enable"><span><b>保存为未启用草稿</b><small>原需求保持不变；可在自动化管理中启用</small>' +
+            '<small data-user-content>' + esc(p.sourceRequirement.title || '') + ' · v' + esc(p.sourceRequirement.requirementVersion) + '</small></span></div>'
+          : '<label class="waz-enable"><input type="checkbox" name="enabled"' +
+            (p.enabled !== false ? ' checked' : '') + '><span><b>创建后启用</b>' +
+            '<small>关闭时只保存，不会自动运行</small></span></label>') +
           '<button type="button" class="waz-button primary" data-waz-save' +
-          ((state.agents.length || p.assigneeId) ? '' : ' disabled') + '>创建自动化</button></footer>' +
+          ((state.agents.length || p.assigneeId) ? '' : ' disabled') + '>' + (p.sourceRequirement?.id ? '保存草稿' : '创建自动化') + '</button></footer>' +
       '</div></form>';
     paintRhythm();
     if (global.ForwardSelect) body.querySelectorAll('[data-waz-time-selects], [data-waz-minute]').forEach(root =>
@@ -511,7 +519,9 @@
       requiredCapabilities: selectedCaps,
       retryLimit: Math.max(0, Math.min(3, Number(data.get('retryLimit')) || 0)),
       retryDelayMinutes: Math.max(2, Math.min(10, Number(data.get('retryDelayMinutes')) || 5)),
-      enabled: Boolean(data.get('enabled')),
+      enabled: state.proposal?.sourceRequirement?.id ? false : Boolean(data.get('enabled')),
+      ...(state.proposal?.sourceRequirement?.id ? { sourceRequirement: { ...state.proposal.sourceRequirement },
+        creationRequestId: state.proposal.creationRequestId } : {}),
     };
   }
 
@@ -553,7 +563,9 @@
       requiredCapabilities: [...new Set((value.requiredCapabilities || []).concat(methodCaps(method)))],
       retryLimit: value.retryLimit,
       retryDelayMinutes: value.retryDelayMinutes,
-      enabled: value.enabled !== false,
+      enabled: value.sourceRequirement?.id ? false : value.enabled !== false,
+      ...(value.sourceRequirement?.id ? { sourceRequirement: { id: value.sourceRequirement.id,
+        requirementVersion: value.sourceRequirement.requirementVersion }, creationRequestId: value.creationRequestId } : {}),
     };
   }
 
@@ -725,11 +737,14 @@
       if ((!seed.cardId || current()) && typeof seed.onCreated === 'function') seed.onCreated(saved || body);
       if (current()) {
         state.saved = true; state.createdId = String(saved?.id || ''); state.proposal = value;
-        renderSaved(saved || body); global.petSay?.('自动化已创建，到点会自己交给 AI 执行');
+        renderSaved(saved || body); global.petSay?.(value.sourceRequirement?.id ? '自动化草稿已保存，尚未启用，原需求保持不变' :
+          '自动化已创建，到点会自己交给 AI 执行');
       }
     } catch (error) {
-      if (ticket && owned()) cards().finish(ticket, { phase: 'error', proposal: value, uncertain: creating,
-        error: errorText(error) + (creating ? '；创建结果尚未确认，请先到自动化管理中查询，避免重复创建。' : '') });
+      if (ticket && owned()) cards().finish(ticket, { phase: 'error', proposal: value, uncertain: creating && !value.sourceRequirement?.id,
+        error: errorText(error) + (creating ? (value.sourceRequirement?.id
+          ? '；可按原内容重试保存，同一次请求不会重复创建。'
+          : '；创建结果尚未确认，请先到自动化管理中查询，避免重复创建。') : '') });
       if (!current()) return;
       if (!ticket) { showError(errorText(error)); button.disabled = false; button.textContent = '创建自动化'; }
     } finally {

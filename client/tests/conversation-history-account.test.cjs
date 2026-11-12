@@ -35,8 +35,10 @@ test('local history remains visible across accounts while execution ownership st
   assert.deepEqual(access.visible(f.app, rows).map(row => row.id), [id]);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
   f.switch(identity());
-  f.write('requirement-session-context', id, { owner: scope(identity('two')) });
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), [id]);
+  f.write('requirement-session-context', id, { version: 1, owner: scope(identity('two')) });
+  // Requirement metadata changes the read boundary without transferring execution ownership.
+  assert.deepEqual(access.visible(f.app, rows), []);
+  assert.throws(() => access.assertReadable(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
 });
 test('local history visibility survives account switch, expiry and signout without granting execution', t => {
@@ -55,8 +57,10 @@ test('local history visibility survives account switch, expiry and signout witho
 });
 test('local read does not claim execution ownership and cloud flag alone is not authority', t => {
   const f = fixture(t);
-  f.write('requirement-session-context', 'alice', { owner: scope(identity('two')) });
-  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }, { id: 'unknown', cloud: true }]).map(row => row.id), ['alice']);
+  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }]).map(row => row.id), ['alice']);
+  f.write('requirement-session-context', 'alice', { version: 1, owner: scope(identity('two')) });
+  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }, { id: 'unknown', cloud: true }]), []);
+  assert.throws(() => access.assertReadable(f.app, 'alice', access.actor(f.app), { id: 'alice' }), /当前账号/);
   assert.throws(() => access.assertOwner(f.app, 'alice'), /当前账号/);
   f.write('conversation-handoffs', 'remote', { sessionId: 'remote', owner: connectionScope(identity()), entryKind: 'cloud' });
   assert.equal(access.visible(f.app, [{ id: 'remote', cloud: true }]).length, 1);

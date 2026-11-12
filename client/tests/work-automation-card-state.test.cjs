@@ -53,6 +53,65 @@ const proposal = { title: '原始计划', note: '完整要求', acceptance: ['�
   retryLimit: 2, retryDelayMinutes: 5, enabled: true, requiredCapabilities: [] };
 const restored = extra => ({ version: 1, cardId: 'card-a', phase: 'draft', proposal, ...extra });
 
+test('ordinary enabled automation receipts with empty provenance remain ordinary', async () => {
+  const f = fixture(); let submitted;
+  await f.sheet.open({proposal: {...proposal, sourceRequirement: {}}});
+  assert.equal(f.sheet.capture().proposal.enabled, true);
+  f.api.createSchedule = async body => {submitted = body; return {...body, id: 'ordinary', sourceRequirement: {}};};
+  await f.probe.save();
+  assert.equal(submitted.enabled, true);
+  assert.equal(Object.hasOwn(submitted, 'sourceRequirement'), false);
+  const html = f.context.WorkAutomationCardState.savedHtml({...proposal, sourceRequirement: {}}, null, null, String);
+  assert.match(html, /自动化已创建/);
+  assert.doesNotMatch(html, /草稿|尚未启用|来源需求/);
+});
+
+test('requirement entry is an independent disabled draft and cancel creates nothing', async () => {
+  const f = fixture();
+  const source = {id: 'requirement-one', title: '<Original requirement>', requirementVersion: 3};
+  await f.sheet.open({sourceRequirement: source, proposal: {...proposal, enabled: true}});
+  assert.equal(f.sheet.capture().proposal.enabled, false);
+  assert.equal(f.calls.create, 0); assert.equal(f.calls.parse, 0);
+  f.sheet.close();
+  assert.equal(f.calls.create, 0);
+  await f.sheet.open({sourceRequirement: source, proposal: {...proposal, enabled: true}});
+  const bodies = [];
+  f.api.createSchedule = async body => {bodies.push(body); return {...body, id: 'saved-source', sourceRequirement: source};};
+  f.probe.state.layer.form.elements.enabled.checked = true;
+  await f.probe.save();
+  assert.equal(bodies.length, 1); assert.equal(bodies[0].enabled, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(bodies[0].sourceRequirement)), {id: source.id, requirementVersion: 3});
+  assert.match(bodies[0].creationRequestId, /^automation-/);
+  assert.match(f.probe.state.layer.body.innerHTML, /自动化草稿已保存/);
+  assert.match(f.probe.state.layer.body.innerHTML, /&lt;Original requirement&gt;/);
+  assert.doesNotMatch(f.probe.state.layer.body.innerHTML, /<Original requirement>/);
+});
+
+test('requirement draft retry retains the same creation identity after a lost response', async () => {
+  const f = fixture(), bodies = [];
+  await f.sheet.open({sourceRequirement: {id: 'source', title: 'Original', requirementVersion: 3}, proposal});
+  f.api.createSchedule = async body => {
+    bodies.push(JSON.parse(JSON.stringify(body)));
+    if (bodies.length === 1) throw new Error('Response lost after save');
+    return {...body, id: 'one-draft'};
+  };
+  await f.probe.save();
+  assert.equal(f.sheet.capture().uncertain, false);
+  await f.probe.save();
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[1], bodies[0]);
+  assert.equal(f.sheet.capture().createdId, 'one-draft');
+});
+
+test('account switching during requirement preflight prevents its creation', async () => {
+  const f = fixture(), preflight = deferred();
+  f.api.preflightSchedule = () => preflight.promise;
+  await f.sheet.open({sourceRequirement: {id: 'source', title: 'Original', requirementVersion: 3}, proposal});
+  const saving = f.probe.save();
+  f.switchOwner(); preflight.resolve({state: 'ready'}); await saving;
+  assert.equal(f.calls.create, 0);
+});
+
 test('恢复原时间、参数和手动字段，不再次解析或推断相对日期', async () => {
   const f = fixture(), snapshots = [];
   f.context.ScheduleTiming.infer = () => { throw Error('恢复不能重新推断日期'); };

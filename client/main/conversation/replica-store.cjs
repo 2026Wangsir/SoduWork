@@ -62,9 +62,9 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       PRAGMA user_version=1;`);
     db.prepare("INSERT OR IGNORE INTO metadata VALUES('workspace',?)").run(crypto.randomUUID());
   });
+  const exact = id => db.prepare('SELECT r.* FROM replicas r JOIN aliases a ON r.id=a.replica WHERE a.alias=?').get(key(id));
   const resolve = id => {
-    const wanted = key(id);
-    const direct = db.prepare('SELECT r.* FROM replicas r JOIN aliases a ON r.id=a.replica WHERE a.alias=?').get(wanted);
+    const wanted = key(id), direct = exact(wanted);
     if (direct) return direct;
     // Account directory IDs and native source IDs are authenticated aliases
     // persisted in replica metadata. Resolve them without title matching so a
@@ -92,9 +92,9 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
     return transaction(() => rows.map(raw => {
       const id = key(raw.id), ids = [...new Set([id, ...(raw.historyAliasIds || [])].map(key))];
       if (ids.length > 100) throw Error('Too many conversation aliases');
-      const matches = ids.map(resolve).filter(Boolean), canonical = matches[0]?.id || id;
+      const matches = ids.map(exact).filter(Boolean), canonical = matches[0]?.id || id;
       if (matches.some(row => row.id !== canonical)) throw Error('Conflicting conversation aliases');
-      const old = resolve(canonical), previous = old ? JSON.parse(old.data) : {};
+      const old = exact(canonical), previous = old ? JSON.parse(old.data) : {};
       if (old && id !== canonical) return project(old);
       // Provenance is immutable. Registering a refreshed snapshot cannot revive
       // a deleted replica, change local lifecycle intent, or claim another user.
@@ -241,7 +241,7 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       key(id);
       if (!Array.isArray(aliases) || aliases.length > 100) throw Error('Invalid native conversation aliases');
       return transaction(() => {
-        const rows = [...new Map([id, ...aliases].map(key).map(resolve).filter(Boolean).map(row => [row.id, row])).values()];
+        const rows = [...new Map([id, ...aliases].map(key).map(exact).filter(Boolean).map(row => [row.id, row])).values()];
         if (!rows.length) return;
         if (rows.some(row => JSON.parse(row.data).cached)) throw Error('Cloud copies cannot be joined to native transcripts');
         // A child runtime may be discovered before its public conversation.

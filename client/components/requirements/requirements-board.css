@@ -576,7 +576,9 @@ html[data-window-menu] .rq-detail{max-height:100%;}
 .rq-detail .rq-detail-tag-block h4{font-size:var(--rq-label)!important}
 .rq-detail .rq-detail-tags>span{font-size:var(--rq-label)}
 html .rq-detail #rqEditForm :is(input,textarea,select){font-size:var(--rq-text);font-family:var(--font-ui);line-height:1.65}
-html .rq-detail #rqEditForm input[name="title"]{font-size:18px;font-weight:600}
+html .rq-detail #rqEditForm input[name="title"]{font-size:17px;font-weight:600}
+.rq-detail.is-editing{--rq-section:15px}
+.rq-detail.is-editing .rq-detail-header h2{font-size:20px!important}
 .rq-detail .rq-detail-actions>button,.rq-detail .rq-edit-actions>button{font-size:14px;min-height:40px;padding:8px 14px}
 .rq-detail .rq-edit-actions>button:disabled{background:var(--bg-2)!important;color:var(--ink-3)!important;border-color:var(--line);box-shadow:none;opacity:.65}
 .rq-detail .rq-detail-actions>[data-rq-ready]{order:-3}

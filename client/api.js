@@ -731,14 +731,25 @@
   function mark(ok) {
     if (_online !== ok) { _online = ok; try { console.log('[hub]', ok ? '已连后端' : '后台不可达'); } catch (e) {} }
   }
-  function pluginsChanged(pluginId) {
+  function pluginsChanged(pluginId, removed = false) {
     try {
       if (typeof global.dispatchEvent !== 'function' ||
           typeof global.CustomEvent !== 'function') return;
       global.dispatchEvent(new global.CustomEvent('soduwork:plugins-changed', {
-        detail: { pluginId: String(pluginId || '') }
+        detail: { pluginId: String(pluginId || ''), removed: removed === true }
       }));
     } catch (e) { /* catalog refresh is best-effort; the mutation already succeeded */ }
+  }
+  var _skillScopeEpoch = 0;
+  global.addEventListener?.('soduwork-data-scope-changed', function () { _skillScopeEpoch++; });
+  function skillMutationScope() { return { key: taskStorageKey('ops'), epoch: _skillScopeEpoch }; }
+  function skillsChanged(scope) {
+    // A completed mutation for an old account must not invalidate the current
+    // account's picker or cause a stale catalog to be published into it.
+    if (scope.key !== taskStorageKey('ops') || scope.epoch !== _skillScopeEpoch) return;
+    try {
+      global.dispatchEvent?.(new global.CustomEvent('soduwork:skills-changed'));
+    } catch (_) { /* The mutation succeeded even if a renderer is closing. */ }
   }
   function approvalsInvalidated() {
     try {
@@ -1656,25 +1667,30 @@
       catch (e) { markFromError(e); return { skills: [] }; }
     },
     async setMySkills(names) {
-      var r = await jfetch('/skills', { method: 'PUT', body: JSON.stringify({ enabled: names || [] }) });
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills', { method: 'PUT', taskScope: scope.key, body: JSON.stringify({ enabled: names || [] }) });
+      mark(true); skillsChanged(scope); return r;
     },
-    async refreshMySkills() {
-      var r = await jfetch('/skills/refresh', { method: 'POST', body: '{}' });
-      mark(true); return r || { skills: [], mcpTemplates: [], summary: {} };
+    async refreshMySkills(options) {
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills/refresh', { method: 'POST', taskScope: scope.key, body: '{}' });
+      mark(true); if (options?.notify !== false) skillsChanged(scope);
+      return r || { skills: [], mcpTemplates: [], summary: {} };
     },
     async capabilityCatalog() {
       var r = await jfetch('/capabilities');
       mark(true); return r || { skills: [], mcpTemplates: [], summary: {} };
     },
     async createMySkill(body) {
-      var r = await jfetch('/skills/create', { method: 'POST', body: JSON.stringify(body || {}) });
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills/create', { method: 'POST', taskScope: scope.key, body: JSON.stringify(body || {}) });
+      mark(true); skillsChanged(scope); return r;
     },
     async deleteMySkill(name, checksum) {
+      var scope = skillMutationScope();
       var r = await jfetch('/skills/' + encodeURIComponent(name), {
-        method: 'DELETE', body: JSON.stringify({ checksum: checksum }) });
-      mark(true); return r;
+        method: 'DELETE', taskScope: scope.key, body: JSON.stringify({ checksum: checksum }) });
+      mark(true); skillsChanged(scope); return r;
     },
     async deleteMyMcpServer(id) {
       var r = await jfetch('/mcp-servers/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1712,8 +1728,9 @@
       setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
     },
     async importMySkill(file) {
-      var r = await uploadFile('/skills/import', file);
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await uploadFile('/skills/import', file, false, null, scope.key);
+      mark(true); skillsChanged(scope); return r;
     },
     async exportMyMcp(ids) { return jfetch('/mcp-servers/export', {method:'POST', taskScope:taskStorageKey('ops'), body:JSON.stringify({ids:ids})}); },
     async previewMyMcpImport(file) { return uploadFile('/mcp-servers/import/preview', file, false, null, taskStorageKey('ops')); },

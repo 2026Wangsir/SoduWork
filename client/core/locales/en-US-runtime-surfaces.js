@@ -7,6 +7,7 @@
     "查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。": "View requirements, delivery reviews, merges, environment acceptance, or releases currently awaiting my confirmation.",
     "查看已归档或已取消的需求；它们不再显示在当前需求池中。": "View archived or canceled issues, which are no longer shown in the current Issues view.",
     "返回未归档且未取消的当前需求。": "Return to current issues that are neither archived nor canceled.",
+    "需求标题最多 200 个字符": "Requirement titles can contain up to 200 characters",
     '同公司可见': 'Visible within the company',
     '仓库成员可见': 'Visible to repository members',
     '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。': 'Repository members can view the issue content. Execution conversations and logs keep their existing access permissions.',

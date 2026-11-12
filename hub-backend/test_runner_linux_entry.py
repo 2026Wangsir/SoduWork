@@ -3,6 +3,7 @@ import ast
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,36 +34,50 @@ elif name=='bash':
 elif name=='curl':
  if os.environ.get('FAIL_DOWNLOAD'):sys.exit(22)
  pathlib.Path(args[-1]).write_text('# fixture installer\n')
+elif name=='sed':
+ # BSD sed needs an explicit empty backup suffix for the GNU in-place contract.
+ if sys.platform=='darwin' and '-i' in args:args.insert(args.index('-i')+1,'')
+ os.execv(os.environ['FIXTURE_SED'],['sed',*args])
 elif name=='apt-get':
- if args[0]=='install':(root/'curl').symlink_to(root/'tool')
+ if args[0]=='install' and not (root/'curl').exists():(root/'curl').symlink_to(root/'tool')
 '''
 
 
 @unittest.skipUnless(os.name == 'posix' and Path('/bin/bash').is_file(),
                      'Enrollment shell fixture requires a native POSIX host and /bin/bash')
 class EnrollmentCommandTests(unittest.TestCase):
-    def run_command(self, *, uid='0', missing_curl=False, fail_download=False,
+    def run_command(self, *, uid='0', missing_curl=False, missing_ca=False, fail_download=False,
                     deny_sudo=False):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
             tool=root/'tool'
             tool.write_text(TOOL.replace('PYTHON',sys.executable,1))
             tool.chmod(0o755)
-            names=['bash','id','sudo','apt-get'] + ([] if missing_curl else ['curl'])
+            names=['bash','id','sudo','apt-get','sed'] + ([] if missing_curl else ['curl'])
             for name in names:(root/name).symlink_to(tool)
-            for name in ('mktemp','rm','cp','sed'):(root/name).symlink_to('/usr/bin/'+name)
+            # Resolve real host tools before narrowing PATH to the isolated fixture.
+            for name in ('mktemp','rm','cp'):
+                executable=shutil.which(name)
+                self.assertIsNotNone(executable, f'Required host tool is unavailable: {name}')
+                (root/name).symlink_to(executable)
+            sed=shutil.which('sed')
+            self.assertIsNotNone(sed, 'Required host tool is unavailable: sed')
             apt=root/'apt'
             (apt/'sources.list.d').mkdir(parents=True)
             (apt/'sources.list').write_text('deb http://archive.ubuntu.com/ubuntu noble main\n')
             release=root/'os-release'
             release.write_text('ID=ubuntu\n')
+            certificates=root/'ca-certificates.crt'
+            if not missing_ca:certificates.write_text('fixture certificate bundle\n')
             injection=root/'must-not-exist'
             work=f"/work/quote' $(touch {injection})"
             key="fixture-key'with-quotes"
             command=NAMESPACE['install_commands']('https://fixture.invalid','fixture',key,
                                                  ['linux','tag with spaces'],work)['linux']
             command=command.replace('/etc/os-release',str(release)).replace('/etc/apt/',str(apt)+'/')
-            env=dict(os.environ,PATH=temp,FIXTURE=temp,FIXTURE_UID=uid,TMPDIR=temp)
+            for bundle in ('/etc/ssl/certs/ca-certificates.crt','/etc/pki/tls/certs/ca-bundle.crt'):
+                command=command.replace(bundle,str(certificates))
+            env=dict(os.environ,PATH=temp,FIXTURE=temp,FIXTURE_UID=uid,TMPDIR=temp,FIXTURE_SED=sed)
             if fail_download:env['FAIL_DOWNLOAD']='1'
             if deny_sudo:env['FAIL_SUDO']='1'
             result=subprocess.run(['/bin/bash','-c',command],env=env,capture_output=True,
@@ -110,6 +125,12 @@ class EnrollmentCommandTests(unittest.TestCase):
         result,_,args,_,_=self.run_command(fail_download=True)
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(args)
+
+    def test_missing_certificates_bootstrap_without_replacing_existing_curl(self):
+        result,calls,args,_,_=self.run_command(missing_ca=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIsNotNone(args)
+        self.assertIn(['apt-get',['install','-y','curl','ca-certificates']],calls)
 
 
 if __name__=='__main__':unittest.main()

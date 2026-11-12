@@ -152,10 +152,31 @@ test('mounted chat skill picker discovers a later import without losing its save
   f.finish();
 });
 
+test('a host exposing both skill opening callbacks performs only the bounded refresh', () => {
+  const f = fixture(), host = element();
+  let refreshed = 0, opened = 0, now = 100000;
+  f.global.Date = {now:()=>now};
+  const picker = f.global.ComposeSkills.create({input:f.input, host,
+    onRefresh:()=>{refreshed++;}, onOpen:()=>{opened++;}});
+  picker.setItems([{name:'existing',selectable:true}]); now += 30001;
+  f.input.value = '#'; f.input.selectionStart = 1;
+  f.input.dispatchEvent(new Event('input'));
+  assert.equal(refreshed, 1); assert.equal(opened, 0);
+  picker.setItems([{name:'existing',selectable:true}]);
+  picker.close(); f.input.dispatchEvent(new Event('input'));
+  assert.equal(refreshed, 1, 'A fresh reopening stays local');
+  assert.equal(opened, 0, 'The legacy callback cannot duplicate or bypass the bounded refresh');
+  f.finish();
+});
+
 test('a late skill refresh cannot reopen a dismissed palette or overwrite a newer catalog', async () => {
   const f = fixture(), host = element(), children = [], pending = [];
   host.appendChild = child => children.push(child);
-  f.global.soduWorkAPI = { conversationSession: { capabilities: () => new Promise(resolve => pending.push(resolve)) } };
+  let active = 0, peakActive = 0;
+  f.global.soduWorkAPI = { conversationSession: { capabilities: () => {
+    active++; peakActive = Math.max(peakActive, active);
+    return new Promise(resolve => pending.push(value => { active--; resolve(value); }));
+  } } };
   vm.runInNewContext(read('chat-composer-bindings.js'), f.global);
   f.ctx._skillLoadSeq = 0; f.ctx._sessionOptions = {};
   const bindings = f.global.ChatComposerBindings.create(f.ctx);
@@ -168,18 +189,22 @@ test('a late skill refresh cannot reopen a dismissed palette or overwrite a newe
   assert.equal(children[1].classList.contains('show'), false);
   f.input.dispatchEvent(new Event('input')); f.ctx._skillPicker.close();
   f.input.dispatchEvent(new Event('input'));
-  pending[2]({ok:true,policyOk:true,skills:[{name:'new',selectable:true}]});
-  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 2, 'Reopening coalesces behind the current request');
   pending[1]({ok:true,policyOk:true,skills:[{name:'stale',selectable:true}]});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 3, 'The invalidated request schedules one replacement');
+  assert.doesNotMatch(children[1].innerHTML, /data-skill-name="stale"/);
+  pending[2]({ok:true,policyOk:true,skills:[{name:'new',selectable:true}]});
   await new Promise(resolve => setImmediate(resolve));
   assert.match(children[1].innerHTML, /data-skill-name="new"/);
   assert.doesNotMatch(children[1].innerHTML, /data-skill-name="stale"/);
+  assert.equal(peakActive, 1); assert.equal(active, 0);
   f.finish();
 });
 
 
-for (const selected of [[], ['office'], ['browser', 'office']]) {
-  test('new-composer skill refresh preserves capability choices and filters unavailable tools: '+selected.join(','), async () => {
+for (const options of [true, {preserveSelection:true}]) for (const selected of [[], ['office'], ['browser', 'office']]) {
+  test('new-composer skill refresh preserves capability choices and filters unavailable tools: '+typeof options+' '+selected.join(','), async () => {
     const source = read('panels-compose.js');
     const loader = source.slice(source.indexOf('  function _loadCapabilities('), source.indexOf('  function _renderCapabilities()'));
     const rows = [
@@ -188,6 +213,7 @@ for (const selected of [[], ['office'], ['browser', 'office']]) {
       {id:'browser',selectable:false,deviceGranted:true,selected:true},
     ];
     const state = { _capLoading:false, _capabilityRequestKey:'same', _capabilityRetryKey:'',
+      _capabilityEpoch:0, _capabilityRetryPreserve:false,
       _skillIconSeq:0, _pickedModel:'', _requestedCapabilities:null, _pickedCapabilities:new Set(selected),
       _skillPicker:{setLoading(){},setItems(){}}, _capabilityKey:()=> 'same',
       _capabilities:[], _skills:[], _capabilityPromise:null,
@@ -195,7 +221,7 @@ for (const selected of [[], ['office'], ['browser', 'office']]) {
       document:{getElementById:()=>null},
       global:{soduWorkAPI:{conversationSession:{capabilities:async()=>({ok:true,items:rows,skills:[]})}}} };
     vm.runInNewContext(loader, state);
-    await state._loadCapabilities(true, {preserveSelection:true});
+    await state._loadCapabilities(true, options);
     assert.deepEqual(Array.from(state._pickedCapabilities), selected.filter(id=>id!=='browser'));
     assert.equal(state._pickedCapabilities.has('computer'), false, 'opening the skill picker cannot reenable an unselected tool');
   });

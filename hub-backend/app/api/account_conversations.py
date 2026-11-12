@@ -111,6 +111,22 @@ def _text(value: object, field: str, limit: int, *, required: bool = False) -> s
     return value
 
 
+def _content_location(row: AccountConversation) -> str:
+    if (row.storage_mode or "legacy") == "legacy":
+        return "hub"
+    if row.storage_mode != "endpoint":
+        return "unknown"
+    pointer = row.content_ref
+    if pointer is None or isinstance(pointer, dict) and not pointer:
+        return "source"
+    if isinstance(pointer, dict) and all(isinstance(pointer.get(key), str) and pointer[key]
+                                         for key in ("localReplicaId", "targetClientId")) and \
+            type(pointer.get("sourceRevision")) is int and pointer["sourceRevision"] == row.source_revision:
+        return "replica"
+    # Uncertain references must not authorize hiding a potentially independent copy.
+    return "unknown"
+
+
 def _conversation_json(row: AccountConversation, client_id: str) -> dict:
     return {
         "id": row.id,
@@ -128,6 +144,7 @@ def _conversation_json(row: AccountConversation, client_id: str) -> dict:
         "updatedAt": _iso(row.updated_at),
         "sourceRevision": int(row.source_revision or 0),
         "storageMode": row.storage_mode or "legacy",
+        "contentLocation": _content_location(row),
         "canView": True,
         # The source device remains the only device that may checkpoint the
         # native session. Every device authenticated to the same account may,

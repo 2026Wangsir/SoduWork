@@ -19,8 +19,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const record = label => { checks.push(label); console.log('PASS ' + label); };
 
 async function startHub() {
-  const python = path.join(repo, 'hub-backend/.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-  assert.ok(fs.existsSync(python), 'Repository backend virtual environment is required');
+  const python = process.env.SODUWORK_TEST_PYTHON || path.join(repo, 'hub-backend/.venv',
+    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  assert.ok(fs.existsSync(python), 'An isolated backend test Python environment is required');
   // Intentionally allowlist OS essentials: never inherit production DB, proxy,
   // cloud credentials, Python import overrides or application configuration.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>

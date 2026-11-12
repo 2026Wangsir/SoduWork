@@ -14,7 +14,11 @@ function fixture() {
       html = value; fields.clear(); checks.length = 0;
       for (const hit of value.matchAll(/<input\b([^>]*)>|<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/g)) {
         const attrs = hit[1] ?? hit[2], id = /\bid="([^"]+)"/.exec(attrs)?.[1];
-        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]), disabled: false };
+        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]),
+          disabled: false, attributes: new Map(),
+          setAttribute(name, next) { this.attributes.set(name, String(next)); },
+          getAttribute(name) { return this.attributes.get(name) ?? null; },
+          removeAttribute(name) { this.attributes.delete(name); }, focus() { this.focused = true; } };
         if (id) fields.set(id, node); if (/class="cp-ck-t"/.test(attrs)) checks.push(node);
       }
       if (value.includes('id="cpCheck"')) fields.set('cpCheck', {});

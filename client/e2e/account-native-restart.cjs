@@ -32,7 +32,7 @@ async function child(stage, root, endpoint) {
   fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ retry: { enabled: false }, compaction: { enabled: false } }));
   const sdk = await import(pathToFileURL(path.join(client, 'node_modules/@earendil-works/pi-coding-agent/dist/index.js')).href);
   const model = { id: modelId, label: 'Restart regression model', contextWindow: 200000,
-    baseUrl: endpoint, proxyExpiresAt: Date.now() + 3600000 };
+    baseUrl: endpoint, key: 'isolated-restart-fixture', proxyExpiresAt: Date.now() + 3600000 };
   config.noProxyFor(endpoint);
   const modelsPath = config.writeModels(agentDir, model);
   const previousPrepare = config.prepare, previousCreate = sdk.ModelRuntime.create;
