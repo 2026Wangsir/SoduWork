@@ -24,7 +24,7 @@ function fixture(user = 'user-a', options = {}) {
       const start = source.indexOf('function renderChats() {'), end = source.indexOf('function subscribeConversationPresence()', start);
       assert.ok(start > 0 && end > start);
       // Keep the actual reconciliation and pagination path; only omit DOM painting.
-      source = source.slice(0, start) + 'function renderChats() { ctx.paintedRows = displayRows(ctx.chatItems); }\n' + source.slice(end);
+      source = source.slice(0, start) + 'function renderChats() { ctx.paintedRows = displayRows(ctx.chatItems, ctx.chatItems, ctx.displayPlacement?.() || new Set()); }\n' + source.slice(end);
     }
     vm.runInContext(source, sandbox);
   }
@@ -485,4 +485,86 @@ test('index completion behind an account request refreshes display proof once an
   f.remote[3]({ ok: true, chats: [{ ...account, id: 'acct-b' }] }); await current;
   assert.equal(f.ctx.paintedRows.some(row => row.id === 'acct-a'), false);
   assert.equal(f.ctx.paintedRows.some(row => row.id === 'acct-b'), true);
+});
+
+
+for (const placement of ['pin', 'project']) test('account ' + placement + ' remains visible when a later native page resolves its display link', async () => {
+  const f = localFixture('', 123);
+  await f.api.refreshConversationHistory(); await tick();
+  await f.switch('user-a');
+  const account = { id: 'acct-late', title: 'Older conversation', accountProjection: true, accountConversation: true,
+    sourceSessionId: 'saved-100', sourceClientId: 'device-a', displayNativeId: 'saved-100', at: 9999 };
+  const pending = f.ctx.historyLoad; f.remote[0]({ok:true,chats:[account]}); await pending;
+  const data = new Map(), storage = {getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};
+  const sidebar = f.window.WorkspaceSidebarState.create({storage,key:'account-placement'});
+  const project = placement === 'project' ? sidebar.saveProject({name:'Saved account project'}) : '';
+  if (project) sidebar.fileChat(account.id,project,account); else sidebar.togglePin(account.id,account);
+  f.ctx.displayPlacement = () => new Set([...sidebar.get().pins, ...sidebar.get().projects.flatMap(item=>item.chatIds)]);
+  const painted = () => Array.from(f.ctx.paintedRows,row=>row.id);
+  f.api.renderChats();
+  assert.ok(painted().includes(account.id)); assert.equal(painted().includes('saved-100'),false);
+  const before = JSON.stringify(sidebar.get());
+  await f.api.refreshLocalHistory({append:true}); await f.api.refreshLocalHistory({append:true});
+  assert.ok(f.ctx.chatItems.some(row=>row.id==='saved-100'),'The native target genuinely arrived through later pagination');
+  assert.ok(painted().includes(account.id),'The explicitly placed account row remains the visible representative');
+  assert.equal(painted().includes('saved-100'),false,'The native counterpart cannot duplicate the placed representative');
+  assert.equal(JSON.stringify(sidebar.get()),before,'Display selection cannot rewrite sidebar ownership or preferences');
+  assert.equal(f.window.WorkspaceSidebarState.localHistoryId(account.id),'','Account action IDs must remain independent of native lifecycle IDs');
+  if (project) sidebar.move(account,'recent','',[account]); else sidebar.togglePin(account.id,account);
+  f.api.renderChats();
+  assert.ok(painted().includes('saved-100'),'Removing explicit placement returns to the native representative');
+  assert.equal(painted().includes(account.id),false);
+});
+
+test('existing native placement wins a display tie while an unverified foreign account row remains independent', async () => {
+  const f=localFixture('',2);
+  await f.api.refreshConversationHistory(); await tick(); await f.switch('user-a');
+  const account={id:'acct-owned',title:'Same title',accountProjection:true,accountConversation:true,
+    sourceSessionId:'saved-0',sourceClientId:'device-a',displayNativeId:'saved-0',at:9999};
+  const foreign={...account,id:'acct-foreign',sourceClientId:'another-device',displayNativeId:undefined};
+  const pending=f.ctx.historyLoad;f.remote[0]({ok:true,chats:[account,foreign]});await pending;
+  const data=new Map(),storage={getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};
+  const sidebar=f.window.WorkspaceSidebarState.create({storage,key:'native-placement'});
+  sidebar.togglePin(account.id,account);sidebar.togglePin('saved-0',f.ctx.chatItems.find(row=>row.id==='saved-0'));
+  sidebar.togglePin(foreign.id,foreign);
+  f.ctx.displayPlacement=()=>new Set(sidebar.get().pins);f.api.renderChats();
+  const ids=Array.from(f.ctx.paintedRows,row=>row.id);
+  assert.ok(ids.includes('saved-0'));assert.equal(ids.includes(account.id),false);assert.ok(ids.includes(foreign.id));
+  assert.ok(f.ctx.chatItems.some(row=>row.id===account.id),'The hidden account action identity remains available');
+  assert.equal(f.window.WorkspaceSidebarState.localHistoryId(account.id),'');
+});
+
+
+test('display placement does not reconcile native aliases without an authenticated account display association', async () => {
+  const f=localFixture('',2);await f.api.refreshConversationHistory();await tick();
+  f.window.WorkspaceSidebarState.setLocalHistory({workspace:'profile-one',revision:1,
+    items:[{id:'saved-0',historyAliasIds:['runtime-child']},{id:'saved-1',historyAliasIds:[]}]});
+  f.ctx.chatItems.push({id:'runtime-child',title:'Native presence arriving during reconciliation',at:100});
+  const before=Array.from(f.ctx.chatItems,row=>row.id);
+  f.api.renderChats();
+  assert.deepEqual(Array.from(f.ctx.paintedRows,row=>row.id),before,
+    'Native reconciliation belongs to its existing provider; this display filter only selects trusted account/native counterparts');
+});
+
+
+test('a displayed account representative follows only its verified native active selection', async () => {
+  const f=localFixture('',2);await f.api.refreshConversationHistory();await tick();await f.switch('user-a');
+  const row={id:'acct-owned',accountProjection:true,accountConversation:true,sourceClientId:'device-a',
+    sourceSessionId:'saved-0',displayNativeId:'saved-0',at:100};
+  const pending=f.ctx.historyLoad;f.remote[0]({ok:true,chats:[row,{...row,id:'acct-foreign',sourceClientId:'foreign',displayNativeId:undefined}]});await pending;
+  const button=id=>{const classes=new Set(),attributes={};return{dataset:{chatId:id},attributes,
+    classList:{contains:name=>classes.has(name),toggle(name,on){if(on)classes.add(name);else classes.delete(name)}},
+    setAttribute(name,value){attributes[name]=value}}};
+  const owned=button(row.id),foreign=button('acct-foreign');
+  f.ctx.root={querySelectorAll:()=>[owned,foreign]};f.ctx.active='create';
+  f.api.setActiveChat('saved-0');
+  assert.equal(owned.classList.contains('is-active'),true,'The retained account representative highlights the opened native session');
+  assert.equal(owned.attributes['aria-current'],'page');
+  assert.equal(foreign.classList.contains('is-active'),false,'A matching unverified source locator does not inherit selection');
+  f.api.setActiveChat('saved-1');assert.equal(owned.classList.contains('is-active'),false);
+  f.window.WorkspaceSidebarState.setLocalHistory({workspace:'profile-one',revision:1,
+    items:[{id:'saved-0',historyAliasIds:['runtime-child']},{id:'saved-1',historyAliasIds:[]}]});
+  f.api.setActiveChat('runtime-child');assert.equal(owned.classList.contains('is-active'),true,'A verified native child also selects its retained representative');
+  await f.switch('user-b');f.api.setActiveChat('saved-0');
+  assert.equal(owned.classList.contains('is-active'),false,'An old account association cannot highlight after switching accounts');
 });

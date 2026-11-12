@@ -45,6 +45,13 @@
   const supportsLocalHistory = () => historyApi()?.localHistorySupported === true;
   const isLocalId = id => localAliases.has(String(id || ''));
   const canonicalLocalId = id => global.WorkspaceSidebarState?.localHistoryId(id) || '';
+  function selectedChat(id, active = ctx.activeChatId) {
+    if (!id || !active) return false;
+    if (id === active) return true;
+    const source = accountDisplayLinks.get(String(id));
+    const native = source && canonicalLocalId(source);
+    return Boolean(native && native === canonicalLocalId(active));
+  }
   const localVisible = row => {
     const record = localRecords.get(canonicalLocalId(row?.id));
     return record && !record.archived && !record.deleted;
@@ -651,7 +658,7 @@ function _paintChatLocale(button) {
 
 function _paintChatRow(row, c, isPinned) {
     const id = String(c.id || '');
-    const selected = ctx.active === 'create' && Boolean(id) && id === ctx.activeChatId;
+    const selected = ctx.active === 'create' && selectedChat(id);
     const state = ctx.chatState(c);
     const label = c.title || '未命名对话';
     const b = row.querySelector('.ws-chat');
@@ -736,14 +743,29 @@ function _syncChatList(target, items, isPinned, pool) {
     });
   }
 
-  function displayRows(items, available = items) {
+  function displayRows(items, available = items, placed = new Set()) {
     // These associations come from the authenticated main-process index. They
     // affect painting only: account actions and device lifecycle IDs stay separate.
-    const nativeIds = new Set(available.filter(row => !hiddenRow(row) && localVisible(row))
-      .map(row => canonicalLocalId(row.id)));
+    const native = new Map(available.filter(row => !hiddenRow(row) && localVisible(row))
+      .map(row => [canonicalLocalId(row.id), row]));
+    const representatives = new Map(native), replacedNative = new Set();
+    for (const row of available) {
+      if (hiddenRow(row)) continue;
+      const source = accountDisplayLinks.get(String(row.id || ''));
+      const id = source && canonicalLocalId(source), local = native.get(id);
+      // An account entry can be organized before its native page arrives.
+      // Preserve that explicit position without moving preferences or joining
+      // lifecycle identities. An already organized native entry keeps priority.
+      if (local && placed.has(row.id) && !placed.has(local.id) && representatives.get(id) === local) {
+        representatives.set(id, row);
+        replacedNative.add(id);
+      }
+    }
     return items.filter(row => {
       const source = accountDisplayLinks.get(String(row.id || ''));
-      return !source || !nativeIds.has(canonicalLocalId(source));
+      const representative = source && representatives.get(canonicalLocalId(source));
+      if (representative) return representative.id === row.id;
+      return !replacedNative.has(canonicalLocalId(row.id));
     });
   }
 
@@ -768,7 +790,9 @@ function renderChats() {
       }, new Map()));
     const groups = ctx.sidebarProjects?.partition(list);
     const available = groups ? [...groups.pinned, ...groups.recent, ...(groups.projects || []).flatMap(project => project.items)] : list;
-    const displayedIds = new Set(displayRows(available).map(item => item.id));
+    const placed = new Set(groups ? [...groups.pinned, ...(groups.projects || []).flatMap(project => project.items)]
+      .map(item => item.id) : pins);
+    const displayedIds = new Set(displayRows(available, available, placed).map(item => item.id));
     const visible = items => items.filter(item => !hiddenRow(item) && displayedIds.has(item.id));
     const pinned = visible(groups ? groups.pinned : list.filter((item) => pins.has(String(item.id || ''))));
     const recent = visible(groups ? groups.recent : list.filter((item) => !pins.has(String(item.id || ''))));
@@ -1000,7 +1024,7 @@ function refreshAccountHistory() {
     ctx.activeChatId = next;
     global.WorkspaceNavigation?.chatChanged(next);
     for (const button of ctx.root?.querySelectorAll('.ws-chat') || []) {
-      const selected = ctx.active === 'create' && Boolean(next) && button.dataset.chatId === next;
+      const selected = ctx.active === 'create' && selectedChat(button.dataset.chatId, next);
       if (button.classList.contains('is-active') === selected) continue;
       button.classList.toggle('is-active', selected);
       button.setAttribute('aria-current', selected ? 'page' : 'false');
