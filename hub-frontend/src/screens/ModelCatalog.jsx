@@ -74,7 +74,9 @@ export default function ModelCatalog() {
     const card = listRef.current?.querySelector('.model-provider.is-new-provider')
     if (!card) return
     pendingProviderFocus.current = ''
-    card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    // A card can be taller than the list viewport; reveal its identifying header.
+    const heading = card.querySelector('.model-provider-head') || card
+    heading.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     card.focus({ preventScroll: true })
   }, [d, newProviderId, listRef])
   const enabledProviders = providers.filter((p) => p.enabled).length
