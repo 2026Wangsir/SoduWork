@@ -82,12 +82,12 @@ def main() -> int:
         ok(False, "qwen 无模型配置被拦下")
     except RuntimeError as e:
         ok("模型服务" in str(e) and "Qwen" in str(e), "qwen 无模型配置被拦下且指路", e)
-    # Non-ACP runtimes retain their existing configuration path.
+    # Managed Pi must not fall back to a stale personal or desktop model file.
     try:
         _env_for(_PROFILES["pi"], {"llm": {}})
-        ok(True, "非 ACP 底座无模型配置不在此处拦")
-    except Exception as e:
-        ok(False, "非 ACP 底座无模型配置不在此处拦", e)
+        ok(False, "Pi rejects dispatch without model configuration")
+    except RuntimeError as e:
+        ok("Pi" in str(e) and "模型配置" in str(e), "Pi reports missing dispatch model configuration", e)
     # Team visibility defaults to managers, permits everyone, and normalizes invalid values.
     import asyncio
     from app.db import SessionLocal, init_db

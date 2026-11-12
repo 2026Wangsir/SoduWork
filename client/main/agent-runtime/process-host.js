@@ -58,7 +58,7 @@ function createProcessHost(app, options = {}) {
   let child = null, peer = null, ready = null, dead = false, stopping = null, guard = null, heartbeat = null;
   let watchdogProbe = null, powerSuspended = false, powerEpoch = 0, powerListenersInstalled = false;
   let cleanupPromise = null, cleanupPending = false, cleanupError = null;
-  let startupSettled = null;
+  let startupSettled = null, processJob = null;
   let lastHeartbeat = now(), lastWatchdogTick = now(), initialized = false;
   const fail = message => Object.assign(Error(message), { code: 'RUNTIME_PROCESS_GONE' });
   function resetHeartbeatWindow() { lastHeartbeat = lastWatchdogTick = now(); }
@@ -196,8 +196,12 @@ function createProcessHost(app, options = {}) {
       // spawn and the first identity snapshot can complete after stop(). Do
       // not certify an empty cleanup while either may still produce a child.
       if (startupSettled) await startupSettled;
-      if (guard) await guard.stop();
-      else if (child?.pid) child.kill();
+      try {
+        if (guard) await guard.stop();
+        else if (child?.pid) child.kill();
+      } finally {
+        if (processJob) await processJob.stop();
+      }
     }).then(() => { cleanupPending = false; cleanupError = null; }, error => {
       cleanupError = error; cleanupPending = false; throw error;
     });
@@ -253,6 +257,10 @@ function createProcessHost(app, options = {}) {
       const ownership = await guard.start();
       if (!ownership?.rootFound) throw Object.assign(fail('执行服务的进程身份尚未确认，请重新打开会话'),
         { code: 'RUNTIME_PROCESS_IDENTITY_UNAVAILABLE' });
+      assertLive();
+      // Attach before initialize can run any tools. Windows parent snapshots
+      // cannot recover Git Bash descendants whose intermediate parent exited.
+      processJob = await (options.jobFactory || require('./windows-process-job.cjs').attach)(child.pid);
       assertLive();
       const handlers = {
         projection(packet) { if (!dead) { try { row(packet.ref).update(packet); } catch (error) { gone(error); void stop(error); } } },

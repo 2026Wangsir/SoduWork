@@ -339,7 +339,7 @@ if (typeof electron === 'string') {
       await click('.library-confirm-submit');
       await untilMain(() => historyDeleted, 'historical server file deletion');
       await until('!document.querySelector("[data-library-file-preview=fixture-server-history]")');
-      await click('[data-library-menu-toggle=options]'); await click('[data-library-trash]');
+       await click('[data-library-trash]');
       await until('document.querySelector("[data-library-restore=fixture-server-history]")');
     }
     await trashHistoryFile();

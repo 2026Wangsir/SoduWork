@@ -129,6 +129,26 @@ class AdminRequirementDispatchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].task_id, tid)
 
+    async def test_runner_dispatch_correlates_only_the_authorized_queue_turn(self):
+        scope = {"conversationId": "chat", "turnId": "turn"}
+        tid = await self.create(work_routing={"conversationTurn": {
+            **scope, "executor": "dispatch", "state": "running"}})
+        response = await self.http.post(f"/api/v1/tasks/{tid}/ai-dispatch", json={
+            "conversationTurn": {**scope, "note": "Never copy arbitrary fields"},
+            "executionContext": {"strategy": "direct"}})
+        self.assertEqual(response.status_code, 200, response.text)
+        async with self.sessions() as session:
+            events = (await session.scalars(select(models.TaskEvent).where(
+                models.TaskEvent.task_id == tid, models.TaskEvent.kind == "ai.dispatched"))).all()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].detail["conversationTurn"], scope)
+        from app.services.dispatch_instructions import confirmed_turn
+        task = models.Task(work_routing={"conversationTurn": {**scope, "executor": "dispatch", "state": "running"}})
+        for claimed in (None, {**scope, "turnId": "stale"}, {**scope, "conversationId": "other"}):
+            self.assertEqual(confirmed_turn(task, claimed), {})
+        task.work_routing = {"conversationTurn": {**scope, "executor": "dispatch", "state": "completed"}}
+        self.assertEqual(confirmed_turn(task, scope), {})
+
     async def test_terminal_unclarified_and_active_conversation_are_not_dispatched(self):
         cases = [dict(archived_at=datetime.now(timezone.utc)), dict(triage_stage="intake"),
                  dict(triage_stage="clarifying"), dict(status="cancel"), dict(status="done"),

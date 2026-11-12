@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from opencode_peer_outcome import NativeOutcome
 
 
 def send(value):
@@ -15,6 +16,7 @@ def send(value):
 
 
 def peer(agent, mode):
+    native_outcome = NativeOutcome()
     assert "SODUWORK_APPROVAL_CHANNEL" not in os.environ
     work = Path.cwd()
     options = [{"optionId": "always", "kind": "allow_always"},
@@ -59,12 +61,16 @@ def peer(agent, mode):
             if agent == "opencode":
                 from urllib.parse import urlsplit, unquote
                 config = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])
-                uri = urlsplit(config["plugin"][-1])
-                value = unquote(uri.path)
-                if os.name == "nt":
-                    value = value.lstrip("/")
-                source = Path(value).read_text(encoding="utf-8")
-                marker = json.loads(re.search(r"const agentId = (.*);", source)[1])
+                markers = []
+                for plugin in config["plugin"]:
+                    value = unquote(urlsplit(plugin).path)
+                    if os.name == "nt":
+                        value = value.lstrip("/")
+                    source = Path(value).read_text(encoding="utf-8")
+                    if match := re.search(r"const agentId = (.*);", source):
+                        markers.append(json.loads(match[1]))
+                assert len(markers) == 1, "Exactly one native permission guard is required"
+                marker = markers[0]
                 result["configOptions"] = [{"id": "mode", "options": [
                     {"value": marker}, {"value": "plan"}, {"value": "build"}]}]
             else:
@@ -76,6 +82,7 @@ def peer(agent, mode):
                         "opencode": {"standard": "build", "readonly": "build"}}[agent][mode]
             assert params.get("modeId", params.get("value")) == expected
         elif method == "session/prompt":
+            native_outcome.begin("isolated-native-peer")
             path_key = "file_path" if agent == "qwen" else "filePath" if agent == "opencode" else "path"
             read = {path_key: str(work / "source.txt"), "limit": 20}
             if agent == "qwen":
@@ -111,6 +118,7 @@ def peer(agent, mode):
             assert not ask("execute", args, "run_shell_command", metadata=args)
             assert not (work / "denied.txt").exists()
             result = {"stopReason": "end_turn"}
+            native_outcome.end("isolated-native-peer")
         else:
             raise AssertionError(method)
         send({"jsonrpc": "2.0", "id": request["id"], "result": result})

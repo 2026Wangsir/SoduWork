@@ -69,6 +69,13 @@ class StructuredFailure(Harness2Error):
         return _structured_message(self, "refine")
 
 
+class PlanningOutputLimit(StructuredFailure):
+    """A complete tool-free planning response explicitly exhausted its tokens."""
+
+    def __init__(self):
+        super().__init__("response_truncated")
+
+
 def _structured_message(exc: StructuredFailure, stage: str) -> str:
     # Revalidate rather than trusting exception args, overridden __str__, or
     # fields mutated after construction. Never include provider diagnostic text.

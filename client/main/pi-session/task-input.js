@@ -155,6 +155,7 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   const explicitNative = requested.executionChoice === 'native';
   const submissionMode = ['auto', 'manual'].includes(String(requested.submissionMode || ''))
     ? String(requested.submissionMode) : '';
+  const dispatchInstructions = require('./dispatch-instructions.cjs').submitted(requested);
 
   // Attach task receipts to the prepare -> start -> collect -> complete lifecycle so outputs from
   // follow-up turns flow back to the task. Otherwise a later correction, such as changing the output
@@ -229,6 +230,7 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   };
   const transition = action => freshIdentity()
     .then(id => request(id, route + '/conversation-turn', { action, ...scope, executor: spec.mode,
+      ...(action === 'prepare' && dispatchInstructions ? {dispatchInstructions} : {}),
       ...(spec.continuationRef ? { continuationRef: spec.continuationRef } : {}),
       ...(submissionMode ? { submissionMode } : {}),
       ...(explicitNative && action === 'prepare' ? { executionChoice: 'native',
@@ -313,6 +315,7 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
       const next = { ...scope, turnId: 'recovery-' + require('node:crypto').randomUUID() };
       const receipt = await request(await freshIdentity(), route + '/conversation-turn',
         { action: 'prepare', ...next, executor: spec.mode,
+          ...(dispatchInstructions ? {dispatchInstructions} : {}),
           ...(spec.continuationRef ? { continuationRef: spec.continuationRef } : {}),
           ...(submissionMode ? { submissionMode } : {}) });
       if (receipt.turn.state !== 'queued') throw new Error('需求状态已变化，请刷新后查看结果');

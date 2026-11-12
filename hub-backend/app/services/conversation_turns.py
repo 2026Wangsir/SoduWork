@@ -367,12 +367,15 @@ async def apply(session, task, body, actor=""):
         raise HTTPException(422, "不支持的需求执行方式")
     native_choice = body.get("executionChoice") == "native"
     if action == "prepare":
+        from . import dispatch_instructions
+        instructions = dispatch_instructions.submitted(body, submission_mode)
         from .task_requirements import ensure_executable
         try:
             ensure_executable(task)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         if same:
+            await dispatch_instructions.preserve_retry(session, task.id, current, instructions)
             if continuation_ref != str(current.get("continuationRef") or ""):
                 raise HTTPException(409, "原执行会话已变化，请刷新需求后重试")
             if (has_submission_mode and stored_submission_mode and
@@ -435,6 +438,7 @@ async def apply(session, task, body, actor=""):
         current = {"turnId": turn_id, "conversationId": conversation_id, "state": "queued", "executor": executor}
         if continuation_ref:
             current["continuationRef"] = continuation_ref
+        dispatch_instructions.record(session, task.id, instructions, current, actor)
         # Starting manual rework clears the existing pending-rework marker.
         # A later rejection or failure creates a new reworkPending marker.
         # Runner rework is acknowledged only after its message admission. Queue

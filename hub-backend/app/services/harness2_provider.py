@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .harness2_errors import StructuredFailure
+from .harness2_errors import StructuredFailure, PlanningOutputLimit
 from .mcp_http import _NoRedirect, _response_chunks
 
 
@@ -224,6 +224,10 @@ def request(model, messages, tools, *, timeout=90, on_text=None, on_usage=None, 
                 message["reasoning_content"] = value["reasoning_content"]
             finished, calling = reason == "stop", reason == "tool_calls"
         if reason in {"length", "max_tokens"}:
+            # Incomplete streams never reach here. Only a terminal token limit
+            # on a tool-free planning response permits bounded regeneration.
+            if planning and not tools and not calls:
+                raise PlanningOutputLimit()
             raise StructuredFailure("response_truncated")
         if not isinstance(content, str) or not isinstance(calls, list) or len(calls) > 16:
             raise ValueError

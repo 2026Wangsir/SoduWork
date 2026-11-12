@@ -17,7 +17,9 @@ Dependabot proposes updates for GitHub Actions, both npm lockfiles, and backend 
 These workflows must run in the target GitHub repository before their platform results can be claimed. Local Windows checks do not constitute a successful GitHub Actions run.
 
 Runner dialogue regression checks follow the shared public model-error guidance.
-Harness2 performs seven refinement calls before each executor turn: an empty
+Harness2 performs seven refinement stages before each executor turn. One explicit
+planning token-limit response may add one bounded request, with both attempts
+accounted, before native execution. Incomplete streams are not retried. An empty
 executor reply with retained planning is an incomplete response, not a successful
 answer or a wholly empty turn. Tests require all seven usage events, retained
 planning, no answer or tool activity, failed settlement, sanitized provider errors,
