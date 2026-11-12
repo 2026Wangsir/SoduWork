@@ -256,7 +256,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       if (property === 'open') return async options => {
         const captured = _sessionOwners.assertOpen(options);
         const opened = await target.open(options);
-        if (opened?.ok && opened.session) _sessionOwners.bind(opened.session, options.identity, { captured });
+        if (opened?.ok && opened.session) _sessionOwners.bind(opened.session, options.identity, { captured, hub: true });
         return opened;
       };
       return Reflect.get(target, property);
@@ -431,14 +431,23 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
         Promise.resolve(session.loadSdk(app)).catch(() => {});
       }
       appRequest?.assertActive();
-      // Local history can be read without reconnecting the Hub or resuming an
-      // old account's execution process. Remote originals follow the usual path.
+      // Local history uses the current cached account identity without resuming
+      // an execution process. Remote originals follow their usual path.
       // A downloaded source locator is not a native identity. Account and cloud
       // originals retain their authenticated opening and continuation paths.
       const resolvedLocal = opts.chatId && !_cloudHandoff.isRemote?.(opts.chatId) && _sharedHistory
         ? await _sharedHistory.resolve(opts.chatId) : null;
       const local = resolvedLocal && require('../conversation/shared-history.cjs').isLocalIdentity(resolvedLocal, opts.chatId)
         ? resolvedLocal : null;
+      if (opts.chatId && !local && _sharedHistory) {
+        // A filtered native identity must not fall through to the older
+        // account-only execution check. Source locators for remote originals
+        // remain independent and continue through their authenticated path.
+        const indexed = await _sharedHistory.store.get(opts.chatId);
+        historyAccess.assertCurrent(app, requestActor);
+        if (require('../conversation/shared-history.cjs').isLocalIdentity(indexed, opts.chatId))
+          return { ok: false, reason: '无法确认这条会话属于当前账号或服务，请切回原连接' };
+      }
       const openLocalHistory = async () => {
         const captured = historyAccess.actor(app);
         if (local) {
@@ -449,7 +458,9 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
           const projection = await _sharedHistory.open(local.id);
           if (projection) {
             const handle = session.attachView(projection);
-            if (captured.identity && captured.owner) _sessionOwners?.bind(handle, captured.identity);
+            historyAccess.assertCurrent(app, captured);
+            if (captured.identity && captured.owner) _sessionOwners?.bind(handle, captured.identity,
+              { connection: true });
             if (event) _attach(handle, require('../conversation/app-surfaces.cjs').forSender(BrowserWindow, event.sender));
             else _detach(handle);
             _wire(BrowserWindow, handle);
@@ -680,7 +691,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
           await capabilityPromise.catch(() => {});
           return { ok: false, notFound: true, reason: '这条对话找不到了（存档可能已被清理）' };
         }
-        const ownerOptions = historyAccess.isOwnerlessNativeArchive(resume) ? { allowLegacy: true } : {};
+        const ownerOptions = {};
         historyAccess.assertOwner(app, opts.chatId, historyAccess.actor(app, identity), resume, ownerOptions);
       }
       const workOpening = require('../conversation/work-conversation-opening');
@@ -755,7 +766,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       const openingPromise = Promise.resolve().then(async () => {
         await assertHistoryCurrent();
         if (opts.chatId) {
-          const ownerOptions = historyAccess.isOwnerlessNativeArchive(resume) ? { allowLegacy: true } : {};
+          const ownerOptions = {};
           historyAccess.assertOwner(app, opts.chatId, historyActor, resume, ownerOptions);
         }
         accessConsent?.assertValid();
@@ -863,7 +874,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       try {
         await assertHistoryCurrent();
         if (opts.chatId) {
-          const ownerOptions = historyAccess.isOwnerlessNativeArchive(resume) ? { allowLegacy: true } : {};
+          const ownerOptions = {};
           historyAccess.assertOwner(app, opts.chatId, historyActor, resume, ownerOptions);
         }
         await require('../conversation/acceptance-session').attach(app, opened.session,
@@ -1194,7 +1205,13 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
     const win = BrowserWindow.fromWebContents(event.sender);
     const attached = _uiWindow.request(s, win, options);
     if (s.localReplica) {
-      return Promise.resolve(s.loadHistory?.(options || {})).then(() => ({ ok: true, snapshot: _contextSnapshot(s, s.snapshot()) }));
+      const captured = historyAccess.actor(app);
+      historyAccess.assertReadable(app, s.sessionId, captured, s.historyRow());
+      return Promise.resolve(s.loadHistory?.(options || {})).then(() => {
+        historyAccess.assertCurrent(app, captured);
+        if (session.get(ref) !== s) throw Error('账号或会话已变化，请重新打开');
+        return { ok: true, snapshot: _contextSnapshot(s, s.snapshot()) };
+      });
     }
     const raw = attached ? _uiWindow.snapshot(s) :
       (typeof s.uiSnapshot === 'function' ? s.uiSnapshot(options || {}) : s.snapshot());

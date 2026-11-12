@@ -51,6 +51,7 @@ const conversationSession = {
   searchHistory: () => timedPageInvoke('conversation-search-history'),
   cancelSearch: (clearCache = false) => ipcRenderer.send('conversation-search-cancel', clearCache === true),
   archivedHistory: () => ipcRenderer.invoke('pi-session-history-archived'),
+  importHistory: () => ipcRenderer.invoke('pi-session-history-import'),
   renameHistory: (id, title) => ipcRenderer.invoke('pi-session-history-rename', id, title),
   archiveHistory: (id) => ipcRenderer.invoke('pi-session-history-archive', String(id || '')),
   restoreHistory: (id) => ipcRenderer.invoke('pi-session-history-restore', String(id || '')),

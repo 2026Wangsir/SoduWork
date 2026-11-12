@@ -19,6 +19,7 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
   async function run(action, id, options = {}) {
     await options.assertCurrent?.(true);
     const row = await history.resolve(id);
+    await options.assertCurrent?.(true);
     if (!row) return null;
     if (options.expectedRevision !== undefined && options.expectedRevision !== row.revision) {
       const alreadyApplied = action === 'delete' ? row.deleted : !row.deleted && row.archived === (action === 'archive');
@@ -41,11 +42,13 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
     const active = session.findBySessionId?.(row.id);
     if (action !== 'restore' && active?.close && await active.close() === false)
       throw Error('会话仍在关闭，请稍后重试');
+    await options.assertCurrent?.(true);
     idle(row);
     // Stage deletion as an archive. A failed recycle leaves a visible retry
     // entry in archives; a stale directory refresh cannot reactivate it.
     await options.assertCurrent?.(true);
     const staged = await history.lifecycle(row.id, action === 'delete' ? 'archive' : action, identity);
+    await options.assertCurrent?.(true);
     if (!staged?.ok) return staged;
     publish(staged.conversation);
     if (action === 'delete') {
@@ -57,6 +60,9 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
           if (!result?.ok && !result?.notFound) throw Error(result?.reason || '清理会话记录失败，请重试');
         } else {
           const found = await session.historyEntry?.(app, row.id, { strict: true });
+          await options.assertCurrent?.(true);
+          if (found?.entry?.workOwner) require('../conversation/history-access').assertReadable(app, row.id,
+            require('../conversation/history-access').actor(app), { ...row, workOwner: found.entry.workOwner });
           if (found?.ok && found.entry?.path) await trash(shell, found.entry.path);
           else if (found?.ok === false && !found.notFound) throw Error(found.reason);
           else {
@@ -65,6 +71,7 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
           }
         }
       }
+      await options.assertCurrent?.(true);
       const deleted = await history.lifecycle(row.id, 'delete', identity);
       publish(deleted.conversation);
       return { ...deleted, id: row.id, aliasIds: row.historyAliasIds, localOnly: true, deleted: true };
@@ -74,8 +81,15 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
     return { ...staged, id: row.id, localOnly: true, archived: action === 'archive' };
   }
   return async (action, id, options) => {
-    const settings = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const input = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const captured = history.captureScope?.();
+    const settings = { ...input, async assertCurrent(...args) {
+      if (captured) history.guardScope(captured);
+      await input.assertCurrent?.(...args);
+      if (captured) history.guardScope(captured);
+    } };
     const row = await history.resolve(id);
+    await settings.assertCurrent();
     if (!require('../conversation/shared-history.cjs').isLocalIdentity(row, id)) return null;
     const previous = queues.get(row.id) || Promise.resolve();
     const pending = previous.catch(() => {}).then(() => run(action, row.id, settings));

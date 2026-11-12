@@ -13,7 +13,7 @@ function fixture(t, { realHistory = false } = {}) {
   let history;
   t.after(async () => { await history?.close?.(); fs.rmSync(root, { recursive: true, force: true }); });
   const app = { getPath: () => root }, original = identity();
-  let current = original, available = true, originSource = null;
+  let current = original, available = true, originSource = null, beforeAttach = async () => {};
   const installed = personal.create(app, { key: 'owned-entry', name: 'Owned entry', version: '0.1.0', template: 'app',
     description: 'Fixture', instructions: 'Fixture', ui: { contributions: [{ id: 'main', title: 'App',
       slot: 'workspace.navigation', source: { type: 'external', url: 'https://app.example.test/work',
@@ -30,7 +30,7 @@ function fixture(t, { realHistory = false } = {}) {
     open: async () => { opened.push('runtime'); throw Error('navigation must never create a runtime'); } };
   const preview = { appConversationOrigin: source => source === sender ? originSource : origin,
     openAppConversation: async (_event, saved, id, payload, guard, attach) => {
-      guard(); attach(composer); routed.push({ saved, id, payload });
+      guard(); await beforeAttach(); await attach(composer); routed.push({ saved, id, payload });
     } };
   const accountRow = { id: 'acct-original-chat', sourceSessionId: row.id, sourceClientId: original.clientId,
     accountProjection: true, accountConversation: true, adapterId: 'account-sync', owner: runtime.connectionScope(original) };
@@ -52,7 +52,8 @@ function fixture(t, { realHistory = false } = {}) {
   return { app, root, row, live, origin, installed, router, session, history, sender, event, routed, opened, attachments, composer, accountRow,
     bind: () => origins.bind(app, row.id, original, origin),
     setOrigin: value => { originSource = value; }, setIdentity: value => { current = value; },
-    setAvailable: value => { available = value; }, beforeResolve: fn => { beforeResolve = fn; } };
+    setAvailable: value => { available = value; }, beforeResolve: fn => { beforeResolve = fn; },
+    beforeAttach: fn => { beforeAttach = fn; } };
 }
 
 test('real shared-history SQLite native rows and aliases return to the application while cached copies remain readonly', async t => {
@@ -76,6 +77,39 @@ test('real shared-history SQLite native rows and aliases return to the applicati
   f.setIdentity({ ...identity(), hub: 'https://another.example.test' });
   await assert.rejects(f.router.navigate(f.event, f.row.id), /账号|服务|归属/);
   assert.equal(f.routed.length, 2, 'account and Hub rejection never reach the application host');
+});
+
+test('a strict history rejection cannot be bypassed through an older live application handle', async t => {
+  const f = fixture(t, { realHistory: true }); f.bind();
+  await f.history.register([{ ...f.row, creator: { account: 'two', hub: identity().hub } }]);
+  assert.equal(await f.history.resolve(f.row.id), null, 'strict history rejects conflicting account provenance');
+  for (const id of [f.row.id, 'project-alias'])
+    await assert.rejects(f.router.navigate(f.event, id), /账号|归属|服务/);
+  assert.equal(f.routed.length, 0); assert.equal(f.attachments.length, 0);
+  assert.deepEqual(f.opened, []);
+});
+
+test('a changed indexed owner during application authorization cannot regain renderer attachment', async t => {
+  const f = fixture(t, { realHistory: true }); f.bind(); await f.history.register([f.row]);
+  f.beforeResolve(async () => {
+    await f.history.register([{ ...f.row, workOwner: runtime.scope(identity('two')) }]);
+    assert.equal((await f.history.store.get(f.row.id)).workOwner, runtime.scope(identity('two')));
+    assert.equal(await f.history.resolve(f.row.id), null, 'fresh indexed ownership now conflicts with the retained live row');
+  });
+  await assert.rejects(f.router.navigate(f.event, f.row.id), /账号|服务/);
+  assert.equal(f.routed.length, 0); assert.equal(f.attachments.length, 0);
+  assert.deepEqual(f.opened, []);
+});
+
+test('the final composer attachment rechecks indexed ownership after the application window prepares', async t => {
+  const f = fixture(t, { realHistory: true }); f.bind(); await f.history.register([f.row]);
+  f.beforeAttach(async () => {
+    await f.history.register([{ ...f.row, workOwner: runtime.scope(identity('two')) }]);
+    assert.equal(await f.history.resolve(f.row.id), null);
+  });
+  await assert.rejects(f.router.navigate(f.event, f.row.id), /账号|服务/);
+  assert.equal(f.routed.length, 0); assert.equal(f.attachments.length, 0);
+  assert.deepEqual(f.opened, []);
 });
 
 test('only a verified application composer records immutable navigation provenance', async t => {

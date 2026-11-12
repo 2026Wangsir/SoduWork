@@ -72,6 +72,14 @@ Local services added in the desktop's **My models** panel are encrypted in that 
 
 If secure storage cannot be read, the client preserves the saved configuration and asks you to resolve the storage problem. Invalid edits are rejected without replacing the previous configuration. Switching from a local model to a managed model keeps each call's usage separate.
 
+### Conversation history after switching accounts
+
+Recent conversations, local history, and archives show records belonging to the current account and Hub. Switching accounts or services does not delete the originals. Return to the original account and Hub to view history with verified ownership. Expired short-lived credentials still allow offline viewing under the retained, verified local owner; explicit sign-out hides that account's history.
+
+For old Pi conversations with no ownership record, use **Archive → Import old Pi conversation** in the desktop, select a JSONL file from the local native index, and confirm creation of a read-only copy for the current account. The original stays unchanged; tool permissions and execution state are not restored. Supported Pi files must be readable in full, with a maximum of 32 MiB and 10,000 messages. Unsupported message or attachment formats are rejected rather than silently omitted. Existing foreign or conflicting ownership cannot be bypassed through this import.
+
+Some older records identify an account but lack verifiable information about the original Hub. They remain stored but hidden; direct opening or importing explains the ownership restriction. Restoring access requires trusted evidence of the original service; the import action cannot take ownership of these records. Keep a backup of the desktop profile and do not delete or manually rewrite ownership records.
+
 ## Start again and stop
 
 - Use the same launcher next time and sign in with the same account. Data and model settings are retained.

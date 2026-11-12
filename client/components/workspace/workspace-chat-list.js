@@ -33,7 +33,7 @@
     }
     return String(api?.taskStorageKey?.('tasks') || '');
   }
-  let historyOwner = accountOwner(), hadOwner = Boolean(historyOwner), historyEpoch = 0;
+  let historyOwner = accountOwner(), historyEpoch = 0;
   let mutationGeneration = 0, accountMutationGeneration = 0, lifecycleOverflow = false;
   const lifecycle = new Map(), MAX_LIFECYCLE_IDS = 1024;
   let localRows = [], localLoad = null, localReady = false, localNext = null, localRestart = false;
@@ -140,19 +140,16 @@
     if (next === historyOwner) return false;
     historyOwner = next;
     accountDisplayLinks.clear();
-    // The initial bootstrap only binds the already-open local history. Token
-    // renewal and device replacement have the same Hub/account owner key.
-    if (!hadOwner) { hadOwner = Boolean(next); return Boolean(next); }
     historyEpoch++;
     mutationGeneration++;
     lifecycle.clear(); lifecycleOverflow = false;
     ctx.historyLoad = null;
-    ctx.chatItems = supportsLocalHistory() ? ctx.chatItems.filter(row => isLocalId(row.id)) : [];
-    if (supportsLocalHistory()) {
-      for (const id of ctx.chatNames?.keys() || []) if (!isLocalId(id)) ctx.chatNames.delete(id);
-    } else ctx.chatNames?.clear();
-    if (!isLocalId(ctx.activeChatId)) ctx.activeChatId = '';
-    ctx.chatsLoading = !localReady && Boolean(next); accountError = '';
+    localRows = []; localLoad = null; localReady = false; localNext = null; localRestart = false;
+    localCatalog = null; localRecords = new Map(); localAliases = new Set();
+    nativeRefreshStarted = false; localRefreshPending = false; localError = '';
+    global.WorkspaceSidebarState?.clearLocalHistory?.();
+    ctx.chatItems = []; ctx.chatNames?.clear(); ctx.activeChatId = '';
+    ctx.chatsLoading = Boolean(next); accountError = '';
     closeChatMenu();
     try { ctx.sessionOff?.(); } finally { ctx.sessionOff = null; }
     if (ctx.root) ctx.renderChats();
@@ -886,14 +883,17 @@ function refreshAccountHistory() {
     return job;
   }
   function refreshLocalHistory({ append = false, refresh = false } = {}) {
+    syncHistoryOwner();
     if (!supportsLocalHistory()) return Promise.resolve(false);
     if (localLoad) return localLoad;
     if (append && !localNext && !localRestart) return Promise.resolve(true);
-    const workspace = localCatalog?.workspace;
+    const workspace = localCatalog?.workspace, epoch = historyEpoch;
+    const current = () => { syncHistoryOwner(); return !closed && epoch === historyEpoch; };
     const options = { source: 'local', limit: 50, ...(refresh ? { refresh: true } : {}),
       ...(append && localNext && !localRestart ? { after: localNext } : {}),
       ...(localCatalog ? { workspace, catalogRevision: localCatalog.revision } : {}) };
     const job = Promise.resolve().then(() => historyApi().history(options)).then(got => {
+      if (!current()) return false;
       if (got?.ok && got.localCatalog && (!workspace || got.localCatalog.workspace === workspace) &&
           got.localCatalog.revision < global.WorkspaceSidebarState.localHistoryRevision(got.localCatalog.workspace)) return false;
       if (!got?.ok || !got.localCatalog || workspace && got.localCatalog.workspace !== workspace ||
@@ -937,8 +937,8 @@ function refreshAccountHistory() {
       ctx.setChats([...localRows, ...remote]);
       if (catalog.revision !== previousRevision && !ctx.historyLoad) void refreshAccountHistory();
       return true;
-    }).catch(() => { localError = 'unavailable'; ctx.chatsLoading = false; ctx.renderChats(); return false; })
-      .finally(() => { if (localLoad === job) localLoad = null; ctx.renderChats(); flushLocalHistoryRefresh(); });
+    }).catch(() => { if (!current()) return false; localError = 'unavailable'; ctx.chatsLoading = false; ctx.renderChats(); return false; })
+      .finally(() => { if (localLoad !== job) return; localLoad = null; ctx.renderChats(); flushLocalHistoryRefresh(); });
     localLoad = job;
     return job;
   }
@@ -946,7 +946,8 @@ function refreshAccountHistory() {
     const local = supportsLocalHistory() ? refreshLocalHistory() : null;
     if (local && !nativeRefreshStarted) {
       nativeRefreshStarted = true;
-      void local.then(() => refreshLocalHistory({ refresh: true }));
+      const epoch = historyEpoch;
+      void local.then(() => { if (epoch === historyEpoch) return refreshLocalHistory({ refresh: true }); });
     }
     const remote = refreshAccountHistory();
     return local ? Promise.all([local, remote]).then(values => values.some(Boolean)) : remote;

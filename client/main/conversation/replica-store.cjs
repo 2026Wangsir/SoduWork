@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
-const METHODS = ['register', 'join', 'importChunk', 'importPlan', 'importPage', 'sealImport', 'get', 'nativeRows', 'list', 'catalog', 'page', 'directory', 'lifecycleRows', 'remoteLifecycleRows', 'lifecycle', 'cache', 'messages', 'changes', 'ack', 'workspace', 'close'];
+const METHODS = ['register', 'join', 'importChunk', 'importPlan', 'importPage', 'sealImport', 'discardImport', 'get', 'nativeRows', 'list', 'catalog', 'page', 'directory', 'lifecycleRows', 'remoteLifecycleRows', 'lifecycle', 'cache', 'messages', 'changes', 'ack', 'workspace', 'close'];
 const REMOTE_LIFECYCLE = "deleted=0 AND revision>0 AND json_extract(data,'$.cached')=1 AND coalesce(json_extract(data,'$.taskId'),'')<>''";
 function key(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 512 || /[\x00-\x1f]/.test(value))
@@ -272,6 +272,15 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
         db.prepare('UPDATE replicas SET catalog_revision=? WHERE id=?').run(revision, winner.id);
       });
     },
+    discardImport(id) {
+      key(id);
+      return transaction(() => {
+        if (db.prepare('SELECT id FROM replicas WHERE id=?').get(id)) return { ok: false, sealed: true };
+        for (const table of ['import_chunks', 'import_pages', 'import_messages'])
+          db.prepare('DELETE FROM ' + table + ' WHERE replica=?').run(id);
+        return { ok: true };
+      });
+    },
     get: id => project(resolve(id)),
     nativeRows(ids) {
       if (!Array.isArray(ids) || ids.length > 200) throw Error('Invalid native history batch');
@@ -313,7 +322,7 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       }));
     },
     workspace: () => db.prepare("SELECT value FROM metadata WHERE key='workspace'").get().value,
-    catalog(knownRevision) {
+    catalog(knownRevision, ownership = false) {
       if (knownRevision !== undefined) bounded(knownRevision, 0, Number.MAX_SAFE_INTEGER);
       const workspace = db.prepare("SELECT value FROM metadata WHERE key='workspace'").get().value;
       const revision = Number(db.prepare('SELECT coalesce(max(revision),0) AS revision FROM operations').get().revision);
@@ -323,6 +332,12 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       const items = db.prepare('SELECT id,archived,deleted FROM replicas ORDER BY id').all()
         .map(row => ({ id: row.id, historyAliasIds: [], originIds: [], archived: !!row.archived, deleted: !!row.deleted }));
       const byId = new Map(items.map(row => [row.id, row]));
+      if (ownership) for (const row of db.prepare('SELECT id,data,updated FROM replicas').iterate()) {
+        const data = JSON.parse(row.data);
+        byId.get(row.id).ownership = { id: row.id, localReplica: true, cached: data.cached,
+          creator: data.creator, source: data.source, sourceSessionId: data.sourceSessionId,
+          at: row.updated, workOwner: data.workOwner };
+      }
       const claimed = new Set();
       for (const row of db.prepare('SELECT replica,alias FROM aliases ORDER BY alias').iterate()) {
         claimed.add(row.alias);

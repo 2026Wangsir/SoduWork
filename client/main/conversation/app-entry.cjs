@@ -37,6 +37,14 @@ function create({ app, session, identityOf, preview, history, accountHistory, re
     if (typeof id !== 'string' || !id || id.length > 512) throw Error('会话标识无效');
     let row = await history?.resolve(id);
     if (!row || !require('./shared-history.cjs').isLocalIdentity(row, id)) row = null;
+    if (!row && history?.store) {
+      // A strict history filter already rejected this indexed native identity.
+      // Do not resurrect it from an older live handle or account-only archive.
+      // Remote source locators are not canonical local identities.
+      const indexed = await history.store.get(id);
+      if (require('./shared-history.cjs').isLocalIdentity(indexed, id))
+        throw Error('无法确认这条会话属于当前账号或服务，请切回原连接');
+    }
     const accountAlias = !row && accountHistory?.isAccountConversation?.(id);
     if (!accountAlias && !origins.exists(app, row?.id || id)) return { ok: true, handled: false };
     const { identity, assertCurrent } = await context();
@@ -59,10 +67,22 @@ function create({ app, session, identityOf, preview, history, accountHistory, re
     const current = preview.appConversationOrigin(event.sender);
     if (current && ['pluginId', 'contributionId', 'origin'].every(key => current[key] === origin[key]))
       return { ok: true, handled: false };
-    const payload = await entry.resolve({ app, identityOf }, origin, assertCurrent);
-    assertCurrent();
-    await preview.openAppConversation(event, origin, canonical, payload, assertCurrent, sender => {
+    const recheckIndex = async () => {
+      if (history?.store) {
+        const indexed = await history.store.get(canonical);
+        if (require('./shared-history.cjs').isLocalIdentity(indexed, canonical)) {
+          const fresh = await history.resolve(canonical);
+          if (!fresh || fresh.deleted || fresh.cached)
+            throw Error('无法确认这条会话属于当前账号或服务，请切回原连接');
+          access.assertOwner(app, canonical, access.actor(app, identity), fresh);
+        }
+      }
       assertCurrent();
+    };
+    const payload = await entry.resolve({ app, identityOf }, origin, assertCurrent);
+    await recheckIndex();
+    await preview.openAppConversation(event, origin, canonical, payload, assertCurrent, async sender => {
+      await recheckIndex();
       const destination = preview.appConversationOrigin(sender);
       if (!destination || ['pluginId', 'contributionId', 'origin'].some(key => destination[key] !== origin[key]))
         throw Error('原应用入口已变化，请重新打开');

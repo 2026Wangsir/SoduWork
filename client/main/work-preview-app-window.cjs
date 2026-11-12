@@ -482,7 +482,7 @@ function create({ owners: OWNERS, getDeps, ownerFor, ownerSession, safeWebUrl,
     layoutAllDetached(owner, item);
     item.composer.view.webContents.send('app-composer-mode', composerModePayload(item));
     const sender = item.composer.view.webContents;
-    reattach?.(sender);
+    await reattach?.(sender);
     const id = require('node:crypto').randomUUID();
     await new Promise((resolve, reject) => {
       const finish = error => {

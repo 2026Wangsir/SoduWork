@@ -102,6 +102,26 @@
       button.addEventListener('click', () => selectTab(button.getAttribute('data-archive-tab')));
     });
   }
+  function bindImport(panel) {
+    if (panel.querySelector('#archiveHistoryImport') || !api()?.importHistory) return;
+    const toolbar = panel.querySelector('.archive-history-toolbar');
+    if (!toolbar) return;
+    const button = action('', 'archive-history-import', async () => {
+      projectStore(); const scope = stateKey;
+      button.disabled = true;
+      try {
+        const result = await api().importHistory();
+        projectStore(); if (scope !== stateKey) return;
+        if (result?.canceled) return;
+        if (!result?.ok) throw Error(result?.reason || '导入未完成，原文件已保留');
+        message('旧 Pi 会话已导入为只读副本，原文件保持不变');
+        global.WorkspaceShell?.refreshConversationHistory?.();
+        await render();
+      } catch (error) { projectStore(); if (scope === stateKey) message(error.message || '导入未完成，原文件已保留', true); }
+      finally { button.disabled = false; }
+    });
+    button.id = 'archiveHistoryImport'; copy(button, '导入旧 Pi 会话'); toolbar.appendChild(button);
+  }
   function bindFilters(panel) {
     if (panel._archiveFiltersBound) return;
     panel._archiveFiltersBound = true;
@@ -269,6 +289,7 @@
     const panel = document.getElementById('archivePanel');
     if (!panel || !document.getElementById('archiveHistoryList') || !document.getElementById('archiveProjectsList')) return;
     bindTabs(panel);
+    bindImport(panel);
     bindFilters(panel);
     selectTab(activeTab);
     projectStore();

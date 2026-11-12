@@ -162,7 +162,7 @@ test('account projections, native records and downloaded copies keep independent
     projectRows: async rows => rows,
     indexedRows: async () => [{ id: 'copy-1', title: 'Same conversation', cached: true,
       source: { id: 'acct-1' }, sourceSessionId: 'native-1', at: 35 }],
-    store: { lifecycleRows: () => [] },
+    lifecycleRows: () => [],
   });
   const rows = (await bridge.history()).chats;
   assert.equal(rows.filter(row => row.title === 'Same conversation').length, 5);
@@ -188,7 +188,7 @@ test('deleted account origins do not delete independently managed cached copies 
     projectRows: async rows => rows,
     indexedRows: async () => [{ id: 'copy-deleted', title: 'Same conversation', cached: true,
       source: { id: 'acct-deleted' }, at: 35 }],
-    store: { lifecycleRows: () => [] },
+    lifecycleRows: () => [],
   });
   const rows = (await bridge.history()).chats;
   assert.deepEqual(rows.map(row => row.id), ['copy-deleted', 'independent']);
@@ -205,7 +205,7 @@ test('bridge does not merge different device projections by a shared source loca
     { id: 'acct-other', title: 'Shared', accountConversation: true, sourceSessionId: 'source-2', at: 10 },
   ] }) });
   bridge.setReplicaHistory({ projectRows: async rows => rows, indexedRows: async () => [],
-    store: { lifecycleRows: () => [] } });
+    lifecycleRows: () => [] });
   const rows = (await bridge.history()).chats;
   assert.deepEqual(rows.map(row => row.id), ['acct-old', 'acct-current', 'acct-other']);
   assert.equal(rows[0].historyAliasIds?.includes('acct-current'), undefined);
@@ -221,7 +221,7 @@ test('bridge retains verified native aliases while a downloaded origin remains a
   }] }) });
   bridge.setReplicaHistory({ projectRows: async rows => rows,
     indexedRows: async () => [{ id: 'independent-copy', cached: true, source: { id: 'acct-owned' }, at: 30 }],
-    store: { lifecycleRows: () => [] } });
+    lifecycleRows: () => [] });
   const rows = (await bridge.history()).chats;
   assert.deepEqual(rows.map(row => row.id), ['independent-copy', 'public-native']);
   assert.deepEqual(new Set(rows[1].historyAliasIds), new Set(['runtime-child', 'acct-owned']));

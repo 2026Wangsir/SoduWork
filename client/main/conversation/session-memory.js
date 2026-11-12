@@ -65,7 +65,7 @@ function write(app, sessionId, data, replace = false) {
 }
 function bind(app, sessionId, identity, selected, recordOwner = false) {
   if (!selected.length && !recordOwner) return;
-  write(app, sessionId, { owner: scope(identity), ids: ids(selected) });
+  write(app, sessionId, { owner: scope(identity), hub: new URL(identity.hub).origin, ids: ids(selected) });
 }
 
 function stableKey(scopeName, value) {

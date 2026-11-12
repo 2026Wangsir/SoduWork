@@ -69,7 +69,8 @@ test('a reloaded signed-out shell loads persisted native history under the first
   ].map(value => JSON.stringify(value)).join('\n') + '\n');
   require('../main/pi-session/environment-ipc').install({ app,
     ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
-    session: { async history() { reads++; await pending; return sessions.history(app); } } });
+    session: { async history() { reads++; await pending; const result = await sessions.history(app);
+      return { ...result, chats: result.chats.map(row => ({ ...row, creator: { account: 'two', hub: identity('two').hub } })) }; } } });
   const f = fixture('', { history: () => handlers.get('pi-session-history')() });
   const anonymous = f.api.refreshConversationHistory(); await tick();
   current = identity('two');
@@ -117,7 +118,7 @@ test('A to B to A rejects both previous epochs and restores the current account 
   assert.equal(firstPresence.closed, true); assert.equal(secondPresence.closed, true);
 });
 
-test('startup authentication, token renewal and same-account device replacement preserve current history and selection', async () => {
+test('startup clears untrusted cache while token renewal and same-account device replacement preserve current history', async () => {
   const f = fixture(''); f.ctx.chatItems = [row()]; f.ctx.activeChatId = 'private-a';
   f.api.subscribeConversationPresence();
   assert.equal(await f.api.refreshConversationHistory(), false);
@@ -125,6 +126,8 @@ test('startup authentication, token renewal and same-account device replacement 
   assert.equal(f.subscriptions.length, 0, 'startup waits for authentication before accepting presence');
   await f.switch('user-a', 'soduwork-device-auth');
   const request = f.ctx.historyLoad;
+  assert.equal(f.ctx.chatItems.length, 0); assert.equal(f.ctx.activeChatId, '');
+  f.ctx.chatItems = [row()]; f.ctx.activeChatId = 'private-a';
   await f.switch('user-a', 'soduwork-device-auth');
   await f.switch('user-a', 'soduwork-data-scope-changed', 'https://hub.example.invalid/', 'replacement');
   assert.equal(f.ctx.chatItems[0].id, 'private-a'); assert.equal(f.ctx.activeChatId, 'private-a'); assert.equal(f.pending.length, 1);
@@ -174,7 +177,7 @@ test('after logout a shell remount cannot reload or resubscribe to private histo
 function localFixture(user = 'user-a', count = 123) {
   const rows = Array.from({ length: count }, (_, i) => ({ id: 'saved-' + i, title: 'Saved ' + i, at: count - i }));
   const calls = [], remote = [];
-  let failLocal = false, revision = 0, responseWorkspace = 'profile-one';
+  let failLocal = false, revision = 0, responseWorkspace = 'profile-one', visibleRows = rows;
   const f = fixture(user, { local: true, realHistory: true, history(options = {}) {
     calls.push({ ...options });
     if (options.source !== 'local') {
@@ -182,39 +185,40 @@ function localFixture(user = 'user-a', count = 123) {
       return new Promise(resolve => remote.push(resolve));
     }
     if (failLocal) return Promise.reject(Error('Local inventory unavailable'));
-    const start = options.after ? rows.findIndex(row => row.id === options.after.id) + 1 : 0;
-    const chats = rows.slice(start, start + options.limit), last = chats.at(-1);
+    const start = options.after ? visibleRows.findIndex(row => row.id === options.after.id) + 1 : 0;
+    const chats = visibleRows.slice(start, start + options.limit), last = chats.at(-1);
     return Promise.resolve({ ok: true, chats,
-      next: start + chats.length < rows.length ? { id: last.id, at: last.at } : null,
+      next: start + chats.length < visibleRows.length ? { id: last.id, at: last.at } : null,
       localCatalog: { workspace: responseWorkspace, revision,
-        ...(options.catalogRevision === revision ? {} : { items: rows.map(row => ({ id: row.id, historyAliasIds: [] })) }) } });
+        ...(options.catalogRevision === revision ? {} : { items: visibleRows.map(row => ({ id: row.id, historyAliasIds: [] })) }) } });
   } });
   return { ...f, rows, calls, remote, fail: value => { failLocal = value; },
+    visible: value => { visibleRows = value; },
     profile: value => { responseWorkspace = value; }, revision: value => { revision = value; } };
 }
 
-test('local saved history paints before a hung account request and stays stable across A/B/A', async () => {
+test('local saved history paints before a hung account request and restores only its owner across A/B/A', async () => {
   const f = localFixture('user-a', 42);
   const first = f.api.refreshConversationHistory();
   assert.equal(await f.api.refreshLocalHistory(), true); await tick();
   assert.deepEqual(Array.from(f.ctx.chatItems, row => row.id), f.rows.map(row => row.id));
   assert.equal(f.remote.length, 1, 'The account request remains independently pending');
   f.ctx.activeChatId = 'saved-1'; f.ctx.chatNames.set('saved-1', { title: 'Saved title' });
-  await f.switch('user-b');
-  assert.equal(f.ctx.chatItems.length, 42); assert.equal(f.ctx.activeChatId, 'saved-1');
-  assert.equal(f.ctx.chatNames.get('saved-1').title, 'Saved title');
+  f.visible([]); f.profile('profile-b'); await f.switch('user-b');
+  assert.equal(f.ctx.chatItems.length, 0); assert.equal(f.ctx.activeChatId, '');
+  assert.equal(f.ctx.chatNames.size, 0);
   const second = f.ctx.historyLoad;
-  await f.switch('user-a'); const third = f.ctx.historyLoad;
+  f.visible(f.rows); f.profile('profile-one'); await f.switch('user-a'); const third = f.ctx.historyLoad;
   f.remote[2]({ ok: true, chats: [{ id: 'cloud-a', title: 'Current account cloud-only' }] }); await third;
   f.remote[1]({ ok: true, chats: [{ id: 'cloud-b', title: 'Private B' }] });
   f.remote[0]({ ok: true, chats: [{ id: 'old-cloud-a', title: 'Old A' }] });
   await Promise.all([first, second]);
   assert.deepEqual(Array.from(f.ctx.chatItems.filter(row => row.id.startsWith('saved-')), row => row.id), f.rows.map(row => row.id));
   assert.equal(f.ctx.chatItems.some(row => row.id === 'cloud-b' || row.id === 'old-cloud-a'), false);
-  assert.equal(f.calls.filter(call => call.refresh).length, 1, 'Initial native discovery is separate and coalesced');
+  assert.equal(f.calls.filter(call => call.refresh).length, 3, 'Each new account epoch gets one coalesced native refresh');
 });
 
-test('signed-out and expired-account clients can load all local pages without a private history read', async () => {
+test('an offline shell can load main-authorized local pages without a remote read and resets them on account change', async () => {
   const f = localFixture('');
   assert.equal(await f.api.refreshConversationHistory(), true); await tick();
   assert.equal(f.remote.length, 0); assert.equal(f.ctx.chatItems.length, 50);
@@ -229,9 +233,9 @@ test('signed-out and expired-account clients can load all local pages without a 
   for (const call of f.calls.filter(call => call.after)) {
     assert.equal(call.workspace, 'profile-one'); assert.equal(call.catalogRevision, 0);
   }
-  await f.switch('user-b'); const remote = f.ctx.historyLoad;
+  f.visible([]); f.profile('profile-b'); await f.switch('user-b'); const remote = f.ctx.historyLoad;
   f.remote[0]({ ok: false, reason: 'Account session expired' }); assert.equal(await remote, false);
-  assert.equal(f.ctx.chatItems.length, 123, 'An account 401 cannot hide durable local rows');
+  assert.equal(f.ctx.chatItems.length, 0, 'A different account cannot retain the previous offline catalog');
 });
 
 test('older records discovered after exhausting the catalog remain reachable without losing loaded rows', async () => {

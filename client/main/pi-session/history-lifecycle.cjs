@@ -41,7 +41,7 @@ function create({ app, session, accountHistory, BrowserWindow }) {
       row = await nativeRow(id);
       guard();
       if (row) {
-        access.assertOwner(app, id, captured, row, { allowLegacy: true });
+        access.assertOwner(app, id, captured, row);
         owned = true;
       }
       nativeId = id;

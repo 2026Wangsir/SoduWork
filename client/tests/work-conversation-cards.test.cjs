@@ -416,9 +416,8 @@ test('已初始化但零消息的工作会话保留标题、历史和卡片，�
   assert.ok(row, '初始化不能让零消息会话从历史消失');
   assert.equal(row.title, '首条消息前关闭的会话');
   assert.equal(row.count, 0);
-  // Local history is device-shared; executing or changing its work card still
-  // requires the original account through the separate work-action contract.
-  assert.deepEqual(f.module.visibleHistory(f.app, [row], identity('other')).map(item => item.id), [made.sessionId]);
+  // Reading local history follows the same account boundary as its work card.
+  assert.deepEqual(f.module.visibleHistory(f.app, [row], identity('other')), []);
   await sessions.archiveHistory(f.app, made.sessionId);
   const archived = (await sessions.archivedHistory(f.app, 50)).chats.find(item => item.id === made.sessionId);
   assert.equal(archived.title, row.title);
@@ -712,11 +711,11 @@ test('损坏存档显式报错，不能用新卡片覆盖损坏数据', async t 
   assert.equal(await fsp.readFile(file, 'utf8'), '{broken');
 });
 
-test('local form and ordinary history are shared while cloud ownership stays isolated', async t => {
+test('local form, ordinary history and cloud projections stay account isolated', async t => {
   const f = await fixture(t), made = await f.store.reserve({ title: '账号专属历史' });
   require('../main/conversation/session-memory').bind(f.app, 'ordinary', identity('account-b'), [], true);
-  const rows = (await sessions.history(f.app, 50)).chats.concat({ id: 'ordinary', count: 1 });
-  assert.deepEqual(new Set(f.module.visibleHistory(f.app, rows, identity('account-b')).map(item => item.id)), new Set([made.sessionId, 'ordinary']));
+  const rows = (await sessions.history(f.app, 50)).chats.concat({ id: 'ordinary', count: 1, creator: { account: 'account-b', hub: identity('account-b').hub } });
+  assert.deepEqual(new Set(f.module.visibleHistory(f.app, rows, identity('account-b')).map(item => item.id)), new Set(['ordinary']));
   const cloud = { id: 'cloud-private', cloud: true, remoteProjection: true,
     owner: scope(f.current()), count: 1 };
   assert.deepEqual(f.module.visibleHistory(f.app, [cloud], identity('account-b')), []);

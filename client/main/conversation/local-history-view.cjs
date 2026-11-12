@@ -36,7 +36,10 @@ async function create({ row, read }) {
     }
     return { apply, has: index => messages.has(index), publish() {
       const indices = [...messages.keys()].sort((a, b) => a - b);
-      value = { ...value, messages: indices.map(index => messages.get(index)), history: {
+      const visible = indices.map(index => messages.get(index));
+      const tools = row.importedHistory === true ? visible.flatMap((message, after) =>
+        (Array.isArray(message.historyTools) ? message.historyTools : []).map(tool => ({ ...tool, after }))) : [];
+      value = { ...value, messages: visible, tools, history: {
         totalMessages: entries.length, messageLimit: limit, messageIndices: indices,
         messageStart: indices[0] ?? entries.length, truncated: indices.length < entries.length } };
     } };

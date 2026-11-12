@@ -230,6 +230,7 @@ async function fixture(t, spec, legacySendIdentity = false) {
     switchAccount: () => { uid = 'fixture-account-b'; auth.clearSession(app); },
     restartAuth: () => { auth = newAuth(); installAuth(); },
     selectHub: hub => auth.selectHub(app, hub),
+    enrollHub: hub => auth.enroll(app, { hub }),
     sessionFor: hub => auth.session(app, hub),
     clear: () => auth.clearSession(app),
     logout: () => auth.logout(app),
@@ -284,6 +285,24 @@ test('production cloud handoff IPC rejects stale-account conversations before sc
   assert.equal(confirm.ok, false); assert.equal(confirm.reason, '会话已关闭，请重新打开后再试');
   assert.equal(fs.existsSync(path.join(f.root, 'conversation-handoffs')), false);
   assert.equal(f.turns.length, 0);
+});
+
+test('installed IPC rejects the same account old-Hub ref and native history fallback, then restores access on return', async t => {
+  const f = await fixture(t, catalog.runtime('pi')), originalHub = f.localIdentity().hub;
+  const opened = await f.openInstalled({ adapterId: 'pi' });
+  assert.equal(opened.ok, true, opened.reason);
+  const handle = f.bridge.get(opened.ref);
+  assert.equal((await f.send(handle, 'Original Hub private conversation')).ok, true);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const before = f.turns.length;
+  assert.equal((await f.enrollHub('http://127.0.0.1:10')).ok, true);
+  const other = await f.identity(); assert.equal(other.hub, 'http://127.0.0.1:10');
+  assert.equal(f.handlers.get('pi-session-snapshot')(f.event, handle.ref).ok, false);
+  const denied = await f.openInstalled({ chatId: handle.sessionId, adapterId: 'pi' });
+  assert.equal(denied.ok, false); assert.match(denied.reason, /账号或服务|原连接/);
+  assert.equal(f.turns.length, before);
+  await f.selectHub(originalHub); await f.identity();
+  assert.equal(f.handlers.get('pi-session-snapshot')(f.event, handle.ref).ok, true);
 });
 
 test('production IPC switches Pi -> OpenCode -> Qwen -> Pi and authenticates model selection', async t => {

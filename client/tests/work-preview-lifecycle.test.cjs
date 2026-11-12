@@ -98,6 +98,9 @@ test('canonical application entry focuses an existing composer and reopens a clo
   assert.notEqual(next, composer);
   await pending;
   assert.equal(f.windows.length, 2); assert.deepEqual(receipts.map(row => row.sessionId), ['same-session', 'same-session']);
+  await assert.rejects(f.preview.openAppConversation({ sender: f.sender }, origin, 'same-session', payload,
+    () => {}, async () => { await Promise.resolve(); throw Error('indexed owner changed'); }), /indexed owner changed/);
+  assert.equal(receipts.length, 2, 'failed asynchronous ownership check sends no composer session navigation');
 });
 
 test('preview state distinguishes the displayed local file from its HTTP loading and external-browser URL', async t => {

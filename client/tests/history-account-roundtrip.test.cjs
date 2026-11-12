@@ -23,10 +23,17 @@ async function fixture(t, { accountAlias = true } = {}) {
     active: { sessionId: 'runner-a', adapterId: 'opencode', path: 'runner-a' },
     segments: [{ sessionId: 'public-a', adapterId: 'pi', path: path.join(root, 'old.jsonl') }] };
   await segments.save(app, record);
-  let account = 'a', rows = [
-    { id: 'public-a', adapterId: 'pi', title: record.title, at: 10, count: 2 },
-    { id: 'runner-a', adapterId: 'opencode', title: 'Later segment request', at: 20, count: 4 },
-    { id: 'local-second', adapterId: 'pi', title: 'Independent conversation', at: 9, count: 2 },
+  let account = 'a';
+  const auth = require('../main/device-auth'), originalIdentity = auth.identity, originalSession = auth.session;
+  auth.identity = () => account === 'a' ? actor : identity('two');
+  auth.session = () => auth.identity().session;
+  t.after(() => { auth.identity = originalIdentity; auth.session = originalSession; });
+  const creator = { account: 'one', hub: actor.hub };
+  require('../main/conversation/session-memory').bind(app, 'local-second', actor, [], true);
+  let rows = [
+    { id: 'public-a', creator, adapterId: 'pi', title: record.title, at: 10, count: 2 },
+    { id: 'runner-a', creator, adapterId: 'opencode', title: 'Later segment request', at: 20, count: 4 },
+    { id: 'local-second', creator, adapterId: 'pi', title: 'Independent conversation', at: 9, count: 2 },
   ];
   let bridge, history, sync;
   async function start() {
@@ -66,15 +73,15 @@ async function fixture(t, { accountAlias = true } = {}) {
   };
 }
 
-test('account A to B to A and restart retain durable native rows when runtime inventory is empty', async t => {
+test('account A to B to A and restart isolate durable native rows without losing them', async t => {
   const f = await fixture(t);
   const first = await f.read();
   assert.deepEqual(first.chats.map(row => row.id).sort(), ['local-second', 'public-a', 'remote-a']);
   for (const account of ['b', 'a']) {
     f.switch(account);
     const next = await f.read();
-    assert.deepEqual(next.chats.map(row => row.id).sort(), ['local-second', 'public-a', 'remote-' + account]);
-    assert.equal(next.chats.find(row => row.id === 'public-a').title, f.record.title);
+    assert.deepEqual(next.chats.map(row => row.id).sort(), account === 'a' ? ['local-second', 'public-a', 'remote-a'] : ['remote-b']);
+    if (account === 'a') assert.equal(next.chats.find(row => row.id === 'public-a').title, f.record.title);
     assert.equal(next.chats.some(row => row.id === 'remote-' + (account === 'a' ? 'b' : 'a')), false);
   }
   await f.restart();

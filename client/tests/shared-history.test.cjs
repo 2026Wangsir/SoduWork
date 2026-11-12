@@ -17,34 +17,39 @@ function setup(t) {
     { type: 'message', id: 'msg-1', message: { role: 'user', content: 'saved by Alice' } },
     { type: 'message', id: 'msg-2', message: { role: 'assistant', content: [{ type: 'text', text: 'local answer' }] } },
   ].map(row => JSON.stringify(row)).join('\n'));
-  const row = { id: 'one', title: 'History', path: file, adapterId: 'pi', count: 2, at: 1 };
+  const row = { id: 'one', title: 'History', path: file, adapterId: 'pi', count: 2, at: 1,
+    creator: { account: 'one', hub: identity().hub } };
   const store = createStore(path.join(root, 'replicas.sqlite'));
   const flags = new Map();
-  let live = null;
+  let live = null, current = identity();
   const session = { archivedConversation: async idApp => row,
     historyEntry: async () => fs.existsSync(file) ? { ok: true, entry: row } : { ok: false, notFound: true },
     findBySessionId: () => live, setArchived: (_app, id, value) => flags.set(id, value),
     forgetRunner: async () => ({ ok: false, notFound: true }) };
-  const history = create({ app, session, store });
+  const history = create({ app, session, store, identityOf: () => current });
   t.after(async () => { await history.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  return { root, file, app, row, session, store, history, flags, set live(value) { live = value; } };
+  return { root, file, app, row, session, store, history, flags, set live(value) { live = value; },
+    switch(value) { current = value; } };
 }
 test('shared local reader opens native text without starting any account runtime', async t => {
   const f = setup(t);
-  const rows = await f.history.projectRows([{ ...f.row, workOwner: 'another-account' }]);
+  const rows = await f.history.projectRows([f.row]);
   assert.equal(rows.length, 1);
   const view = await f.history.open('one');
   assert.equal(view.localReplica, true);
   assert.deepEqual(view.snapshot().messages.map(row => row.text), ['saved by Alice', 'local answer']);
   assert.equal(view.snapshot().messages[1].blocks[0].text, 'local answer');
   assert.equal((await view.send('should not execute')).accepted, false);
+  f.switch(identity('two'));
+  assert.equal((await f.history.projectRows([f.row])).length, 0);
+  assert.equal(await f.history.open('one'), null);
 });
 test('legacy outbox recovery preserves sparse positions with bounded batches before metadata-only sync', async t => {
   const f = setup(t), original = f.store.cache.bind(f.store); let writes = 0;
   f.store.cache = (...args) => { writes++; return original(...args); };
   const messages = Array.from({ length: 250 }, (_, i) => ({ position: i < 150 ? i : i + 10,
     role: 'user', text: 'retained-' + i }));
-  const job = { hub: 'https://isolated.invalid', ownerKey: 'original', body: {
+  const job = { hub: identity().hub, ownerKey: 'original', body: {
     sourceSessionId: 'orphan', sourceEpoch: 'first', title: 'Recovered', messages } };
   await f.history.preserveLegacyOutbox(job, identity());
   const recovered = (await f.history.list({ archived: true })).items[0];
@@ -89,7 +94,7 @@ test('active local execution remains protected from archive or delete', async t 
   await assert.rejects(action('delete', 'one', { confirmed: true }), /还在执行/);
   assert.equal((await f.history.resolve('one')).deleted, false);
 });
-test('downloaded cloud copy remains local across accounts and late refresh cannot revive it', async t => {
+test('downloaded cloud copy remains with its account and late refresh cannot revive its deletion', async t => {
   const f = setup(t);
   const handle = { snapshot: () => ({ messages: [{ role: 'assistant', text: 'saved cloud answer' }] }),
     historyRow: () => ({ id: 'remote-one', cloud: true, remoteProjection: true, adapterId: 'codex-harness', title: 'Cloud result' }) };
@@ -98,7 +103,12 @@ test('downloaded cloud copy remains local across accounts and late refresh canno
   assert.ok(copy.id.startsWith('copy-'));
   assert.equal(copy.cloud, false);
   assert.equal((await f.history.read(copy.id)).items[0].text, 'saved cloud answer');
-  await f.history.lifecycle(copy.id, 'delete', identity('two'));
+  await assert.rejects(f.history.lifecycle(copy.id, 'delete', identity('two')), /账号/);
+  f.switch(identity('two'));
+  assert.equal((await f.history.list()).items.length, 0);
+  await assert.rejects(f.history.read(copy.id), /不存在/);
+  f.switch(identity());
+  await f.history.lifecycle(copy.id, 'delete', identity());
   await f.history.capture(handle, identity());
   assert.equal((await f.history.list()).items.length, 0);
   assert.equal((await f.history.resolve(copy.id)).deleted, true);
