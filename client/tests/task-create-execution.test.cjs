@@ -83,7 +83,7 @@ test('创建只保存内容，执行入口仍统一使用服务端预检合同',
   assert.match(create, /await submit\(state/);
   assert.match(create, /executionContext: null/);
   assert.match(create, /workRouting: \{\}/);
-  assert.match(create, /projectId: options\.projectId/);
+  assert.match(create, /projectId: \(Object\.prototype\.hasOwnProperty\.call\(draft, 'projectId'\) \? draft\.projectId : options\.projectId\) \|\| null/);
   assert.match(create, /repoId: draft\.repo/);
   assert.match(add, /let goWarning = ''/);
   assert.match(add, /if \(goWarning\) \{/);

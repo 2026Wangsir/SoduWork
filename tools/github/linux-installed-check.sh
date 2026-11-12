@@ -46,6 +46,9 @@ if [ "$kind" != tgz ]; then
   grep -F "$version" /evidence/package-version.txt
   grep -F /opt/SoduWork/soduwork /usr/share/applications/soduwork.desktop
   test "$(find /usr/share/icons/hicolor -type f -name soduwork.png | wc -l)" -ge 8
+  runuser -u acceptance -- env ELECTRON_RUN_AS_NODE=1 "$app/soduwork" -e \
+    'const path=require("node:path"),app=process.argv[1];require(path.join(app,"resources/app.asar/main/pi-session/shell-runtime.js")).resolveAsync({resourceRoot:path.join(app,"resources"),clientRoot:path.join(app,"resources/app.asar")}).then(result=>console.log(JSON.stringify(result)),error=>{console.error(error.message);process.exitCode=1;});' \
+    "$app" > /evidence/shell-runtime.json
 fi
 runuser -u acceptance -- env ELECTRON_RUN_AS_NODE=1 "$app/soduwork" -e 'console.log(process.versions)' > /evidence/node-runtime.txt
 runuser -u acceptance -- env SODUWORK_DATA_ROOT="$profile/runner" SODUWORK_BUNDLED_NODE="$app/soduwork" \

@@ -20,6 +20,7 @@
   let _mates = [];
   let _submission = null;
   let _card = null;
+  let _projectPicker = null;
 
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -49,6 +50,7 @@
   /* Entry points. */
   /* opts: {model(), atts(), clearAtts(), onCreated(id,title), workIntent} */
   function open(text, opts) {
+    _projectPicker?.dispose(); _projectPicker = null;
     _submission = null;
     _d = null;
     _opts = opts || {};
@@ -85,6 +87,7 @@
         _card?.phase === 'succeeded' && _card.receipt?.id &&
         _card.ownerScope === String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '')) return;
     const saved = capture();
+    _projectPicker?.dispose(); _projectPicker = null;
     _requestSeq++;
     _mateRequestSeq++;
     _d = null; _openSel = ''; _submission = null;
@@ -125,6 +128,7 @@
    */
   async function openWith(p, opts) {
     if (!p) return;
+    _projectPicker?.dispose(); _projectPicker = null;
     _submission = null;
     _d = null;
     _opts = opts || {};
@@ -171,6 +175,7 @@
       who: who,
       flow: '', flowExplicit: false, whoSource: p.assigneeUserId || p.assigneeKind ? 'proposal' : 'default',
       repo: options.repoId || p.repoId || "",
+      projectId: String(options.projectId || ''),
     };
     _applyParsedRouting(p, RequirementRouting.instruction(options, ''), true, draft, mates, directory?.ok === false);
     _acceptDraft(record, draft, directory);
@@ -219,6 +224,7 @@
       if (record.phase === 'error') button.textContent = _submission?.stored ? '重试上传并继续' : '重试创建需求';
     }
     const cancel = _box()?.querySelector('#cpCancel'); if (cancel) cancel.disabled = false;
+    _projectPicker?.paint();
   }
 
   async function restore(saved, opts) {
@@ -360,6 +366,7 @@
       who: null,
       flow: '', flowExplicit: false,
       repo: options.repoId || "",
+      projectId: String(options.projectId || ''),
     };
     const directory = got[1], mates = RequirementRouting.normalizeMates(Array.isArray(directory) ? directory : directory?.mates);
     _applyParsedRouting(f, direct, true, draft, mates, directory?.ok === false);
@@ -429,6 +436,14 @@
       return;
     }
     const d = _d;
+    if (!Object.prototype.hasOwnProperty.call(d, 'projectId')) d.projectId = String(_opts.projectId || '');
+    if (!_projectPicker && global.RequirementFields?.projectPicker) {
+      const record = _card;
+      _projectPicker = global.RequirementFields.projectPicker({value: d.projectId,
+        current: () => _card === record && Boolean(_d),
+        editable: () => !_d?.repo && !_submission?.stored && !_submission?.running && !_submission?.preflighting && _card?.phase !== 'submitting',
+        onChange: value => { if (_card === record && _d) _d.projectId = value; }});
+    }
     const inChat = _opts.variant === 'chat';
     const fixedActions = _opts.variant === 'sheet' && _opts.fixedActions === true;
     box.innerHTML =
@@ -452,6 +467,7 @@
         '</div>' +
       '</div>';
     box.classList.add('show');
+    _projectPicker?.bind(box);
     if (fixedActions) _opts.onFormRendered?.(box.querySelector('.cp-form-materials'));
   }
 
@@ -531,10 +547,12 @@
     '</div>';
   }
 
-  /* Category and owner are editable; execution method and repository association are outside this creation form. */
+  /* Project, category, and owner are editable; repository associations never migrate here. */
   function _rowsHtml() {
     const wl = _whoLabel();
     let html = '<div class="cp-sec"><div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('settings') || '') + '基本信息</div>';
+    if (_projectPicker) html += '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpProjectId">关联项目</label>' +
+      _projectPicker.html({id:'cpProjectId',hint:_d.repo ? '项目由已关联仓库确定，本次不迁移仓库' : ''}) + '</div>';
     html += _row('负责人', _sel('who', wl.name, wl.sub));
     if (_d.who?.hint) html += '<div class="cp-why">' + esc(_d.who.hint) + '</div>';
     html += _row('优先级', _sel('prio', _PRIO[_d.priority] || '普通', '') +
@@ -811,6 +829,7 @@
     if (g('cpVisibility')) _d.visibility = g('cpVisibility').value;
     if (g('cpTags')) _d.tags = global.RequirementFields.readTags(g('cpTags'));
     if (g('cpTriage')) _d.triageStage = g('cpTriage').value;
+    if (_projectPicker) _d.projectId = _projectPicker.value();
     const cks = document.querySelectorAll('.cp-ck-t');
     if (document.getElementById('cpCheck')) {
       _d.check = Array.prototype.map.call(cks, (el) => el.value);
@@ -825,6 +844,7 @@
   function _rerender() {
     const el = document.getElementById('cpRows');
     if (el) el.innerHTML = _rowsHtml(); else _render();
+    _projectPicker?.bind(_box());
     _positionSelection();
     const btn = document.getElementById('cpCreate');
     if (btn && !btn.disabled) btn.textContent = _goLabel();

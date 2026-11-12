@@ -3,6 +3,17 @@ const assert = require('node:assert/strict');
 const R = require('../core/requirements.js');
 const Sync = require('../core/task-sync.js');
 
+test('only an unexecuted execution owner without a repository can change the business project', () => {
+  const owner = {status:'todo',triageStage:'ready',canEditRequirement:true,readOnly:false,projectId:'business-a'};
+  assert.deepEqual(R.editPatch(owner,{projectId:'business-b'}),{projectId:'business-b'});
+  assert.deepEqual(R.editPatch(owner,{projectId:null}),{projectId:null});
+  assert.deepEqual(R.editPatch({...owner,projectId:null},{projectId:''}),{});
+  for (const extra of [{readOnly:true},{readOnly:undefined},{repoId:'repository-a'},
+    {hasExecutionHistory:true},{requirementEditBlocked:true},{canEditRequirement:false}]) {
+    assert.deepEqual(R.editPatch({...owner,...extra},{projectId:'business-b',repoId:''}),{},JSON.stringify(extra));
+  }
+});
+
 test('unclaimed repository issues appear in related and actionable scopes without execution rights', () => {
   const task = {id: 'issue', status: 'todo', triageStage: 'ready', myRoles: ['repository_member'],
     canClaim: true, readOnly: true, canViewExecution: false};
