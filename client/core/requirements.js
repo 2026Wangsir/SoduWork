@@ -14,7 +14,7 @@
     ['delivered', '已完成', '查看成果与验收记录'],
     ['closed', '已归档', '保留历史，随时查阅'],
   ];
-  const columns = [['intake', '收集箱', '收集想法，补齐目标与材料'], ...lanes.slice(2)];
+  const columns = [['intake', '收集箱', '待整理的需求；“待补充”表示仍需完善背景或完成标准'], ...lanes.slice(2)];
   const priorities = { critical: '紧急', high: '高', normal: '普通', low: '低' };
   const sorts = { priority: '优先级', updated: '最近更新', due: '截止日期', created: '最新提出' };
   /*

@@ -48,6 +48,17 @@ test('scope and approval tooltips explain visibility in all four locales', () =>
   }
 });
 
+test('collection inbox guidance names the same clarification flag in every locale', () => {
+  const c = client(),phrase = '待整理的需求；“待补充”表示仍需完善背景或完成标准';
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    const translated = c.api.translateText(phrase);
+    assert.ok(translated.includes(c.api.translateText('待补充')),locale);
+    if (locale === 'zh-CN') assert.equal(translated,phrase);
+    else assert.notEqual(translated,phrase,locale);
+  }
+});
+
 test('renderer catalog packages preserve frozen snapshots and match canonical package order', () => {
   const context = vm.createContext({}), expected = {};
   const directory = path.join(__dirname, '../core/locales');
