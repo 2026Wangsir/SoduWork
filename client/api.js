@@ -1041,9 +1041,10 @@
 
     /* Projects available when assigning tasks. */
     async getProjects() {
-      var res = await fetch(apiUrl('/projects'), { headers: authHeaders(), signal: _abortSignal(DEFAULT_TIMEOUT) });
-      if (!res.ok) { markFromError(new Error('HTTP ' + res.status)); return []; }
-      var txt = await res.text(); mark(true); return parseJSON(txt) || [];
+      var rows = await jfetch('/projects');
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row.id !== 'string' || !row.id.trim() ||
+          typeof row.name !== 'string')) throw new Error('项目列表响应不完整，请重试');
+      return rows;
     },
 
     /* Personal and team daily/weekly reports, with client reading and confirmation. */

@@ -473,6 +473,9 @@ async def create_task(
     actor = await session.get(models.Client, owner_id)
     if creator and creator[0] and actor:
         actor = SimpleNamespace(id=actor.id, user_ref=creator[0])
+    if origin == "local":
+        from . import requirement_projects
+        await requirement_projects.prepare_create(session, actor, data)
     await task_requirements.apply(session, actor, t, data, creating=True)
     apply_detail(t, data)
     normalize_output_contract(t)
@@ -572,6 +575,8 @@ async def update_task(session: AsyncSession, owner_id: str, tid: str, patch: dic
     previous_org = t.shared_org_id
     prev_assignee = t.assignee_user_id
     requirement_edit = "requirementVersion" in patch
+    from . import requirement_projects
+    await requirement_projects.prepare_update(session, client, t, patch)
     edit_facts = await task_requirements.apply(session, client, t, patch)
     if requirement_edit and t.requirement_content:
         content = dict(t.requirement_content)

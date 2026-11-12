@@ -29,6 +29,17 @@ function response(status, body) {
   return { ok: status >= 200 && status < 300, status, text: async () => body || '' };
 }
 
+test('business project lookup distinguishes a successful empty list from HTTP and malformed responses', async () => {
+  assert.equal((await load(async()=>response(200,'[]')).getProjects()).length,0);
+  for (const status of [403,404,500]) {
+    await assert.rejects(()=>load(async()=>response(status,'{"detail":"Projects unavailable"}')).getProjects(),
+      error=>error.status===status&&error.message==='Projects unavailable');
+  }
+  for (const body of ['null','{}','{"projects":[]}','[{"id":7,"name":"Invalid"}]']) {
+    await assert.rejects(()=>load(async()=>response(200,body)).getProjects(),/项目列表/);
+  }
+});
+
 test('activity reads the dedicated authenticated events endpoint and accepts an empty history', async () => {
   const calls = [];
   const api = load(async (url, options) => {calls.push({url, options}); return response(200, '{"events":[]}');});

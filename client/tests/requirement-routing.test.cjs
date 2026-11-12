@@ -12,12 +12,14 @@ const explicit = name => ({ assignee: name, assigneeExplicit: true, assigneeSour
 function fixture({ parsed = {}, mates = { mates: [mate] }, execution = options } = {}) {
   const fields = new Map(), handlers = {}, calls = [], alerts = [], checks = [], serverEvents = []; let html = '';
   const decode = s => String(s || '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const node = value => ({ value, disabled: false, attributes: new Map(), addEventListener() {},
+  const node = value => ({ value, disabled: false, attributes: new Map(), listeners:{},
+    addEventListener(type,fn) { this.listeners[type]=fn; },
     setAttribute(name, next) { this.attributes.set(name, String(next)); },
     getAttribute(name) { return this.attributes.get(name) ?? null; },
-    removeAttribute(name) { this.attributes.delete(name); }, focus() { this.focused = true; } });
+    removeAttribute(name) { this.attributes.delete(name); }, focus() { this.focused = true; },
+    replaceChildren(...options) { this.options=options; } });
   const box = { classList: { add() {}, remove() {} }, addEventListener: (type, fn) => { handlers[type] = fn; },
-    querySelector: s => fields.get(s.replace(/^#/, '')) || null,
+    querySelector: s => fields.get(s === '[data-rq-project-select]' ? 'cpProjectId' : s.replace(/^#/, '')) || null,
     querySelectorAll: s => s === '[data-rq-tag-editor]' ? [{querySelector: child =>
       child === '[data-rq-tag-value]' ? fields.get('cpTags') :
       child === '[data-rq-tag-input]' ? fields.get('cpTagsInput') : {hidden: true}}] : Array.from(fields.values()),
@@ -35,6 +37,7 @@ function fixture({ parsed = {}, mates = { mates: [mate] }, execution = options }
       for (const id of ['cpCreate', 'cpCancel', 'cpCheck']) if (value.includes('id="' + id + '"')) fields.set(id, node(''));
     } };
   const ctx = { window: null, console, setTimeout, clearTimeout, document: {
+    createElement:()=>node(''),
     getElementById: id => id === 'cpDraft' ? box : fields.get(id), querySelectorAll: s => s === '.cp-ck-t' ? checks : [], addEventListener() {} },
     addEventListener() {}, ComposeSelectionPosition: { position() {} }, petSay: value => alerts.push(value),
     Requirements: { dateTimestamp: () => null }, tasks: [],
@@ -290,4 +293,23 @@ test('创建所处项目只作为背景保留，不成为流程或执行选择',
   const f = fixture(); await f.ctx.ComposeDraft.openWith({ title: '项目记录', kind: 'ticket', repoId: 'repo-context' }, { projectId: 'project-context' });
   await f.ctx.audit.create(); assert.equal(f.ctx.tasks[0].projectId, 'project-context');
   assert.equal(f.ctx.tasks[0].repoId, 'repo-context'); assert.equal(f.ctx.tasks[0].executionContext, null);
+});
+
+test('the project selected or cleared in creation replaces the initial board filter without migrating a repository',async()=>{
+  for(const chosen of ['business-b','']){
+    const f=fixture();f.ctx.SoduWorkAPI.getProjects=async()=>[{id:'business-a',name:'Business A'},{id:'business-b',name:'Business B'}];
+    await f.ctx.ComposeDraft.openWith({title:'Project choice'},{projectId:'business-a',saveOnly:true});await flush();
+    const select=f.fields.get('cpProjectId');assert.equal(select.value,'business-a');assert.equal(select.disabled,false);
+    select.value=chosen;select.listeners.change();
+    assert.equal(f.ctx.ComposeDraft.capture().draft.projectId,chosen);
+    await f.ctx.audit.create();assert.equal(f.ctx.tasks[0].projectId,chosen||null);assert.equal(f.ctx.tasks[0].repoId,'');
+  }
+});
+
+test('a repository-bound creation retains its project and repository despite a forged selection event',async()=>{
+  const f=fixture();f.ctx.SoduWorkAPI.getProjects=async()=>[{id:'business-a',name:'A'},{id:'business-b',name:'B'}];
+  await f.ctx.ComposeDraft.openWith({title:'Bound project',repoId:'repository-a'},{projectId:'business-a',saveOnly:true});await flush();
+  const select=f.fields.get('cpProjectId');assert.equal(select.disabled,true);
+  select.value='business-b';select.listeners.change();await f.ctx.audit.create();
+  assert.equal(f.ctx.tasks[0].projectId,'business-a');assert.equal(f.ctx.tasks[0].repoId,'repository-a');
 });

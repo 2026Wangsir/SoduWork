@@ -83,6 +83,8 @@ python3 quality_gate.py --list
 
 需求列表、详情和更新使用原 `/api/v1/tasks` 契约。`requirementContent` 是需求正文；已有交付 Task 的 `title/note` 仍可能包含私人执行上下文，需求编辑应携带 `requirementVersion`，只更新需求投影。`canEditRequirement` 与 `canViewExecution` 分离；共享需求不会开放执行记录、评论或输出附件。
 
+需求项目选择复用 `GET /api/v1/projects` 中有效的 Hub 业务项目、原有组织范围及公开项目。只有需求所属设备和账号能够在从未开始执行时，携带当前 `requirementVersion` 更改或清除 `projectId`；`null` 表示取消关联。已关联仓库的需求固定归属原项目。明确新增的关联必须有效、可见且与仓库一致；未改变的历史关联和仅传仓库的旧调用保留原有行为。个人对话项目不是 Hub 业务项目。
+
 旧需求并入交付 Task 时，完整原记录保存在 `legacy_requirements`，旧创建人、需求方和经办人的范围保存在 `task_requirement_access`。只有部分原需求权限的人只能读取自己的快照和材料，不能改写聚合需求或查看其他原需求。列表、详情、附件访问和 WebSocket 使用同一规则。归档后需先恢复再派活；完成后归档保留验收和完成状态。
 
 升级前必须备份数据库和匹配版本程序。0053 在事务中迁移并删除旧表；文件内容及对象存储键不变。同一交付 Task 的原需求若来自不同可见范围，升级明确失败并回滚，不能静默扩大权限。重复执行不会重复迁移。统一需求开始产生新写入后，自动降级被禁止，应使用升级前数据库备份和对应程序一起回滚。旧 `/work-items` 路由返回 410，旧插件 `work.task.create` 仅作为统一 Task 创建的别名。

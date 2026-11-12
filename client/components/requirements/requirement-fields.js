@@ -41,6 +41,18 @@
     const pending = input?.disabled ? '' : input?.value || '';
     return normalizeTags([...value, ...normalizeTags(pending)]);
   }
+  function setTags(field, tags) {
+    const value = normalizeTags(tags); field.value = JSON.stringify(value);
+    const chips = field.closest?.('[data-rq-tag-editor]')?.querySelector('[data-rq-tag-chips]');
+    if (chips) chips.replaceChildren(...value.map((tag, index) => {
+      const chip = document.createElement('span'), label = document.createElement('span'), button = document.createElement('button');
+      chip.className = 'rq-tag-chip'; label.textContent = tag; label.setAttribute('data-user-content', '');
+      button.type = 'button'; button.setAttribute('data-rq-tag-remove', String(index));
+      button.setAttribute('aria-label', '删除标签：' + tag); button.title = '删除标签';
+      const icon = document.createElement('span'); icon.textContent = '×'; icon.setAttribute('aria-hidden', 'true');
+      button.append(icon); chip.append(label, button); return chip;
+    }));
+  }
   function validateTags(root) {
     for (const editor of root?.querySelectorAll?.('[data-rq-tag-editor]') || []) {
       const field = editor.querySelector('[data-rq-tag-value]'), input = editor.querySelector('[data-rq-tag-input]');
@@ -141,5 +153,97 @@
         [['intake', '收集箱'], ['clarifying', '收集箱 · 待补充'], ['ready', '待开始']].map(([key,label]) => '<option value="' + key + '"' +
           ((draft.triageStage || options.triageStage || 'intake') === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div>' : '');
   }
-  global.RequirementFields = { html, tagHtml, bindTags, readTags, validateTags, normalizeTags, sectionIcon, visibilityHint, bindVisibility };
+  function projectPicker(options = {}) {
+    const owner = String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
+    let value = String(options.value || ''), rows = [], phase = 'idle', request = 0, disposed = false, host = null;
+    const initial = value, initialName = String(options.name || '');
+    const current = () => !disposed && owner === String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '') &&
+      (!options.current || options.current());
+    const editable = () => current() && options.editable?.() !== false;
+    const knownName = () => rows.find(row => row.id === value)?.name ||
+      (phase !== 'ready' && value === initial ? initialName : '');
+    const label = () => !value ? '不关联项目' : knownName() || (phase === 'ready' ? '当前关联项目（不可用）' : '当前关联项目');
+    const statusHtml = () => '<span class="rq-field-hint" data-rq-project-error role="alert" hidden></span>' +
+      '<button type="button" data-rq-project-retry hidden>重试</button>';
+    function choiceRows() {
+      const list = [['', '不关联项目'], ...rows.map(row => [row.id, row.name])];
+      if (value && !rows.some(row => row.id === value)) list.push([value, label()]);
+      return list.map(([id, name]) => ({id, name, selected:id === value,
+        userContent:Boolean(id && (rows.some(row => row.id === id) || phase !== 'ready' && id === initial && initialName)),
+        disabled:Boolean(id && !rows.some(row => row.id === id))}));
+    }
+    function choices() {
+      return choiceRows().map(row => '<option value="' + esc(row.id) + '"' +
+        (row.userContent ? ' data-user-content' : '') + (row.selected ? ' selected' : '') +
+        (row.disabled ? ' disabled' : '') + '>' + esc(row.name) + '</option>').join('');
+    }
+    function paint() {
+      if (!current() || !host || host.isConnected === false) return;
+      const select = host.querySelector('[data-rq-project-select]');
+      if (select) {
+        select.replaceChildren(...choiceRows().map(row => {
+          const option = document.createElement('option'); option.value = row.id; option.textContent = row.name;
+          option.selected = row.selected; option.disabled = row.disabled;
+          if (row.userContent) option.setAttribute('data-user-content', '');
+          return option;
+        }));
+        select.value = value;
+        select.disabled = !editable() || phase !== 'ready';
+        if (select.disabled) select.setAttribute('data-rq-locked', '');
+        else select.removeAttribute?.('data-rq-locked');
+        select.setAttribute('aria-busy', String(phase === 'loading'));
+      }
+      const name = host.querySelector('[data-rq-project-name]');
+      if (name) {
+        if (value && knownName()) name.setAttribute('data-user-content', '');
+        else name.removeAttribute?.('data-user-content');
+        name.textContent = label();
+      }
+      const error = host.querySelector('[data-rq-project-error]');
+      if (error) {
+        error.hidden = phase !== 'error';
+        error.textContent = phase === 'error' ? '项目列表暂时无法加载，当前关联已保留。' : '';
+      }
+      const retry = host.querySelector('[data-rq-project-retry]'); if (retry) retry.hidden = phase !== 'error';
+    }
+    async function load() {
+      if (!current()) return false;
+      const ticket = ++request; phase = 'loading'; paint();
+      try {
+        if (!global.SoduWorkAPI?.getProjects) throw Error('Project lookup is unavailable');
+        const result = await global.SoduWorkAPI.getProjects();
+        if (!current() || ticket !== request || host?.isConnected === false) return false;
+        if (!Array.isArray(result) || result.some(row => !row || typeof row.id !== 'string' ||
+            !row.id.trim() || typeof row.name !== 'string')) throw Error('Project lookup returned invalid data');
+        rows = result.filter((row, index) => result.findIndex(other => other.id === row.id) === index);
+        phase = 'ready'; paint(); return true;
+      } catch (_) {
+        if (!current() || ticket !== request || host?.isConnected === false) return false;
+        phase = 'error'; paint(); return false;
+      }
+    }
+    return {
+      html({id, name, hint = ''} = {}) {
+        return '<select data-rq-project-select id="' + esc(id || 'rqProject') + '"' +
+          (name ? ' name="' + esc(name) + '"' : '') + ' disabled data-rq-locked aria-busy="true">' + choices() + '</select>' +
+          (hint ? '<span class="rq-field-hint">' + esc(hint) + '</span>' : '') +
+          statusHtml();
+      },
+      bind(root) {
+        host = root;
+        const select = host?.querySelector('[data-rq-project-select]');
+        select?.addEventListener?.('change', () => {
+          const next = String(select.value || '');
+          if (!editable() || phase !== 'ready' || next && !rows.some(row => row.id === next)) { paint(); return; }
+          value = next; options.onChange?.(value);
+        });
+        host?.querySelector('[data-rq-project-retry]')?.addEventListener?.('click', () => { void load(); });
+        paint(); if (phase === 'idle') void load();
+      },
+      value: () => value, label, statusHtml, paint, load,
+      setValue(next) { if (current()) { value = String(next || ''); paint(); } },
+      dispose() { disposed = true; request++; host = null; },
+    };
+  }
+  global.RequirementFields = { html, tagHtml, bindTags, readTags, setTags, validateTags, normalizeTags, sectionIcon, visibilityHint, bindVisibility, projectPicker };
 })(window);

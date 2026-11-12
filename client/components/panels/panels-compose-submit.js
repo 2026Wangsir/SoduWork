@@ -121,7 +121,8 @@
         kind: draft.kind || 'requirement', acceptanceCriteria: draft.check.map(x => x.trim()).filter(Boolean), tags: draft.tags || [],
         visibility: draft.visibility || 'related', triageStage: options.saveOnly ?
           (['intake', 'clarifying', 'ready'].includes(draft.triageStage || options.triageStage) ? draft.triageStage || options.triageStage : 'intake') : 'ready',
-        projectId: options.projectId || null, repoId: draft.repo || '' };
+        projectId: (Object.prototype.hasOwnProperty.call(draft, 'projectId') ? draft.projectId : options.projectId) || null,
+        repoId: draft.repo || '' };
       const result = await submit(state, {
         guard: () => { if (dataScope !== ownerScope()) throw Error('账号或服务已切换，请在当前账号中重新打开需求'); },
         files: record.files.slice(),

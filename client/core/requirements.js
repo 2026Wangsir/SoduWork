@@ -235,6 +235,9 @@
       !['running', 'dispatching', 'done'].includes(task.ai?.state) &&
       !['queued', 'starting', 'running', 'waiting', 'done'].includes(task.workRouting?.conversationTurn?.state);
   }
+  function canEditProject(task) {
+    return canEdit(task) && task.readOnly === false && !String(task.repoId || '').trim();
+  }
   function capability(task, field) {
     return Boolean(task && (typeof task[field] === 'boolean' ? task[field] : task.canEditRequirement === true));
   }
@@ -297,6 +300,7 @@
     if (!canEdit(task)) return {};
     const original = { ...task, ...content(task) };
     const fields = ['visibility'];
+    if (canEditProject(task)) fields.push('projectId');
     if (!task.readOnly) fields.push('assigneeUserId');
     if (canEdit(task)) fields.push('tags');
     if (!task.readOnly || task.status === 'todo') fields.push('title', 'note', 'priority');
@@ -304,8 +308,9 @@
     if (task.status === 'todo') fields.push('kind', 'acceptanceCriteria');
     if (canTriage(task)) fields.push('triageStage');
     return Object.fromEntries(fields.filter(key => Object.prototype.hasOwnProperty.call(values, key) &&
-      (key === 'due' ? day(values[key]) !== day(original[key]) : JSON.stringify(values[key]) !== JSON.stringify(original[key])))
-      .map(key => [key, key === 'due' ? dateTimestamp(values[key]) : values[key]]));
+      (key === 'due' ? day(values[key]) !== day(original[key]) : key === 'projectId' ?
+        String(values[key] || '') !== String(original[key] || '') : JSON.stringify(values[key]) !== JSON.stringify(original[key])))
+      .map(key => [key, key === 'due' ? dateTimestamp(values[key]) : key === 'projectId' ? values[key] || null : values[key]]));
   }
   function stagePatch(task, next) {
     if (!canTriage(task) || !['intake', 'clarifying', 'ready'].includes(next)) return null;
@@ -335,6 +340,6 @@
   }
   return { lanes, columns, priorities, sorts, defaults, viewSettings, kinds, scopes, scopeDescriptions, scopeOptions, normalizeScope, content, displayNote, stage, column,
     day, timeInfo, dateTimestamp, overdue, blocked, roles, approval, canReview, approvalActionable, waitingOn, actionable, inScope, isRequirement, select, owner, nextStep,
-    canEdit, canManageMaterials, canSubmitReview, canManageAutomation, canTriage, executing, maintenance,
+    canEdit, canEditProject, canManageMaterials, canSubmitReview, canManageAutomation, canTriage, executing, maintenance,
     canArchive, canDelete, canOpenConversation, editPatch, stagePatch, resolveStageMove };
 });

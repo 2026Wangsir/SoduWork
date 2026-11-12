@@ -48,7 +48,8 @@ async def main() -> None:
             password_hash=hash_password("smoke-pass"))
         client = models.Client(
             id="c-dev", user_ref=user.id, name="开发同事的 SoduWork")
-        session.add_all([root, child, outsider, user, client])
+        session.add_all([root, child, outsider, user, client,
+            models.Project(id="project-demo", name="Synthetic delivery project", org_id=child.id)])
         for key, name in (
             ("ai-errand", "AI 通用工作"),
             ("software-delivery", "软件研发交付"),

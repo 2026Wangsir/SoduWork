@@ -1019,7 +1019,9 @@ test('project tasks show awaiting-merge as a legal intermediate state, not stall
 // Model native select behavior: rebuilding options clears values that no longer exist.
 function assigneeSelect(value, ids = [value]) {
   let current = value, available = ids, html = '';
-  return {get value() {return current;}, set value(next) {current = available.includes(next) ? next : '';},
+  return {appended:[],append(...options){this.appended.push(...options);available.push(...options.map(option=>option.value));},
+    get options(){return available.map(value=>({value}));},
+    get value() {return current;}, set value(next) {current = available.includes(next) ? next : '';},
     get innerHTML() {return html;}, set innerHTML(next) {html = next; available = [...next.matchAll(/value="([^"]*)"/g)].map(match => match[1]); if (!available.includes(current)) current = available[0] || '';},
     get selectedOptions() {return [{textContent: current === 'sender' ? '原负责人' : '手选成员'}];}};
 }
@@ -1200,6 +1202,137 @@ test('failed save preserves draft and restores save feedback, including conflict
   }
 });
 
+test('normal editing has no reload action; conflict recovery preserves edits and refreshes only untouched fields', async()=>{
+  let latest={...task('project-edit'),canEditRequirement:true,readOnly:false,requirementVersion:2,
+    title:'Requirement project-edit',note:'Saved background',priority:'normal',kind:'requirement',tags:[],acceptanceCriteria:[],visibility:'related'};
+  const writes=[];
+  const f=fixture({getTask:async()=>({...latest}),patchTask:async(id,patch)=>{
+    writes.push(patch);
+    if(writes.length===1)throw Object.assign(Error('需求已被同事更新'),{status:409});
+    return {...latest,...patch,requirementVersion:4};
+  }});
+  await f.api.open('project-edit');
+  f.context.Event=Event;
+  let visibilityChange;
+  f.context.RequirementFields.bindVisibility({addEventListener(_type,handler){visibilityChange=handler;},
+    querySelector:selector=>f.active().querySelector(selector)});
+  const visibility={value:'related',disabled:false,closest(){return this;},getAttribute(){return 'rqVisibilityHint';},
+    hasAttribute(){return false;},dispatchEvent(){visibilityChange({target:this});}};
+  const form=editForm(f,'project-edit',assigneeSelect(''),{visibility});
+  f.click('[data-rq-edit]');assert.doesNotMatch(f.active().querySelector('.rq-detail-footer').innerHTML,/data-rq-reload/);
+  visibility.dispatchEvent();
+  assert.match(f.active().querySelector('#rqVisibilityHint').textContent,/仅相关人/);
+  f.active().querySelectorAll=()=>[visibility];
+  form.elements.note.value='Keep my unsaved change';
+  f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  const actions=f.active().querySelector('.rq-edit-actions');assert.equal(actions.appended.length,1);
+  latest={...latest,requirementVersion:3,title:'Remote title',note:'Remote background',priority:'high',tags:['remote'],visibility:'organization',
+    assigneeUserId:'remote-user',assigneeName:'<Remote "owner">'};
+  f.click('[data-rq-reload]');await new Promise(setImmediate);
+  assert.equal(form.elements.note.value,'Keep my unsaved change');assert.equal(form.elements.title.value,'Remote title');
+  assert.equal(form.elements.priority.value,'high');assert.equal(form.elements.tags.value,'["remote"]');
+  assert.equal(visibility.value,'organization');assert.match(f.active().querySelector('#rqVisibilityHint').textContent,/同公司成员/);
+  assert.equal(form.elements.assigneeUserId.value,'remote-user');
+  assert.equal(form.elements.assigneeUserId.appended[0].textContent,'<Remote "owner">');
+  assert.equal(form.elements.assigneeUserId.appended[0].innerHTML,'');
+  assert.equal(writes.length,1,'reloading must not resubmit edits');
+  assert.match(f.active().querySelector('[data-rq-error]').textContent,/未保存的修改已保留/);
+  f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  assert.equal(writes[1].requirementVersion,3);assert.equal(writes[1].note,'Keep my unsaved change');
+  assert.equal(Object.hasOwn(writes[1],'title'),false);assert.equal(Object.hasOwn(writes[1],'tags'),false);
+  assert.equal(Object.hasOwn(writes[1],'visibility'),false);
+  assert.equal(Object.hasOwn(writes[1],'assigneeUserId'),false);
+});
+
+test('conflict recovery cannot unlock an executed requirement or erase its unsaved draft',async()=>{
+  let executed=false;
+  const f=fixture({getTask:async id=>({...task(id),canEditRequirement:!executed,hasExecutionHistory:executed,requirementVersion:executed?3:2}),
+    patchTask:async()=>{throw Object.assign(Error('需求已被同事更新'),{status:409});}});
+  await f.api.open('a');const form=editForm(f,'a',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Keep this draft';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  const save={disabled:false,hasAttribute:()=>false};f.active().querySelectorAll=()=>[save];
+  executed=true;f.click('[data-rq-reload]');await new Promise(setImmediate);
+  assert.equal(form.elements.note.value,'Keep this draft');assert.match(f.active().querySelector('[data-rq-error]').textContent,/未保存内容已保留/);
+  assert.equal(save.disabled,true);
+});
+
+for(const sameVersion of [false,true])test('a late conflict-reload response cannot replace newer execution facts or unlock the draft: '+(sameVersion?'same version':'newer version'),async()=>{
+  const pending=deferred();let reads=0;
+  const base={...task('reload-race'),canEditRequirement:true,readOnly:false,requirementVersion:2};
+  const f=fixture({getTask:async()=>{
+    reads++;
+    if(reads===1)return base;
+    if(reads===2)return pending.promise;
+    return {...base,requirementVersion:sameVersion?2:4,hasExecutionHistory:true,canEditRequirement:false};
+  },patchTask:async()=>{throw Object.assign(Error('Version conflict'),{status:409});}});
+  await f.api.open('reload-race');const form=editForm(f,'reload-race',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Keep the newer draft';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  const save={disabled:false,hasAttribute:()=>false};f.active().querySelectorAll=()=>[save];
+  f.click('[data-rq-reload]');await f.api.refresh('reload-race');
+  assert.equal(save.disabled,true);
+  pending.resolve({...base,requirementVersion:sameVersion?2:3});await new Promise(setImmediate);
+  assert.equal(form.elements.note.value,'Keep the newer draft');assert.equal(save.disabled,true);
+  assert.match(f.active().querySelector('[data-rq-error]').textContent,/未保存内容已保留/);
+});
+
+for(const sameVersion of [false,true])test('an earlier background response cannot replace an accepted conflict reload: '+(sameVersion?'same version':'newer version'),async()=>{
+  const background=deferred();let reads=0;
+  const base={...task('reverse-reload'),canEditRequirement:true,readOnly:false,requirementVersion:2};
+  const executed={...base,requirementVersion:sameVersion?2:4,hasExecutionHistory:true,canEditRequirement:false};
+  const f=fixture({getProjects:async()=>[],getTask:async()=>++reads===1?base:reads===2?background.promise:executed,
+    patchTask:async()=>{throw Object.assign(Error('Version conflict'),{status:409});}});
+  await f.api.open('reverse-reload');const form=editForm(f,'reverse-reload',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Keep reverse-order edits';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  const refresh=f.api.refresh('reverse-reload');f.click('[data-rq-reload]');await new Promise(setImmediate);
+  const select=f.active().querySelector('[data-rq-project-select]');assert.equal(select.disabled,true);
+  background.resolve({...base,requirementVersion:sameVersion?2:3});await refresh;
+  assert.equal(select.disabled,true);assert.equal(form.elements.note.value,'Keep reverse-order edits');
+});
+
+for(const sameVersion of [false,true])test('a later conflict-reload request may advance an earlier background snapshot: '+(sameVersion?'same version':'newer version'),async()=>{
+  const background=deferred(),reload=deferred();let reads=0;
+  const base={...task('ordered-reload'),canEditRequirement:true,readOnly:false,requirementVersion:2};
+  const f=fixture({getProjects:async()=>[],getTask:async()=>++reads===1?base:reads===2?background.promise:reload.promise,
+    patchTask:async()=>{throw Object.assign(Error('Version conflict'),{status:409});}});
+  await f.api.open('ordered-reload');const form=editForm(f,'ordered-reload',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Keep ordered edits';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  const refresh=f.api.refresh('ordered-reload');f.click('[data-rq-reload]');
+  background.resolve({...base,requirementVersion:sameVersion?2:3});await refresh;
+  reload.resolve({...base,requirementVersion:sameVersion?2:4,hasExecutionHistory:true,canEditRequirement:false});await new Promise(setImmediate);
+  assert.equal(f.active().querySelector('[data-rq-project-select]').disabled,true);
+  assert.equal(form.elements.note.value,'Keep ordered edits');assert.match(f.active().querySelector('[data-rq-error]').textContent,/未保存内容已保留/);
+});
+
+test('failed conflict recovery preserves edits and remains available for an explicit retry',async()=>{
+  let reads=0;const writes=[];
+  const base={...task('retry-reload'),canEditRequirement:true,readOnly:false,requirementVersion:2};
+  const f=fixture({getTask:async()=>{
+    reads++;if(reads===2)throw Error('Synthetic read failed');
+    return reads===1?base:{...base,title:'Latest title',requirementVersion:3};
+  },patchTask:async(_id,patch)=>{writes.push(patch);if(writes.length===1)throw Object.assign(Error('Version conflict'),{status:409});return {...base,...patch,requirementVersion:4};}});
+  await f.api.open('retry-reload');const form=editForm(f,'retry-reload',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Keep retry edits';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  f.click('[data-rq-reload]');await new Promise(setImmediate);
+  assert.equal(form.elements.note.value,'Keep retry edits');assert.match(f.active().querySelector('[data-rq-error]').textContent,/Synthetic read failed/);
+  f.click('[data-rq-reload]');await new Promise(setImmediate);assert.equal(reads,3);
+  assert.equal(form.elements.note.value,'Keep retry edits');assert.equal(form.elements.title.value,'Latest title');assert.equal(writes.length,1);
+  f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  assert.equal(writes[1].requirementVersion,3);assert.equal(writes[1].note,'Keep retry edits');
+});
+
+for(const switchedAccount of [false,true])test('pending conflict recovery cannot touch a replacement drawer: '+(switchedAccount?'account switch':'close'),async()=>{
+  const pending=deferred();let oldReads=0;
+  const f=fixture({getTask:async id=>id==='other'?task(id):++oldReads===1?{...task(id),canEditRequirement:true,requirementVersion:2}:pending.promise,
+    patchTask:async()=>{throw Object.assign(Error('Version conflict'),{status:409});}});
+  await f.api.open('old');const form=editForm(f,'old',assigneeSelect(''));f.click('[data-rq-edit]');
+  form.elements.note.value='Old unsaved draft';f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+  f.click('[data-rq-reload]');f.click('[data-rq-reload]');assert.equal(oldReads,2);
+  if(switchedAccount)f.events['soduwork-data-scope-changed']();else f.api.close(true);
+  await f.api.open('other');const drawer=f.active(),html=f.content().innerHTML;
+  pending.resolve({...task('old'),canEditRequirement:true,requirementVersion:3});await new Promise(setImmediate);
+  assert.equal(f.active(),drawer);assert.equal(f.content().innerHTML,html);assert.equal(form.elements.note.value,'Old unsaved draft');
+});
+
 test('save response after account change cannot update the store or reopen details', async () => {
   const pending = deferred(), updates = [];
   const f = fixture({getTask: async id => ({...task(id),canEditRequirement:true}),patchTask: () => pending.promise});
@@ -1281,7 +1414,7 @@ test('a save receipt invalidates earlier refreshes and preserves newer execution
   assert.doesNotMatch(f.active().querySelector('.rq-detail-footer').innerHTML,/data-rq-edit/);
 });
 
-test('an older save receipt cannot unlock execution facts already read by the drawer', async () => {
+for(const sameVersion of [false,true])test('an older save receipt cannot unlock execution facts already read by the drawer: '+(sameVersion?'same version':'newer version'), async () => {
   const pending=deferred();
   let value={...task('receipt-race'),canEditRequirement:true,requirementVersion:1};
   const f=fixture({getTask:async()=>({...value}),patchTask:()=>pending.promise});
@@ -1292,13 +1425,13 @@ test('an older save receipt cannot unlock execution facts already read by the dr
   const form=editForm(f,'receipt-race',assigneeSelect('')); f.click('[data-rq-edit]');
   form.elements.note.value='Saved background'; form.elements.title.value='Saved title';
   f.active().listeners.submit({preventDefault(){},target:form});
-  value={...value,title:'Saved title',status:'doing',canEditRequirement:false,requirementVersion:3};
+  value={...value,title:'Saved title',status:'doing',canEditRequirement:false,requirementVersion:sameVersion?2:3};
   await f.api.refresh('receipt-race');
   pending.resolve({...value,status:'todo',canEditRequirement:true,requirementVersion:2});
   await new Promise(setImmediate);
   assert.match(f.active().querySelector('[data-rq-header-meta]').textContent,/进行中/);
   assert.doesNotMatch(f.active().querySelector('.rq-detail-footer').innerHTML,/data-rq-edit/);
-  assert.equal(accepted.length,1); assert.equal(accepted[0].requirementVersion,3);
+  assert.equal(accepted.length,1); assert.equal(accepted[0].requirementVersion,sameVersion?2:3);
   assert.equal(accepted[0].canEditRequirement,false);
 });
 
