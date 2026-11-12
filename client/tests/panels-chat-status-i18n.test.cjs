@@ -99,6 +99,27 @@ test('system notices localize capability failures and envelopes without rewritin
   assert.equal(status.notice(denied), denied);
 });
 
+test('quota admission notices translate the complete Hub reason and follow locale changes', () => {
+  const status = require('../components/panels/panels-chat-status');
+  const reasons = [
+    '试用已结束，联系管理员分配套餐后即可继续',
+    '当前模型的额度已用完，可以选择其他可用模型或联系管理员调整额度',
+    '当前套餐未包含此模型，请选择套餐内的模型或联系管理员',
+    '当前 AI 额度已用完，联系管理员调整后即可继续',
+  ];
+  for (const locale of ['en-US', 'zh-CN', 'en-US']) {
+    loadI18n(locale);
+    for (const reason of reasons) {
+      if (locale === 'zh-CN') assert.equal(status.notice(reason), reason);
+      else {
+        assert.doesNotMatch(status.notice(reason), /[\u4e00-\u9fff]/);
+        assert.doesNotMatch(status.notice('这一轮没发出去（' + reason + '）'), /[\u4e00-\u9fff]/);
+      }
+    }
+    assert.equal(status.notice('客户原话：试用已结束，请保留此消息'), '客户原话：试用已结束，请保留此消息');
+  }
+});
+
 test('model interruption notices translate their system envelope and safe diagnostics without translating provider text', () => {
   const events = require('../main/pi-session/event-stream');
   const status = require('../components/panels/panels-chat-status');

@@ -1,5 +1,9 @@
 (function (global) {
   const messages = {
+    "试用已结束，联系管理员分配套餐后即可继续": "Your trial has ended. Contact an administrator to assign a plan before continuing.",
+    "当前模型的额度已用完，可以选择其他可用模型或联系管理员调整额度": "This model's allowance is used up. Choose another available model or contact an administrator to adjust your allowance.",
+    "当前套餐未包含此模型，请选择套餐内的模型或联系管理员": "This model is not included in your current plan. Choose a model included in your plan or contact an administrator.",
+    "当前 AI 额度已用完，联系管理员调整后即可继续": "Your AI allowance is used up. Contact an administrator to adjust it before continuing.",
     "模型服务在回答过程中中断了这一轮（{reason}）。": "The model service interrupted this response ({reason}).",
     "模型服务在回答过程中中断了这一轮。": "The model service interrupted this response.",
     "已自动重试 {count} 次。": "Automatically retried {count} times.",
