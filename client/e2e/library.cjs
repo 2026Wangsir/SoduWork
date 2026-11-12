@@ -27,7 +27,9 @@ async function click(selector) {
 }
 async function type(selector,text) {
   await click(selector);
-  for(const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type,keyCode:'A',modifiers:['control']});
+  // Use the native edit action; Control+A is not Select All on macOS.
+  win.webContents.selectAll();
+  await until(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); return input === document.activeElement && input.selectionStart === 0 && input.selectionEnd === input.value.length; })()`);
   await win.webContents.insertText(text);
 }
 async function menu(id) { await click('[data-library-menu-toggle="item-'+id+'"]'); }
@@ -191,7 +193,7 @@ app.whenReady().then(async()=>{
   assert.equal(fs.readFileSync(savePath,'utf8'),'原始资料：保存，不翻译业务内容。');
   report.cases.push('Download from the menu preserves exact Unicode file content');
   await menu(id);await click('[data-library-delete="'+id+'"]');await until('!!document.querySelector(".library-confirm-dialog")');await click('.library-confirm-submit');await loaded();
-  await click('[data-library-menu-toggle=options]');await click('[data-library-trash]');await loaded();
+  await click('[data-library-trash]');await loaded();
   await click('[data-library-restore="'+id+'"]');await loaded();await click('[data-library-root]');await loaded();
   const restored=await js(`(await SoduWorkAPI.listLibrary({scope:'all',storage:'local',folderId:${JSON.stringify(folder.id)}})).items`);assert.ok(restored.some(x=>x.id===id));
   report.cases.push('Soft-delete, trash navigation and restore preserve the original folder');
@@ -229,7 +231,7 @@ app.whenReady().then(async()=>{
     await createDoc('临时回收站验证-'+action,'Only isolated test content');
     const trashId=await js(`(await SoduWorkAPI.listLibrary({scope:'all',storage:'local'})).items.find(x=>x.title===${JSON.stringify('临时回收站验证-'+action)}).id`);
     await menu(trashId);await click('[data-library-delete="'+trashId+'"]');await click('.library-confirm-submit');await loaded();
-    await click('[data-library-menu-toggle=options]');await click('[data-library-trash]');await loaded();
+    await click('[data-library-trash]');await loaded();
     await click(action==='purge'?'[data-library-purge="'+trashId+'"]':'[data-library-empty-trash]');await click('.library-confirm-submit');await loaded();
     assert.equal(await js('(await SoduWorkAPI.listLibrary({scope:"trash",storage:"local"})).items.length'),0);
     await click('[data-library-root]');await loaded();
