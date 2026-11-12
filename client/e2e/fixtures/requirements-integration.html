@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="../../components/workspace/workspace-shell.css">
 <link rel="stylesheet" href="../../components/workspace/workspace-page-layout.css">
 <link rel="stylesheet" href="../../components/requirements/requirements-board.css">
+<link rel="stylesheet" href="../../components/requirements/requirement-dispatch-instructions.css">
 <link rel="stylesheet" href="../../components/requirements/requirement-confirm.css">
 <link rel="stylesheet" href="../../components/panels/plugin-ui-host.css">
 <link rel="stylesheet" href="../../components/panels/work-entry-sheet.css">
@@ -66,6 +67,7 @@ window.soduWorkAPI={
 <script src="../../components/requirements/requirements-board.js"></script>
 <script src="../../components/requirements/requirement-confirm.js"></script>
 <script src="../../components/requirements/requirements-detail.js"></script>
+<script src="../../components/requirements/requirement-dispatch-instructions.js"></script>
 <script>
 // Resolve the trusted Hub before Store captures its request scope, as initData does.
 window.fixtureReady=(async()=>{await SoduWorkAPI.registerClient();await Store.hydrate();RequirementsBoard.open();return Store.taskState;})();

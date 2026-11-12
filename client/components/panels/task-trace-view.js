@@ -42,6 +42,7 @@
     release: '退回需求池', advance: '推进需求', reject: '退回上一步', closed: '办结需求',
     receipt: '收到交付回执', 'ai.dispatch_started': '正在派给 AI', 'ai.dispatch_failed': 'AI 派活失败',
     'ai.dispatch_uncertain': '正在确认执行机回执',
+    'execution.instructions': '派发说明已保存',
     'ai.dispatched': '派给 AI', 'ai.rework': 'AI 按意见继续返修', 'ai.rework_failed': '自动返修未启动', 'release.approved': '审批通过',
     'release.rejected': '审批退回', 'release.ai_reviewed': 'AI 代码审查通过',
     'release.candidate': '交付版本已生成', 'release.approval_requested': '已发起审批',
