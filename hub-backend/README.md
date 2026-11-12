@@ -62,6 +62,10 @@ Set `DATABASE_URL` in private configuration when overriding the SQLite default:
 
 The PostgreSQL value is a placeholder. Use a dedicated database and a minimally privileged account. Never commit environment files or credentials. See [self-hosting](../ops/self-host/README.md) for backups and deployment.
 
+## OpenCode turn completion
+
+Native and ACP OpenCode executions preserve the current turn's provider finish reason. An output-token limit is reported as incomplete even when partial text exists and the native process exits successfully; existing progress and the session remain available for manual continuation. The ACP adapter observes only native session/turn identifiers and stop reasons through an invocation-local plugin, and rejects missing completion evidence without retrying tools or changing permissions. Run `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode` for isolated loopback-provider acceptance using an explicitly selected installed binary.
+
 ## API and trust boundaries
 
 - Devices enroll with `POST /api/v1/clients/enroll`, then use a short-lived device session. Device long-term keys remain in the Electron main process; Hub stores only their digest.

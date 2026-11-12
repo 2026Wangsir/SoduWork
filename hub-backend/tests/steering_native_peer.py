@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from steering_readiness import publish_pid
+from opencode_peer_outcome import NativeOutcome
 
 
 def emit(value):
@@ -59,6 +60,7 @@ def prompt(text, sid, emit_text):
 
 
 def acp(agent):
+    native_outcome = NativeOutcome()
     sid = "native-" + agent
     if agent == "harness2":
         sid = "h2_" + "a" * 32
@@ -85,6 +87,7 @@ def acp(agent):
         elif method == "session/set_mode" and agent == "harness2":
             result = {}
         elif method == "session/prompt":
+            native_outcome.begin(sid)
             text = "\n".join(x.get("text", "") for x in params["prompt"])
             assert resumed == ("STEER_FIRST" not in text and "DIALOGUE_QUESTION" not in text)
             def say(value):
@@ -101,6 +104,7 @@ def acp(agent):
                     "code": -32000, "message": "fixture provider failure"}})
                 continue
             result = {"stopReason": "end_turn"}
+            native_outcome.end(sid)
         else:
             raise AssertionError(method)
         emit({"jsonrpc": "2.0", "id": message["id"], "result": result})

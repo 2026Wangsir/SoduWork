@@ -358,6 +358,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_harness2_platforms.py",
     "test_harness2_regressions.py",
     "test_managed_agent_download.py",
+    "test_opencode_turn_outcome.py",
     "test_opencode_runtime_config.py",
     "test_email_auth.py",
     "test_legal_publications.py",

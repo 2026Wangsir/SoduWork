@@ -1,4 +1,4 @@
-"""Pi semantic completion: a zero process exit must not hide a truncated turn."""
+"""Native semantic completion: a zero exit must not hide a truncated turn."""
 from __future__ import annotations
 
 from . import declared_outputs, model_errors
@@ -8,6 +8,14 @@ RECOVERY_NOTE = "（SoduWork 自动恢复）模型输出被截断，正从同一
 
 
 def observe(cli: str, event: dict, terminal: dict) -> None:
+    if cli == "opencode" and event.get("type") == "step_finish" and not event.get("contextOnly"):
+        part = event.get("part")
+        reason = part.get("reason") if isinstance(part, dict) else None
+        if reason in {"length", "max_tokens"}:
+            terminal["outputTruncated"] = True
+        elif reason == "stop":
+            terminal.pop("outputTruncated", None)
+        return
     if cli != "pi" or event.get("type") not in {"message_end", "turn_end", "agent_end"}:
         return
     message = event.get("message")

@@ -57,6 +57,10 @@ python3 quality_gate.py --list
 > **密钥不入库**：`.env` 已被 `.gitignore` 排除；部署凭据通过密钥管理或环境配置提供，勿写进提交文件。
 > 使用专用数据库和最小权限账号；部署与备份恢复见 [`../ops/self-host/README.md`](../ops/self-host/README.zh-CN.md)。实际内部地址和运维记录应单独保管。
 
+## OpenCode 回合完成状态
+
+OpenCode 原生和 ACP 执行均保留当前回合的模型停止原因。达到输出 token 上限时，即使已有部分文本且原生进程正常退出，也会标记为未完成；已有进度和会话保留，可人工继续。ACP 适配器使用单次调用的临时插件，只观察原生会话、回合标识及停止原因；缺少完成证据时阻止成功结算，不重试工具或改变权限。执行 `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode`，可用明确指定的已安装二进制和隔离的本地回环模型服务进行验收。
+
 ## API 概览
 
 - 客户端契约（设备登记 → 管理员激活 → 短期 `Device` 会话；长期设备密钥在 Hub 只存摘要）

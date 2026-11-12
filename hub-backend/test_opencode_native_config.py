@@ -85,6 +85,8 @@ class OpenCodeNativeConfigTests(unittest.TestCase):
                 self.assertEqual(Path(env["XDG_CONFIG_HOME"]), root / "runner" / "agents" / "opencode" / "config")
                 env.update({"HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9",
                             "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"})
+                from tests.opencode_native_dependencies import seed
+                seed(executable, root / "runner")
                 command = [sys.executable, str(Path(acp_bridge.__file__)), "--cwd", str(work),
                            "--agent-name", "opencode"]
                 # Emulate an already-running parent using the old environment.

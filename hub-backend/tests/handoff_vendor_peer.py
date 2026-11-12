@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
+from opencode_peer_outcome import NativeOutcome
 
 for stream in (sys.stdin, sys.stdout, sys.stderr):
     stream.reconfigure(encoding="utf-8", errors="replace")
@@ -54,6 +55,7 @@ if agent == "harness2":
 resumed = False
 thought = "Inspect restored workspace before delivering."
 if agent in {"codex-harness", "qwen", "opencode", "dsh", "harness2"}:
+    native_outcome = NativeOutcome()
     for raw in sys.stdin:
         message = json.loads(raw)
         method, params = message.get("method"), message.get("params") or {}
@@ -67,6 +69,7 @@ if agent in {"codex-harness", "qwen", "opencode", "dsh", "harness2"}:
         elif method == "session/set_mode" and agent == "harness2":
             result = {}
         elif method == "session/prompt":
+            native_outcome.begin(sid)
             text = work("\n".join(x.get("text", "") for x in params["prompt"]))
             for part in ("Inspect restored", " workspace before delivering."):
                 emit({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sid,
@@ -77,6 +80,7 @@ if agent in {"codex-harness", "qwen", "opencode", "dsh", "harness2"}:
             emit({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sid,
                 "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}})
             result = {"stopReason": "end_turn"}
+            native_outcome.end(sid)
         else:
             raise AssertionError(method)
         emit({"jsonrpc": "2.0", "id": message["id"], "result": result})
