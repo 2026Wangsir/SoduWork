@@ -446,15 +446,20 @@
     // Capabilities are loaded as soon as the composer opens. Let model
     // discovery settle first so the warmup uses the concrete default model,
     // then fence NativeChat on that same request before entering the chat.
-    await global.ComposeModelPicker?.ready?.();
-    await _capabilityPromise.catch(() => {});
     const viewSeq = _composeViewSeq;
+    const ownerScope = global.SoduWorkAPI?.taskStorageKey?.('ops') || '';
+    const currentEntry = () => viewSeq === _composeViewSeq &&
+      ownerScope === (global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
+    await global.ComposeModelPicker?.ready?.();
+    if (!currentEntry()) return false;
+    await _capabilityPromise.catch(() => {});
+    if (!currentEntry()) return false;
     const adapterId = global.ComposeRuntime?.value?.() || 'pi';
     const executionRevision = global.ComposeExecution?.revision?.();
     // Preparation can await permission, plugins and models. Changing location
     // or Agent invalidates this send; keep its draft instead of starting the
     // previously selected local runtime under the new visible controls.
-    const current = () => viewSeq === _composeViewSeq && global.ComposeExecution?.value?.() !== 'cloud' &&
+    const current = () => currentEntry() && global.ComposeExecution?.value?.() !== 'cloud' &&
       global.ComposeExecution?.revision?.() === executionRevision && (global.ComposeRuntime?.value?.() || 'pi') === adapterId;
     if (_accessConsent && !await _accessConsent.ready()) return false;
     await _pluginSelectTask;
@@ -530,7 +535,7 @@
       ...(global.SessionMemoryEntry ? SessionMemoryEntry.options() : {}),
     }, intentOptions || {})) : false;
     if (!accepted) return false;
-    if (viewSeq !== _composeViewSeq) return false;
+    if (!current()) return false;
     // A selected Skill belongs to this first message only.  Keep the
     // composer state clean after a successful new-session send so the next
     // turn does not silently inherit the previous Skill chip.
@@ -662,6 +667,7 @@
       isCurrent: currentWorkEntry,
     });
     if (routed.handled) return; // The route owns early clearing and failure recovery.
+    if (!currentWorkEntry()) return;
     const attachmentContext = routed.attachmentContext;
     const intent = _intent ? _intent.current(text) : { mode: 'chat' };
     let accepted = true;
@@ -697,7 +703,7 @@
       });
       if (accepted && _intent) _intent.reset();
     }
-    if (!accepted) return;
+    if (!accepted || !currentWorkEntry()) return;
     if (intent.mode === 'task' || intent.mode === 'schedule') _attachments?.consumeInputText?.(submittedFiles, { resetExpanded: true });
     _clearComposeDraft();
     if (input) { input.value = ''; input.style.height = ''; }
