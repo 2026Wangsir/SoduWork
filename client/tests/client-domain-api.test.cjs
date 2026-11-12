@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('./renderer-source.cjs'), path = require('node:path'), vm = require('node:vm');
-async function fixture(bridge = {}) {
-  const values = new Map([['soduwork_work_hub_url', 'https://fixture.invalid']]), requests = [];
+async function fixture(bridge = {}, values = new Map([['soduwork_work_hub_url', 'https://fixture.invalid']])) {
+  const requests = [];
   const context = { console, URL, URLSearchParams, AbortController, FormData,
     navigator: {platform: 'test'}, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } },
@@ -17,7 +17,7 @@ async function fixture(bridge = {}) {
   context.window = context; vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../api.js'), 'utf8'), context);
   await context.SoduWorkAPI.registerClient();
-  return {api: context.SoduWorkAPI, context, requests};
+  return {api: context.SoduWorkAPI, context, requests, values};
 }
 test('a committed project write remains successful when cache invalidation IPC is unavailable', async () => {
   const f = await fixture({clientDomainInvalidate: async () => { throw Error('IPC temporarily unavailable'); }});
@@ -112,4 +112,48 @@ test('local snapshots and cached errors cannot change offline status while a fre
   await f.api.getConfig(); await f.api.mateMessages('received', 200); assert.equal(f.api.online, false);
   result = {ok: true, online: true, value: {providers: [], usable: [], myModels: []}};
   await f.api.myModels(); assert.equal(f.api.online, true);
+});
+
+
+test('notification reconciliation revalidates company access within the shared-cache TTL, including a new renderer', async t => {
+  const { create } = require('../main/client-domain-cache.cjs');
+  const identity = {hub: 'http://127.0.0.1:18989', clientId: 'desktop',
+    session: Buffer.from(JSON.stringify({typ: 'device', uid: 'alice', cid: 'desktop', ver: 1})).toString('base64url') + '.fixture'};
+  const rows = [
+    {id: 'plugin-private', kind: 'plugin_lifecycle', text: 'Former company plugin', recipientId: 'alice'},
+    {id: 'coworker-history', kind: 'mate_message', text: 'Keep coworker history', recipientId: 'alice', senderId: 'bob'},
+  ].map(row => ({...row, messageId: row.id, status: 'read', createdAt: 100, readAt: 200}));
+  for (const reload of [false, true]) {
+    let company = 'original', calls = 0, bridgeError;
+    const cache = create({identityOf: async () => identity, now: () => 1000,
+      discovery: {confirmed: () => true, register: () => () => {}},
+      setTimeout: () => ({unref() {}}), clearTimeout() {},
+      fetch: async () => { calls++; return new Response(JSON.stringify({ok: true, folder: 'received',
+        items: company === 'original' ? rows : [], revision: company, nextCursor: '', unreadCount: 0})); }});
+    t.after(() => cache.close());
+    const bridge = {clientDomainRead: async (domain, scope) => { try {
+      assert.equal(scope.hub, identity.hub); assert.equal(scope.clientId, identity.clientId); assert.equal(scope.userId, 'alice');
+      return {ok: true, value: await cache.read(domain, scope)};
+    } catch (error) { bridgeError = error; throw error; } }};
+    async function renderer(values) {
+      const f = await fixture(bridge, values);
+      Object.assign(f.context, {TaskSync: require('../core/task-sync.js'),
+        document: {getElementById: () => null, querySelectorAll: () => [], documentElement: {setAttribute() {}}}});
+      for (const name of ['store-lifecycle.js', 'store.js', 'mate-notice-sync.js'])
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '../core', name), 'utf8'), f.context);
+      return f;
+    }
+    let f = await renderer();
+    await f.context.MateNoticeSync.refresh('received').catch(error => { throw bridgeError || error; });
+    assert.equal(f.context.MateNoticeSync.rows('received').length, 2);
+    await f.context.MateNoticeSync.refresh('received'); // Establish the conditional revision in this window.
+    company = 'outside'; // Same account/device/Hub, no push or clock advance.
+    if (reload) f = await renderer(f.values);
+    const before = calls;
+    await f.context.MateNoticeSync.refresh('received');
+    assert.equal(calls, before + 1, 'an explicit refresh must reach the authenticated inbox');
+    const visible = Array.from(f.context.MateNoticeSync.rows('received'));
+    assert.deepEqual(visible.map(row => row.serverMessageId), ['coworker-history']);
+    assert.equal(visible[0].text, 'Keep coworker history');
+  }
 });
