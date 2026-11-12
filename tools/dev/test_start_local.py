@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import io
-from contextlib import closing, redirect_stdout
+from contextlib import closing, nullcontext, redirect_stdout
 import os
 from pathlib import Path
 import socket
@@ -20,6 +20,25 @@ from tools.dev import verify_desktop_fixture as desktop_fixture
 
 
 class LocalStartupTests(unittest.TestCase):
+    def test_headless_desktop_fails_before_initialization_password_or_downloads(self):
+        for options in ([], ['--prepare-only'], ['--check']):
+            with self.subTest(options=options), patch.object(sys, 'platform', 'linux'), \
+                    patch.dict(os.environ, {'DISPLAY': '', 'WAYLAND_DISPLAY': ''}), \
+                    patch.object(start, 'check_dependencies'), \
+                    patch.object(start, 'initialize') as initialize, \
+                    patch.object(start, 'exclusive', return_value=nullcontext()), \
+                    patch.object(start, 'prepare') as prepare, \
+                    patch.object(start, 'prepare_desktop') as desktop, \
+                    patch.object(start, 'serve') as serve, \
+                    patch.object(start, 'password_for_start') as password, \
+                    patch.object(start, 'dependency_report'), \
+                    redirect_stdout(io.StringIO()), patch('sys.stderr', io.StringIO()) as errors:
+                self.assertEqual(start.main(['--desktop', '--data-dir', str(self.state), *options]), 1)
+                self.assertIn('Desktop startup requires a graphical Linux session', errors.getvalue())
+                for operation in (initialize, prepare, desktop, serve, password):
+                    operation.assert_not_called()
+                self.assertFalse(self.state.exists())
+
     def test_unfinished_git_operations_block_before_touching_runtime_data(self):
         checkout = Path(self.temp.name) / 'checkout'
         metadata = checkout / '.git'
@@ -269,14 +288,16 @@ class LocalStartupTests(unittest.TestCase):
         start.assert_available("127.0.0.1", port)
 
     def test_check_is_read_only_even_for_a_new_data_directory(self):
-        with patch.object(start, 'dependency_report') as report, patch.object(start, 'initialize') as initialize:
+        with patch.dict(os.environ, {'DISPLAY': ':fixture'}), \
+                patch.object(start, 'dependency_report') as report, patch.object(start, 'initialize') as initialize:
             self.assertEqual(start.main(['--check', '--desktop', '--data-dir', str(self.state)]), 0)
         report.assert_called_once_with(desktop=True)
         initialize.assert_not_called()
         self.assertFalse(self.state.exists())
 
     def test_prepare_only_never_requests_password_or_starts_a_server(self):
-        with patch.object(start, 'check_dependencies'), patch.object(start, 'prepare') as prepare, \
+        with patch.dict(os.environ, {'DISPLAY': ':fixture'}), \
+                patch.object(start, 'check_dependencies'), patch.object(start, 'prepare') as prepare, \
                 patch.object(start, 'prepare_desktop') as desktop, patch.object(start, 'serve') as serve, \
                 patch.object(start, 'password_for_start') as password:
             self.assertEqual(start.main(['--prepare-only', '--desktop', '--data-dir', str(self.state)]), 0)
