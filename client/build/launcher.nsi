@@ -122,15 +122,8 @@ Function LaunchPayload
   ${StrStr} $2 $target "/"
   ${StrStr} $3 $target ".."
   ${StrStr} $4 $target ":"
-  ; Payloads produced after the SoduWork rename ship SoduWork.exe; payloads
-  ; installed before the rename ship SoduWork.exe. Try all brands, newest name first,
-  ; so one launcher can activate every installed generation.
-  !if "${SODUWORK_EXECUTABLE_NAME}" == "SoduWork.exe"
-    StrCpy $exeName "SoduWork.exe"
-  !else
-    StrCpy $exeName "${SODUWORK_EXECUTABLE_NAME}"
-  !endif
-  tryVersionedExe:
+  ; Try each pointer once, then recover the previous payload or original layout.
+  StrCpy $exeName "${SODUWORK_EXECUTABLE_NAME}"
   ${If} $target != ""
   ${AndIf} $1 == ""
   ${AndIf} $2 == ""
@@ -147,14 +140,6 @@ Function LaunchPayload
     ${EndIf}
   ${EndIf}
   !if "${SODUWORK_EXECUTABLE_NAME}" == "SoduWork.exe"
-  ${If} $exeName == "SoduWork.exe"
-    StrCpy $exeName "SoduWork.exe"
-    Goto tryVersionedExe
-  ${EndIf}
-  ${If} $exeName == "SoduWork.exe"
-    StrCpy $exeName "SoduWork.exe"
-    Goto tryVersionedExe
-  ${EndIf}
   ${If} $pointer == ".soduwork-active"
     StrCpy $pointer ".soduwork-previous"
     Goto readPointer

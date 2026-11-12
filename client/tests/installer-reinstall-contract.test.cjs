@@ -33,11 +33,9 @@ test('stable launcher waits for the installer and can recover the original layou
   assert.match(s, /SetErrorLevel 0\s+Quit/);
   assert.match(s, /\$1 == 32/);
   assert.match(s, /SoduWork\.previous\.exe/);
-  // SoduWork→SoduWork rename (f99fc2db): launcher tries SoduWork.exe first, then
-  // falls back to SoduWork.exe for payloads installed before the rename.
+  // The distribution's executable name is also used for isolated fixtures.
   assert.match(s, /soduwork-versions\\\$target\\\$exeName/);
-  assert.match(s, /StrCpy \$exeName "SoduWork\.exe"/);
-  assert.match(s, /StrCpy \$exeName "SoduWork\.exe"/);
+  assert.match(s, /StrCpy \$exeName "\$\{SODUWORK_EXECUTABLE_NAME\}"/);
 });
 
 test('ordinary and UAC inner installs execute the same transaction with upstream uninstaller', () => {
