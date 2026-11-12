@@ -14,6 +14,10 @@
     dsh: 'DS',
     harness2: 'H2',
   });
+  const CUSTOM_PATHS = Object.freeze([
+    'M7.4 5.8 12 3l4.6 2.8v5.5c0 3.7-1.9 6.6-4.6 8.7-2.7-2.1-4.6-5-4.6-8.7V5.8Z',
+    'M9.3 10.1h5.4M9.3 13.5h3.5',
+  ]);
 
   const LABELS = Object.freeze({
     pi: 'Pi',
@@ -70,8 +74,8 @@
     const id = canonical(value);
     const mark = MONOGRAMS[id];
     if (mark) return '<span class="agent-monogram" aria-hidden="true">' + mark + '</span>';
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 5.8 12 3l4.6 2.8v5.5c0 3.7-1.9 6.6-4.6 8.7-2.7-2.1-4.6-5-4.6-8.7V5.8Z"/>' +
-      '<path d="M9.3 10.1h5.4M9.3 13.5h3.5"/></svg>';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      CUSTOM_PATHS.map(d => '<path d="' + d + '"/>').join('') + '</svg>';
   }
 
   function html(value, options) {
@@ -81,6 +85,31 @@
       (opts.id ? ' id="' + _attr(opts.id) + '"' : '') +
       ' title="' + _attr(opts.title || LABELS[id]) + '" role="img" aria-label="' +
       _attr(LABELS[id]) + '">' + glyph(id) + '</span>';
+  }
+
+  // DOM-built surfaces share the same identity as HTML-built surfaces without
+  // depending on an image registry or interpreting runtime metadata as markup.
+  function element(value, options) {
+    const opts = options || {}, document = opts.document || global.document;
+    const id = canonical(value), root = document.createElement('span');
+    for (const [name, text] of Object.entries({ class: className(id, opts.className),
+      'data-agent-brand': id, title: opts.title || LABELS[id], role: 'img', 'aria-label': LABELS[id] })) {
+      root.setAttribute(name, text);
+    }
+    if (opts.id) root.setAttribute('id', opts.id);
+    if (MONOGRAMS[id]) {
+      const mark = document.createElement('span');
+      mark.setAttribute('class', 'agent-monogram'); mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = MONOGRAMS[id]; root.append(mark);
+    } else {
+      const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+      for (const d of CUSTOM_PATHS) {
+        const path = document.createElementNS(ns, 'path'); path.setAttribute('d', d); svg.append(path);
+      }
+      root.append(svg);
+    }
+    return root;
   }
 
   // Only runtime metadata can label an output. Never infer authorship from text
@@ -180,7 +209,7 @@
     const match = raw.match(/^(?:@openma\/deepseek-harness-acp(?:\s+|@)|deepseek-harness-acp\s+|dsh\s+)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/i);
     return match ? match[1] : raw;
   }
-  const api = Object.freeze({ MONOGRAMS, LABELS, canonical, className, glyph, html, sourceKey, transcript, version });
+  const api = Object.freeze({ MONOGRAMS, LABELS, canonical, className, glyph, html, element, sourceKey, transcript, version });
   global.AgentBrand = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,7 +8,8 @@
 .wc-runtime-missing{display:inline-flex;align-items:center;min-width:0;height:24px;padding-inline:2px}
 .wc-runtime-missing-icon{display:grid;place-items:center;width:22px;height:22px;margin-left:-5px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:7px;background:var(--bg-0);box-shadow:0 1px 2px rgba(20,30,48,.08)}
 .wc-runtime-missing-icon:first-child{margin-left:0}
-.wc-runtime-missing-icon .agent-brand{width:16px;height:16px;display:block;object-fit:contain}
+.wc-runtime-missing-icon .agent-brand{--agent-brand-size:16px;width:16px;height:16px;flex-basis:16px;display:grid;place-items:center;border:0;border-radius:0;background:transparent;box-shadow:none}
+.wc-runtime-missing-icon .agent-monogram{font-size:10px;letter-spacing:0}
 .wc-runtime-missing-icon .agent-brand>img{display:block;width:15px;height:15px;object-fit:contain}
 .wc-runtime-more{appearance:none;border:0;background:transparent;color:var(--ink-4);height:26px;padding:2px 6px;border-radius:7px;font:inherit;font-size:max(var(--font-min-readable,14.5px),11px);cursor:pointer;white-space:nowrap}
 .wc-runtime-more:hover{background:var(--bg-2);color:var(--ink-2)}

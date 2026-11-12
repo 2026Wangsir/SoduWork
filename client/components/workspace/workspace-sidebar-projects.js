@@ -294,11 +294,11 @@
         const node = [...list.children].find(item => item.dataset.projectId === id);
         node?.scrollIntoView({ block: 'nearest' }); node?.querySelector('.ws-project-toggle')?.focus();
       },
-      pins: () => new Set(state().get().pins),
+      pins: () => new Set(state().view(getItems()).pinned.map(row => row.id)),
       projectForChat(id) {
         const wanted = String(id || '');
         if (!wanted) return null;
-        const project = state().get().projects.find(item => item.chatIds.includes(wanted));
+        const project = state().view(getItems()).projects.find(item => item.items.some(row => row.id === wanted));
         return project ? { id: project.id, name: project.name, businessProjectId: project.businessProjectId || '', folders: project.folders.slice() } : null;
       },
       /* Pinning uses togglePin independently of drag-based project moves. */
@@ -308,7 +308,7 @@
         if (!item) throw Error('会话已不在列表中，请刷新后重试');
         if (item.pending) throw Error('会话建立后即可置顶');
         state().togglePin(wanted, item);
-        const pinned = state().get().pins.includes(wanted);
+        const pinned = state().view(getItems()).pinned.some(row => row.id === wanted);
         if (pinned) {
           const body = root.querySelector('#wsPinnedChats');
           if (body.hidden) root.querySelector('#wsPinnedToggle').click();

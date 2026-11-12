@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><base href="../../">
+<title>Runtime identity verification</title>
+<link rel="stylesheet" href="theme/variables.css">
+<link rel="stylesheet" href="components/panels/agent-brand.css">
+<link rel="stylesheet" href="components/panels/panels-connections.css">
+<link rel="stylesheet" href="components/panels/panels-agents.css">
+<style>body{margin:0;padding:24px;background:var(--bg-1);font:14px var(--font-ui);color:var(--ink)}h1{margin:0 0 20px}.ag-grid{grid-template-columns:repeat(3,minmax(0,1fr))}</style>
+</head><body><h1>Agent 管理 · 隔离图标验证</h1><main class="ag-grid" id="fixtureCards"></main>
+<script>
+window.errors=[];addEventListener('error',e=>errors.push(e.message));
+addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
+window.fetch=()=>{throw Error('No network allowed in runtime identity fixture')};
+const esc=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+</script>
+<script src="components/panels/agent-brand.js"></script>
+<script src="components/panels/panels-agents.js"></script>
+<script>
+const identities=[...Object.keys(AgentBrand.MONOGRAMS),'private-agent'];
+document.getElementById('fixtureCards').innerHTML=identities.map(key=>_agRowHtml({key,
+  name:AgentBrand.LABELS[key]||'Private runtime',installed:true,version:'1.0.0',
+  blurb:'Synthetic runtime identity; no task or model execution.'})).join('');
+window.fixtureReady=true;
+</script></body></html>
