@@ -13,6 +13,8 @@ function secureStorageProbe(profile, mode) {
   const directory = fs.lstatSync(profile);
   if (!directory.isDirectory() || directory.isSymbolicLink()) throw Error('Unsafe secure-storage acceptance profile');
   if (!safeStorage.isEncryptionAvailable()) throw Error('Electron safeStorage is unavailable');
+  const backend = process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : null;
+  if (backend === 'basic_text' || backend === 'unknown') throw Error('Real Linux secret storage is required');
   const file = path.join(profile, 'acceptance-secure-storage.bin');
   const marker = 'soduwork-keychain-smoke-v1';
   if (mode === 'write') {
@@ -25,7 +27,7 @@ function secureStorageProbe(profile, mode) {
   const cipher = fs.readFileSync(file);
   if (safeStorage.decryptString(cipher) !== marker)
     throw Error('Electron safeStorage did not preserve the earlier ciphertext');
-  return { available: true, roundTrip: true, persisted: true, mode,
+  return { available: true, backend, roundTrip: true, persisted: true, mode,
     ciphertextSha256: crypto.createHash('sha256').update(cipher).digest('hex') };
 }
 

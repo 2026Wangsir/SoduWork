@@ -34,4 +34,4 @@ Initialize a public repository from a verified source ZIP, or squash the reviewe
 
 Report only the platforms actually tested. Windows checks do not replace native macOS/Linux validation, and synthetic-data checks do not establish real-model or production acceptance.
 
-macOS 1.13.15 is the first SoduWork Mac release. Acceptance covers fresh installation, restart, reinstallation and persistence of data and encrypted credentials. Migration of credentials from SoduWork Global 1.13.13 is not supported. The combined Client/Hub workflow produces a Draft Release for internal testing and never publishes it automatically.
+Desktop 1.13.15 is the first SoduWork release on Windows, Linux and macOS. Acceptance covers fresh installation, restart, reinstallation and persistence of data and encrypted credentials. Migration of credentials from SoduWork Global 1.13.13 is not supported. The combined Client/Hub workflow produces a Draft Release for internal testing and never publishes it automatically.

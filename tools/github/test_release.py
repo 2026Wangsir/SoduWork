@@ -222,12 +222,14 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'regular artifact'):
             release.verify(ctx, self.root)
 
-    def test_first_release_exception_is_mac_and_version_scoped(self):
+    def test_first_release_exception_is_desktop_and_version_scoped(self):
         contract = {'firstRelease': {'version': '1.13.15',
             'keys': ['macos-arm64-dmg', 'windows-x64-exe'], 'excludedProduct': 'SoduWork Global'}}
         ctx = {**self.ctx, 'version': '1.13.15'}
         self.assertTrue(release.first_release(ctx, 'macos-arm64-dmg', contract))
-        self.assertFalse(release.first_release(ctx, 'windows-x64-exe', contract))
+        self.assertTrue(release.first_release(ctx, 'windows-x64-exe', contract))
+        self.assertFalse(release.first_release(ctx, 'linux-x64-deb', contract))
+        self.assertFalse(release.first_release(ctx, 'android-apk', contract))
         self.assertFalse(release.first_release({**ctx, 'version': '1.13.16'}, 'macos-arm64-dmg', contract))
 
     def test_client_baselines_must_be_older_public_assets(self):

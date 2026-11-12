@@ -73,12 +73,14 @@ async function main() {
   await fs.mkdir(output, { recursive: true });
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'soduwork-accept-packages-'));
   const checks = [], roots = new Map();
+  let firstRelease = false;
   const installer = path.join(contract.dist, item.name);
   const env = { ...process.env, SODUWORK_ACCEPT_INSTALLER_SHA256: item.sha256 };
   let failure;
   try {
     const recent = await soduworkBaseline('windows-x64-exe', temp);
-    for (const [name, old] of [['fresh-repair', null], ['soduwork-upgrade', recent]]) {
+    firstRelease = !recent;
+    for (const [name, old] of [['fresh-repair', null], ...(recent ? [['soduwork-upgrade', recent]] : [])]) {
       console.log('Windows acceptance: starting ' + name);
       const destination = path.join(output, name);
       try {
@@ -126,6 +128,7 @@ async function main() {
       else throw error;
     }
   }
-  await contract.acceptance('windows', checks, ['Windows Runner SYSTEM/session 0; no interactive UAC or customer filesystem filter certification.']);
+  await contract.acceptance('windows', checks, ['Windows Runner SYSTEM/session 0; no interactive UAC or customer filesystem filter certification.',
+    ...(firstRelease ? ['First SoduWork release: fresh install and same-version repair preserve data; SoduWork Global migration is not supported.'] : [])]);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

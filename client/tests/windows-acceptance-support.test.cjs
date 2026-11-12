@@ -91,7 +91,7 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
   const source = require('node:fs').readFileSync(path.join(__dirname, '../../tools/ci/accept-windows.cjs'), 'utf8');
   const root = path.join(os.tmpdir(), 'soduwork-install-acceptance-fixture');
   const version = '9.9.1';
-  for (const failCleanup of [false, true]) {
+  for (const firstRelease of [false, true]) for (const failCleanup of [false, true]) {
     let completedChecks;
     const calls = [], errors = [], state = { platform: 'win32', execPath: process.execPath, env: {} };
     const contract = {
@@ -113,7 +113,7 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
       'node:fs/promises': fakeFs, 'node:path': path, 'node:os': os, 'node:assert/strict': assert,
       'node:child_process': { spawnSync: () => { throw Error('Unexpected native call'); } },
       './release-artifacts.cjs': contract,
-      './acceptance-common.cjs': { run: async () => {}, soduworkBaseline: async () => ({ productName: 'SoduWork',
+      './acceptance-common.cjs': { run: async () => {}, soduworkBaseline: async () => firstRelease ? null : ({ productName: 'SoduWork',
         path: 'old.exe', version: '1.12.80', sha256: 'old-sha' }) },
       './windows-acceptance-support.cjs': { ...support, stopOwnedProcesses: () => {} },
     };
@@ -128,8 +128,8 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
       assert.equal(state.exitCode, undefined);
       assert.equal(calls.at(-1), 'receipt');
       assert.equal(errors.length, 0);
-      assert.deepEqual(Array.from(completedChecks, row => row.name), ['fresh-repair', 'soduwork-upgrade', 'compatibility']);
-      assert.equal(completedChecks.find(row => row.name === 'soduwork-upgrade').oldVersion, '1.12.80');
+      assert.deepEqual(Array.from(completedChecks, row => row.name), firstRelease ? ['fresh-repair', 'compatibility'] : ['fresh-repair', 'soduwork-upgrade', 'compatibility']);
+      if (!firstRelease) assert.equal(completedChecks.find(row => row.name === 'soduwork-upgrade').oldVersion, '1.12.80');
     }
   }
 });

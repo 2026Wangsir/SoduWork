@@ -67,7 +67,8 @@ def api(route, optional=False):
 def first_release(ctx, key, baselines):
     contract = baselines.get("firstRelease", {})
     return (ctx["version"] == contract.get("version")
-            and key in ("macos-arm64-dmg", "macos-x64-dmg")
+            and key in ("windows-x64-exe", "linux-x64-deb", "linux-x64-rpm", "linux-x64-tar.gz",
+                        "macos-arm64-dmg", "macos-x64-dmg")
             and key in contract.get("keys", [])
             and contract.get("excludedProduct") == "SoduWork Global")
 

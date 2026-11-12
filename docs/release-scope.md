@@ -34,4 +34,4 @@
 
 只报告实际验证过的平台。Windows 检查不能替代原生 macOS/Linux 验证，合成数据检查也不能证明真实模型或生产环境已完成验收。
 
-macOS 1.13.15 按首次 SoduWork Mac 发版验收，覆盖新装、重启、重装以及数据和加密凭据保留。不支持从 SoduWork Global 1.13.13 迁移凭据。Client/Hub 合并流程仅生成 Draft Release 供内部测试，不会自动公开发布。
+桌面版 1.13.15 在 Windows、Linux 和 macOS 上均按首次 SoduWork 发版验收，覆盖新装、重启、重装以及数据和加密凭据保留。不支持从 SoduWork Global 1.13.13 迁移凭据。Client/Hub 合并流程仅生成 Draft Release 供内部测试，不会自动公开发布。

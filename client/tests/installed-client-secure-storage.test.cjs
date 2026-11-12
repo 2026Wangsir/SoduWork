@@ -8,9 +8,10 @@ function fixture(t) {
   t.after(() => fs.rmSync(profile, { recursive: true, force: true }));
   return { profile, file: path.join(profile, 'acceptance-secure-storage.bin') };
 }
-function processProbe(profile, mode, key, available = true) {
+function processProbe(profile, mode, key, available = true, backend = null) {
   const safeStorage = {
     isEncryptionAvailable: () => available,
+    getSelectedStorageBackend: () => backend,
     encryptString(text) {
       const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
       const data = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
@@ -23,7 +24,7 @@ function processProbe(profile, mode, key, available = true) {
     },
   };
   return vm.runInNewContext('(' + secureStorageProbe.toString() + ')(profile, mode)', {
-    profile, mode, process: { mainModule: { require: name => name === 'electron' ? { safeStorage } : require(name) } },
+    profile, mode, process: { platform: backend === null ? 'darwin' : 'linux', mainModule: { require: name => name === 'electron' ? { safeStorage } : require(name) } },
   });
 }
 test('separate restart and upgrade processes must decrypt the original ciphertext', t => {
@@ -64,4 +65,14 @@ test('secure-storage probe rejects profiles outside the acceptance namespace', t
   assert.throws(() => processProbe(path.dirname(f.profile), 'write', key), /isolated acceptance profile/);
   assert.throws(() => processProbe(f.profile, 'other', key), /Invalid.*mode/);
   assert.equal(fs.existsSync(f.file), false);
+});
+
+test('Linux acceptance rejects plaintext fallback and records the real secret backend', t => {
+  const f = fixture(t), key = crypto.randomBytes(32);
+  for (const backend of ['basic_text', 'unknown']) {
+    assert.throws(() => processProbe(f.profile, 'write', key, true, backend), /Real Linux secret storage/);
+    assert.equal(fs.existsSync(f.file), false);
+  }
+  assert.equal(processProbe(f.profile, 'write', key, true, 'gnome_libsecret').backend, 'gnome_libsecret');
+  assert.equal(processProbe(f.profile, 'read', key, true, 'gnome_libsecret').roundTrip, true);
 });

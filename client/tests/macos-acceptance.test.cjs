@@ -79,7 +79,7 @@ test('Mac fresh, old and upgrade installs use separate cleaned DMG mounts', asyn
   assert.deepEqual(await fs.readdir(root), ['release-evidence']);
 });
 
- test('first Mac release contract skips only its explicit version and platform baselines', async t => {
+ test('first desktop release contract skips only its explicit version and platform baselines', async t => {
   const { baseline } = require('../../tools/ci/acceptance-common.cjs');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soduwork-first-release-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -89,6 +89,7 @@ test('Mac fresh, old and upgrade installs use separate cleaned DMG mounts', asyn
   } }));
   const options = { file, productName: 'SoduWork', candidateVersion: '1.13.15' };
   assert.equal(await baseline('macos-arm64-dmg', root, options), null);
-  await assert.rejects(baseline('windows-x64-exe', root, options), /Missing baseline/);
+  assert.equal(await baseline('windows-x64-exe', root, options), null);
+  await assert.rejects(baseline('linux-x64-deb', root, options), /Missing baseline/);
   await assert.rejects(baseline('macos-arm64-dmg', root, { ...options, candidateVersion: '1.13.16' }), /Missing baseline/);
  });

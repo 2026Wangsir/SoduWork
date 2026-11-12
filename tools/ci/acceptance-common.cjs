@@ -93,7 +93,8 @@ async function baseline(key, directory, { file = process.env.SODUWORK_ACCEPT_BAS
   const first = config.firstRelease;
   if (productName === 'SoduWork' && first?.version === candidateVersion &&
       first.excludedProduct === 'SoduWork Global' &&
-      ['macos-arm64-dmg', 'macos-x64-dmg'].includes(key) && first.keys?.includes(key)) return null;
+      ['windows-x64-exe', 'linux-x64-deb', 'linux-x64-rpm', 'linux-x64-tar.gz',
+        'macos-arm64-dmg', 'macos-x64-dmg'].includes(key) && first.keys?.includes(key)) return null;
   const item = config[key];
   assert.ok(item && /^\d+\.\d+\.\d+$/.test(item.version), 'Missing baseline: ' + key);
   assertUpgradeVersion(item.version, candidateVersion);

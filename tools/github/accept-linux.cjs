@@ -33,18 +33,20 @@ async function main() {
           '-v', output + ':/evidence', '-e', 'SODUWORK_ACCEPT_UID=' + (os.userInfo().uid || 12001), image, 'sleep', 'infinity']);
         created = true;
         await run('docker', ['start', container]);
-        const args = [kind, '/pkg/' + item.name, record.version, '/pkg/' + path.basename(previous.path), previous.version];
+        const args = [kind, '/pkg/' + item.name, record.version, previous ? '/pkg/' + path.basename(previous.path) : '-', previous ? previous.version : '-'];
         await run('docker', ['exec', container, 'bash', '/checks/github/linux-installed-check.sh', 'prepare', ...args]);
         await run('docker', ['network', 'disconnect', 'bridge', container]);
         await run('docker', ['exec', container, 'bash', '/checks/github/linux-installed-check.sh', 'verify', ...args]);
         const result = await contract.read(path.join(output, 'result.json'));
         assert.equal(result.ok, true); assert.equal(result.version, record.version);
-        assert.equal(result.upgraded, true); assert.equal(result.oldVersion, previous.version);
+        assert.equal(result.upgraded, !!previous); assert.equal(result.oldVersion, previous ? previous.version : '');
+        if (!previous) assert.equal(result.reinstalled, true);
         assert.equal(result.nodeShimExecutable, true);
-        checks.push({ name, ok: true, oldVersion: previous.version });
+        checks.push({ name, ok: true, upgraded: !!previous, reinstalled: !previous, oldVersion: previous ? previous.version : '' });
       } finally { if (created) await run('docker', ['rm', '-f', container]); }
     }
-    await contract.acceptance('linux', checks, ['Disposable Xvfb containers; no desktop login, Wayland or polkit interaction.']);
+    await contract.acceptance('linux', checks, ['Disposable Xvfb containers with GNOME Keyring; no desktop login, Wayland or polkit interaction.',
+      ...(checks.some(row => !row.upgraded) ? ['First SoduWork release: fresh install, restart and reinstall preserve data; SoduWork Global migration is not supported.'] : [])]);
   } finally { await fs.rm(packages, { recursive: true, force: true }); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
