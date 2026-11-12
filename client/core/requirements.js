@@ -245,7 +245,9 @@
       task.status === 'doing' && stage(task) === 'delivering' && !task.archivedAt && !task.maintenanceBlocked &&
       !executionActive(task));
   }
-  function canManageAutomation(task) { return capability(task, 'canManageRequirementAutomation'); }
+  function canManageAutomation(task) {
+    return Boolean(task && (!task.archivedAt || task.automationScheduleId) && capability(task, 'canManageRequirementAutomation'));
+  }
   // Definition editing, delivery operations and maintenance have separate capabilities.
   function executing(task) { return ['doing', 'paused', 'reviewing'].includes(task && task.status); }
   function maintenance(task, action) {

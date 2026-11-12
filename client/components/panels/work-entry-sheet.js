@@ -4,6 +4,13 @@
   let layer = null, surface = null, seed = null, attachments = null, scope = 0, restoreFailed = false;
   let refineTail = Promise.resolve();
   let resultDialog = null;
+  let focusReturn = null;
+  const isModal = () => layer?.isConnected && !surface?.inline && document.documentElement.dataset.deskPanel !== 'add';
+  function focusableControls() {
+    return Array.from(layer.querySelectorAll('button,input,textarea,select,a[href],[tabindex]')).filter(node =>
+      node.tabIndex >= 0 && !node.disabled && !node.closest('[inert],[hidden]') &&
+      node.getClientRects().length && getComputedStyle(node).visibility === 'visible');
+  }
   const ownerScope = () => String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
   function dismissResult(restoreFocus = false) { resultDialog?.finish(restoreFocus); }
   function showResult({ success, title, message, hint, id, focusTarget }) {
@@ -75,6 +82,8 @@
   function capture() { return layer && !restoreFailed ? global.ComposeDraft?.capture?.() || null : null; }
   function close(fromDraft, silent, captured) {
     dismissResult();
+    const previousFocus = focusReturn, restoreFocus = !silent && isModal();
+    focusReturn = null;
     const automation = global.WorkAutomationSheet;
     if (automation?.hasSurface ? automation.hasSurface() : automation?.active()) automation.close(silent);
     const oldSurface = surface, oldSeed = seed, hadLayer = Boolean(layer);
@@ -88,6 +97,7 @@
     // Replacing a form closes it silently; invoking the host close callback would also close the window being reopened.
     if (!silent && typeof oldSeed?.onClose === 'function') oldSeed.onClose();
     if (!silent && hadLayer) oldSeed?.onCardClose?.(saved);
+    if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
   }
   function showSavedMaterials(taskId, files) {
     const zone = layer?.querySelector('.wes-attach-zone'), request = scope;
@@ -144,13 +154,16 @@
     const s = value || {};
     seed = s; const request = ++scope;
     const owner = ownerScope(), returnFocus = document.activeElement;
+    focusReturn = returnFocus;
     const current = () => request === scope && owner === ownerScope() && layer?.isConnected;
     const text = String(s.parseText || s.text || '');
     surface = PluginUIHost.mount({ id: 'work-entry', host: s.host, anchor: s.anchor,
       className: 'wes-plugin-surface', prompt: s.text ? '【需求】：' + String(s.text) : '' });
     layer = document.createElement('div');
     layer.id = 'workEntryLayer'; layer.className = 'wes-layer is-task show entered ' + (surface.inline ? 'is-inline' : 'is-dialog');
-    layer.innerHTML = '<aside class="wes-sheet" role="dialog" aria-modal="true" aria-labelledby="wesTitle">' +
+    const modal = !surface.inline && document.documentElement.dataset.deskPanel !== 'add';
+    layer.innerHTML = '<aside class="wes-sheet" role="' + (modal ? 'dialog' : 'region') + '"' +
+      (modal ? ' aria-modal="true"' : '') + ' aria-labelledby="wesTitle">' +
       '<header class="wes-head"><div class="wes-head-icon"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 9h8M8 13h5"/></svg></div>' +
       '<div><h2 id="wesTitle">新建需求</h2><p>' + (s.saveOnly ? '先记录目标，准备好后再安排执行' : '写清目标与完成标准，保存或交办给负责人') + '</p></div>' +
       '<button type="button" class="wes-close" data-wes-close aria-label="取消" title="取消"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header>' +
@@ -159,6 +172,7 @@
       '<button type="button" id="wesAttachPick">添加附件</button></div>' +
       '<input type="file" id="wesAttachInput" multiple hidden><div class="catt-tray wes-attach-tray" id="wesAttachTray"></div></section></main></aside>';
     surface.content.appendChild(layer);
+    if (modal) layer.querySelector('[data-wes-close]')?.focus();
     const attachmentZone = layer.querySelector('.wes-attach-zone');
     const resultFeedback = s.saveOnly === true && !surface.inline;
     const closeButton = layer.querySelector('[data-wes-close]');
@@ -303,6 +317,18 @@
     return work;
   }
   document.addEventListener('keydown', event => {
+    if (event.key === 'Tab' && !event.defaultPrevented && isModal() &&
+        !document.querySelector('dialog:modal,[popover]:popover-open,.catt-preview')) {
+      const controls = focusableControls(), first = controls[0], last = controls[controls.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      // Recompute boundaries after dynamic owner pickers, attachments, and validation rerenders.
+      const outside = !layer.contains(document.activeElement);
+      if (outside || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+      return;
+    }
     if (event.key !== 'Escape' || event.defaultPrevented || !layer?.isConnected) return;
     if (surface?.inline) return;
     if (document.querySelector('dialog:modal,[popover]:popover-open,.catt-preview')) return;

@@ -353,7 +353,7 @@
     reconcile(view) { currentView = view; if (active?.ref === view?.ref) active.place(); },
     close() { viewGeneration++; if (active) active.surface.destroy(); } };
   if (global.PluginUIHost) global.PluginUIHost.registerAction({
-    id: 'work.plugin.debug', command: '调试插件', name: '调试插件', aliases: ['插件调试'],
+    id: 'work.plugin.debug', command: '调试插件', name: '调试插件', aliases: ['插件调试', 'debug-plugin'],
     description: '本机逐节点调试个人工作流，检查产出并确认下一步', icon: '◇', badge: '本机调试',
     open: context => open(context),
   });

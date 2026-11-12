@@ -99,6 +99,9 @@ function _schCardHtml(s) {
       stateHtml + '</div>' +
     '<div class="sch-i-main"><div class="sch-i-top"><b class="sch-i-title" data-user-content title="' + esc(s.title) + '">' +
       esc(s.title) + '</b></div>' + _schCardNote(s.note) +
+      (s.sourceRequirement?.id ? '<div class="sch-i-meta"><span>' + esc(typeof SoduWorkI18n !== 'undefined' ?
+        SoduWorkI18n.translateText('来源需求') : '来源需求') + '：<b data-user-content>' + esc(s.sourceRequirement.title || '') +
+        '</b> · v' + esc(s.sourceRequirement.requirementVersion) + '</span></div>' : '') +
       (repo ? '<div class="sch-i-meta"><span class="sch-i-project">' + _schVisualIcon('folder') + '<b data-user-content title="' + esc(repo) + '">' + esc(repo) + '</b></span>' +
       (s.flow ? '<span class="sch-i-flow">（按研发流程走）</span>' : '') + '</div>' : '') +
 

@@ -4,7 +4,8 @@
 // Only the authenticated source device may resolve it to a native archive.
 async function resolve({ app, session, item, identity }) {
   if (!item?.sourceSessionId || !identity?.clientId ||
-      item.sourceClientId !== identity.clientId) return null;
+      item.sourceClientId !== identity.clientId ||
+      item.contentLocation && item.contentLocation !== 'source') return null;
   const access = require('./history-access');
   const segments = require('./runtime-segments');
   let id = String(item.sourceSessionId);

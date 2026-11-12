@@ -29,7 +29,8 @@ function fixture(parse) {
       html = value; fields.clear(); checks.length = 0;
       for (const hit of value.matchAll(/<input\b([^>]*)>|<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/g)) {
         const attrs = hit[1] ?? hit[2], id = /\bid="([^"]+)"/.exec(attrs)?.[1];
-        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]) };
+        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]),
+          attributes: {}, setAttribute(name, value) { this.attributes[name] = value; }, focus() {} };
         if (id) fields.set(id, node);
         if (/\bclass="cp-ck-t"/.test(attrs)) checks.push(node);
       }
@@ -65,6 +66,29 @@ function parsedRequest(text) {
   const start = text.indexOf('当前需求：') + '当前需求：'.length;
   return { current: JSON.parse(text.slice(start, split)), change: text.slice(split + marker.length) };
 }
+
+test('oversized manual titles remain editable and cannot be persisted', async () => {
+  for (const title of ['x'.repeat(201), '\u6807'.repeat(201), '\u{1F600}'.repeat(101)]) {
+    const f = fixture(() => ({})); await f.open({});
+    f.fields.get('cpTitle').value = title;
+    f.handlers.click({ target: { closest: selector => selector === '#cpCreate' ? {} : null } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.persisted.length, 0);
+    assert.equal(f.value('cpTitle'), title);
+    assert.equal(f.fields.get('cpTitle').attributes['aria-invalid'], 'true');
+  }
+});
+
+test('the 200 UTF-16-unit title boundary matches task synchronization', async () => {
+  for (const title of ['x'.repeat(200), '\u6807'.repeat(200), '\u{1F600}'.repeat(100)]) {
+    const f = fixture(() => ({})); await f.open({});
+    f.fields.get('cpTitle').value = title;
+    f.handlers.click({ target: { closest: selector => selector === '#cpCreate' ? {} : null } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.persisted.length, 1);
+    assert.equal(f.persisted[0].title, title);
+  }
+});
 
 test('1501-2000 character original request survives task parsing and creation unchanged', async () => {
   const f = fixture(() => ({ title: '短标题', note: '模型改写后的摘要' }));

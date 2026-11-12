@@ -10,8 +10,8 @@ function runtime() {
   const values = new Map(), calls = [], events = [];
   let answer = async () => new Response('{"ok":true}');
   const window = { __SODUWORK_TEST_HUB_CONFIG__: { allowSwitch: true },
-    CustomEvent: class { constructor(type) { this.type = type; } },
-    dispatchEvent(event) { events.push(event.type); },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } },
+    dispatchEvent(event) { events.push(event.type); window.lastEvent = event; },
     SoduWorkLocalLibraryAPI: { install(api) { assert.equal(typeof api.pluginCatalog, 'function'); } },
   };
   const context = vm.createContext({ window, User: { id: 'plugin-fixture' }, navigator: { platform: 'test' },
@@ -67,4 +67,47 @@ test('a plugin mutation cannot publish invalidation after the shared Hub scope c
   finish(new Response('{"ok":true}'));
   await assert.rejects(pending, error => error.code === 'STALE_TASK_SCOPE');
   assert.equal(f.events.includes('soduwork:plugins-changed'), false);
+});
+
+test('only confirmed personal deletion publishes removal of a composer reference', async () => {
+  const { window, api, events } = runtime();
+  window.soduWorkAPI = { personalPlugins: { remove: async () => ({ ok: false }) } };
+  await api.deletePersonalPlugin('local:one');
+  assert.equal(events.length, 0);
+  window.soduWorkAPI.personalPlugins.remove = async () => { throw Error('offline'); };
+  await assert.rejects(api.deletePersonalPlugin('local:one'), /offline/);
+  assert.equal(events.length, 0);
+  window.soduWorkAPI.personalPlugins.remove = async () => ({ ok: true });
+  await api.deletePersonalPlugin('local:one');
+  assert.equal(window.lastEvent.type, 'soduwork:plugins-changed');
+  assert.equal(window.lastEvent.detail.pluginId, 'local:one');
+  assert.equal(window.lastEvent.detail.removed, true);
+});
+
+test('a personal deletion completed after a Hub switch cannot remove current composer references', async () => {
+  const f = runtime();
+  let finish;
+  f.window.soduWorkAPI = { personalPlugins: { remove: () => new Promise(resolve => { finish = resolve; }) } };
+  const pending = f.api.deletePersonalPlugin('local:one');
+  f.api.setHubEnvironment('development', 'http://127.0.0.1:34567');
+  finish({ ok: true });
+  await assert.rejects(pending, error => error.code === 'STALE_TASK_SCOPE');
+  assert.equal(f.events.includes('soduwork:plugins-changed'), false);
+});
+
+test('catalog completeness distinguishes an empty local library from unavailable local data', async () => {
+  const window = { soduWorkAPI: { personalPlugins: {} } };
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'core/api-work-plugins.js'), 'utf8'), { window });
+  const api = window.SoduWorkPluginAPI.create({ jfetch: async () => ({ items: [] }),
+    taskStorageKey: () => 'scope', registrationEpoch: () => 1, mark() {}, markFromError() {},
+    registrationBoundaryError: () => false });
+  assert.equal((await api.pluginCatalog()).personalComplete, false);
+  window.soduWorkAPI.personalPlugins.list = async () => ({ ok: true, items: [] });
+  assert.equal((await api.pluginCatalog()).personalComplete, true);
+  window.soduWorkAPI.personalPlugins.list = async () => { throw Error('IPC unavailable'); };
+  assert.equal((await api.pluginCatalog()).personalComplete, false);
+  window.soduWorkAPI.personalPlugins.list = async () => ({ ok: false, items: [] });
+  assert.equal((await api.pluginCatalog()).personalComplete, false);
+  window.soduWorkAPI.personalPlugins.list = async () => ({ ok: true });
+  assert.equal((await api.pluginCatalog()).personalComplete, false);
 });

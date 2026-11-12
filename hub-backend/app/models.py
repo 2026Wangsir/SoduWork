@@ -636,6 +636,8 @@ class AiSchedule(Base):
     plugin_binding_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     plugin_inputs: Mapped[dict] = mapped_column(JSON, default=dict)
     source_app: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Immutable requirement attribution; it does not grant access to the source task.
+    source_requirement: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # For personal plugins, Hub stores identity and verifiable version metadata; the owner's Runner resolves the body.
     # Pin a version or explicitly select latest; MCP uses the conversation grant ticket bridge.
     # Mutually exclusive with plugin_binding_id: organization bindings run workflows, personal plugins supply direct-task context.

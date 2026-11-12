@@ -104,6 +104,17 @@ function fixture(t, options = {}) {
     open: raw => context.openConversation(event, raw) };
 }
 
+for (const location of ['hub', 'replica', 'unknown', 'source']) {
+  test(`account content location ${location} controls native resume authority`, async t => {
+    const f = fixture(t);
+    f.item.contentLocation = location;
+    const result = await f.open({ chatId: f.item.id, accountConversation: true, adapterId: 'account-sync' });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(f.opens.length, location === 'source' ? 1 : 0);
+    assert.equal(result.snapshot.adapterId, location === 'source' ? 'pi' : 'account-sync');
+  });
+}
+
 for (const { id: adapterId } of require('../main/agent-runtime/runtime-catalog').runtimes()) {
   test(`${adapterId}: cold account alias resumes the saved native archive with stale sidebar flags`, async t => {
     const f = fixture(t, { adapterId });

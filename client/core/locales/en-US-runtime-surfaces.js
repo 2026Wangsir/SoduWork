@@ -1,5 +1,6 @@
 (function (global) {
   const messages = {
+    "需求标题最多 200 个字符": "Requirement titles can contain up to 200 characters",
     '同公司可见': 'Visible within the company',
     '仓库成员可见': 'Visible to repository members',
     '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。': 'Repository members can view the issue content. Execution conversations and logs keep their existing access permissions.',

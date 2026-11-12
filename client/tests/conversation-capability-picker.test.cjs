@@ -65,7 +65,10 @@ test('typing # opens a truthful Skill palette before and after catalog loading',
   input.selectionStart = 1;
   input.emit('input');
   assert.equal(menu.classList.contains('show'), true);
-  assert.equal(input.getAttribute('aria-expanded'), 'true');
+  assert.equal(input.getAttribute('aria-expanded'), undefined);
+  assert.equal(input.getAttribute('aria-controls'), menu.id);
+  assert.equal(input.getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(menu.getAttribute('role'), 'listbox');
   assert.match(menu.innerHTML, /正在加载团队 Skill/);
 
   picker.setItems([{

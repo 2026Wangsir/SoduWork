@@ -438,7 +438,7 @@
           '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' : '') +
         (_opts.variant === 'sheet' ? '<div class="cp-sec-h cp-content-heading">' + (global.RequirementFields?.sectionIcon?.('content') || '') + '需求内容</div><label class="cp-field-label" for="cpTitle">需求标题</label>' : '') +
-        '<input class="cp-title" id="cpTitle" value="' + esc(d.title) + '" placeholder="需求标题">' +
+        _titleHtml(d.title) +
         (_opts.variant === 'sheet' ? '<label class="cp-field-label" for="cpNote">背景与说明</label>' : '') +
         '<textarea class="cp-note" id="cpNote" rows="3" placeholder="要说清楚的细节">' + esc(d.note) + '</textarea>' +
         _sourceHtml() +
@@ -486,7 +486,7 @@
         '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
       '</div>' +
-      '<input class="cp-title" id="cpTitle" value="' + esc(d.title) + '" placeholder="需求标题">' +
+      _titleHtml(d.title) +
       (d.note ? '<div class="cp-quick-note">' + esc(_cut(d.note.replace(/\s+/g, ' '), 120)) + '</div>' : '') +
       _sourceHtml() +
       '<div class="cp-quick-meta">' + meta.map((s) => '<span>' + esc(s) + '</span>').join('') + '</div>' +
@@ -496,6 +496,12 @@
         '<button class="cp-ghost" id="cpExpand">检查详情</button>' +
       '</div>' +
     '</div>';
+  }
+
+  function _titleHtml(title) {
+    return '<input class="cp-title" id="cpTitle" value="' + esc(title) +
+      '" placeholder="需求标题" aria-describedby="cpTitleLimit">' +
+      '<small class="cp-title-limit" id="cpTitleLimit">需求标题最多 200 个字符</small>';
   }
 
   function _goLabel() {
@@ -743,6 +749,7 @@
     });
 
     box.addEventListener('input', (e) => {
+      if (e.target.id === 'cpTitle') e.target.setAttribute('aria-invalid', String(e.target.value.trim().length > 200));
       const search = e.target.closest('[data-selsearch]');
       if (!search) { if (_d && !_submission?.running && !_submission?.stored) _publishDraft(); return; }
       _whoQuery = String(search.value || '').slice(0, 80);
@@ -840,6 +847,13 @@
     if (!title) {
       global.petSay?.('先给它一个标题');
       document.getElementById('cpTitle')?.focus(); return;
+    }
+    // Preserve oversized input for correction instead of letting task synchronization truncate it.
+    const titleInput = document.getElementById('cpTitle');
+    titleInput?.setAttribute('aria-invalid', String(title.length > 200));
+    if (title.length > 200) {
+      global.petSay?.('需求标题最多 200 个字符');
+      titleInput?.focus(); return;
     }
     const w = draft.who, mate = w.kind === 'mate' ? _mateOf(w.id) : null;
     if (w.kind === 'pending' || draft.flowProblem) {

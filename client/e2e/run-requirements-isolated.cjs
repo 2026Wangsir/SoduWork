@@ -13,7 +13,7 @@ const report = {ok: false, scope: 'Isolated HTTP/SQLite and production Electron 
 fs.mkdirSync(output, {recursive: true});
 (async () => {
   for (const spec of wanted) {
-    if (!['requirements-workspace', 'requirements-integration', 'project-conversation', 'requirements-acceptance-live', 'requirements-delivery-rework', 'requirements-acceptance-preflight'].includes(spec)) throw Error('Unsupported suite');
+    if (!['requirements-workspace', 'requirements-form-typography', 'requirements-integration', 'project-conversation', 'requirements-acceptance-live', 'requirements-delivery-rework', 'requirements-acceptance-preflight'].includes(spec)) throw Error('Unsupported suite');
     const dir = path.join(output, spec); fs.mkdirSync(dir, {recursive: true});
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-collab-e2e-'));
     const probe = net.createServer();

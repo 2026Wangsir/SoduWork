@@ -116,8 +116,9 @@ test('a requirement can seed the automation form without losing its acceptance c
   assert.match(automation, /fromContext\(s\.proposal \|\| \{\}, s\.bindingContext, context\)/);
   assert.match(automation, /proposalOf\(parsed, directive, prior, instruction, context\)/);
   assert.match(detail, /acceptanceCriteria/);
-  assert.match(detail, /automationScheduleId:/);
+  assert.match(detail, /sourceRequirement:/);
   assert.match(detail, /requirementVersion:/);
+  assert.doesNotMatch(detail, /patchTask\(id, \{ automationScheduleId:/);
 });
 
 test('both desktop entrypoints load automation styles and runtime in dependency order', () => {

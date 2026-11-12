@@ -152,7 +152,7 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(args)
 
-    def test_missing_ca_can_bootstrap_with_curl_already_present(self):
+    def test_missing_certificates_bootstrap_without_replacing_existing_curl(self):
         result,calls,args,_,_=self.run_command(missing_ca=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIsNotNone(args)

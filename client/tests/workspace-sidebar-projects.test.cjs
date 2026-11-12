@@ -13,6 +13,52 @@ function fixture() {
     create: key => window.WorkspaceSidebarState.create({ storage, key: key || 'one' }) };
 }
 const ids = rows => Array.from(rows, row => row.id);
+
+test('mobile task memberships display existing PC projections once without rewriting saved IDs', () => {
+  const f = fixture(), s = f.create();
+  s.applyRemoteProject({id:'project-mobile', name:'Mobile', chatIds:['cloud-task:task-one', 'native', 'task:task-two', 'cloud-sync-one']});
+  const rows = [{id:'native'}, {id:'cloud-sync-one', taskId:'task-one'}, {id:'cloud-sync-two', taskIds:['task-two']}];
+  const before = f.storage.getItem('one');
+  const view = s.view(rows);
+  assert.deepEqual(ids(view.projects[0].items), ['cloud-sync-one', 'native', 'cloud-sync-two']);
+  assert.deepEqual(ids(view.recent), []);
+  assert.equal(f.storage.getItem('one'), before);
+  s.remember(rows);
+  assert.deepEqual(ids(f.create().view([]).projects[0].items), ['cloud-sync-one', 'native', 'cloud-sync-two']);
+});
+
+test('moving a mobile project member out and back removes aliases and preserves other members', () => {
+  const f = fixture(), s = f.create(), one = {id:'cloud-sync-one',taskId:'task-one'}, two = {id:'cloud-sync-two',taskId:'task-two'};
+  s.applyRemoteProject({id:'project-mobile',name:'Mobile',chatIds:['cloud-task:task-one','cloud-task:task-two']});
+  s.move(one, 'recent', '', [one,two]);
+  assert.deepEqual(Array.from(s.get().projects[0].chatIds), ['cloud-task:task-two']);
+  assert.deepEqual(ids(s.view([one,two]).recent), ['cloud-sync-one']);
+  s.fileChat(one.id,'project-mobile',one);
+  assert.deepEqual(ids(s.view([one,two]).projects[0].items), ['cloud-sync-two','cloud-sync-one']);
+  assert.deepEqual(ids(s.view([one,two]).recent), []);
+  s.removeProject('project-mobile');
+  assert.deepEqual(ids(s.view([one,two]).recent).sort(), ['cloud-sync-one','cloud-sync-two']);
+});
+
+test('task aliases do not guess among multiple projections or match unrelated native conversations', () => {
+  const s = fixture().create();
+  s.applyRemoteProject({id:'project-mobile',name:'Mobile',chatIds:['cloud-task:task-one']});
+  const rows = [{id:'cloud-sync-one',taskId:'task-one'}, {id:'cloud-sync-two',taskId:'task-one'}, {id:'native',taskId:'task-one'}];
+  assert.deepEqual(ids(s.view(rows).projects[0].items), []);
+  assert.equal(s.view(rows).recent.length,3);
+  assert.deepEqual(ids(s.view([rows[2]]).projects[0].items), []);
+});
+
+test('archiving, restoring and forgetting a task-linked project member do not revive its alias', () => {
+  const s = fixture().create(), row = {id:'cloud-sync-one',taskId:'task-one'};
+  s.applyRemoteProject({id:'project-mobile',name:'Mobile',chatIds:['cloud-task:task-one']});
+  s.view([row]); s.remember([row]); s.archiveProject('project-mobile');
+  assert.deepEqual(ids(s.view([row]).recent), []);
+  s.restoreProject('project-mobile');
+  assert.deepEqual(ids(s.view([row]).projects[0].items), [row.id]);
+  s.forget(row.id);
+  assert.deepEqual(Array.from(s.get().projects[0].chatIds), []);
+});
 test('background timestamp refreshes do not reorder existing recent conversations', () => {
   const s = fixture().create();
   const first = [{ id: 'a', at: 300 }, { id: 'b', at: 200 }, { id: 'c', at: 100 }];

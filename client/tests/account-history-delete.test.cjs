@@ -91,6 +91,10 @@ test('account original lifecycle bypasses downloaded read locators while explici
   assert.deepEqual(writes, [{ id: original.id, action: 'archive' }, { id: original.id, action: 'restore' }]);
   current = null;
   assert.equal((await handlers.get('pi-session-history-archive')({}, original.id)).ok, false);
+  await assert.rejects(actions.localAction('archive', 'native-copy-alias'), /账号已切换|请先登录/);
+  assert.equal((await f.history().resolve(copy.id)).archived, false);
+  // A protected download needs its account even though its lifecycle stays local.
+  current = actor;
   assert.equal((await actions.localAction('archive', 'native-copy-alias')).ok, true);
   assert.equal((await f.history().resolve(copy.id)).archived, true);
   assert.equal((await actions.localAction('restore', copy.id)).ok, true);
@@ -133,7 +137,9 @@ test('stale phone archive cannot undo a newer restore', async t => {
 test('a tombstone fences only its own replica and leaves other account copies', async t => {
   const f = await fixture(t); await f.history().register([{ id: 'other', cached: true }]);
   await f.remove({ confirmed: true }); await f.restart();
-  assert.deepEqual((await f.history().list()).items.map(row => row.id), ['other']);
+  assert.equal((await f.history().resolve('other')).deleted, false);
+  assert.deepEqual((await f.history().list()).items, [], 'unattributed protected copies are retained but hidden');
+  await assert.rejects(f.history().read('other'), /账号已切换|请先登录/);
 });
 test('phone rejects missing revisions and unknown identities before deletion', async t => {
   const f = await fixture(t);

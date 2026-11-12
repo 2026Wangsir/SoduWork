@@ -2,7 +2,6 @@
 (function (global) {
   'use strict';
   const R = global.Requirements;
-  const pendingSchedules = new Map();
   const downloadStates = new Map();
   let identityEpoch = 0;
   let loadController = null, loadTiming = null;
@@ -564,7 +563,7 @@
         '<button type="button" data-rq-extensions-open aria-haspopup="dialog">插件扩展</button>' : '') +
       (R.canSubmitReview(task) ? '<button type="button" data-rq-submit-review>提交验收</button>' : '') +
       (R.canManageAutomation(task) ? '<button type="button" data-rq-automation>' + (task.automationScheduleId ? '查看自动化' :
-        pendingSchedules.has(task.id) ? '重试关联自动化' : '设为自动化') + '</button>' : '') +
+        '设为自动化') + '</button>' : '') +
       (archive.visible ? '<button type="button" data-rq-archive' + locked(archive) + '>' + (phase === 'closed' ? '恢复需求' : '归档需求') + '</button>' : '') +
       (removal.visible ? '<button type="button" class="rq-danger" data-rq-delete' + locked(removal) + '>删除需求</button>' : '') +
       (maintenanceReason ? '<p class="rq-maintenance-reason" role="status">' + esc(maintenanceReason) + '</p>' : '');
@@ -1017,26 +1016,6 @@
       }
     }
   }
-  async function linkSchedule(id, schedule, epoch) {
-    if (epoch !== identityEpoch) return;
-    pendingSchedules.set(id, schedule);
-    try {
-      const latest = await global.SoduWorkAPI.getTask(id);
-      if (epoch !== identityEpoch) return;
-      if (latest.automationScheduleId && latest.automationScheduleId !== schedule.id) {
-        throw new Error('此需求已关联另一条自动化，请重新加载后查看。');
-      }
-      await global.SoduWorkAPI.patchTask(id, { automationScheduleId: schedule.id, requirementVersion: latest.requirementVersion });
-      if (epoch !== identityEpoch) return;
-      pendingSchedules.delete(id);
-      await global.RequirementsBoard.refresh();
-      if (task?.id === id) await open(id);
-    } catch (error) {
-      if (epoch !== identityEpoch) return;
-      global.petSay?.('自动化已创建，但关联需求未成功。可在需求详情中重试关联。');
-      if (task?.id === id) { render(); renderAttachments(files); feedback(errorText(error)); }
-    }
-  }
   async function createAutomation() {
     if (busy || !task || !R.canManageAutomation(task)) return;
     const id = task.id, epoch = identityEpoch, request = seq;
@@ -1048,17 +1027,20 @@
       if (item.automationScheduleId) {
         const closed = close();
         if (closed === false || (closed && typeof closed.then === 'function' && !(await closed))) return;
+        if (epoch !== identityEpoch) return;
         if (typeof global.openSchedulesEntry === 'function') global.openSchedulesEntry({scheduleId: item.automationScheduleId});
         else global.openSchedulePanel?.({scheduleId: item.automationScheduleId});
         return;
       }
-      if (pendingSchedules.has(item.id)) { await linkSchedule(item.id, pendingSchedules.get(item.id), epoch); return; }
       if (!global.WorkAutomationSheet) throw new Error('自动化表单暂时不可用，请重新打开窗口');
       const closed = close();
       if (closed === false || (closed && typeof closed.then === 'function' && !(await closed))) return;
-      await WorkAutomationSheet.open({ proposal: { ...R.content(item),
-        acceptance: [...(item.acceptanceCriteria || [])], repoId: item.repoId || '' },
-        onCreated: schedule => { if (schedule?.id) void linkSchedule(item.id, schedule, epoch); } });
+      if (epoch !== identityEpoch) return;
+      await WorkAutomationSheet.open({
+        sourceRequirement: { id: item.id, title: R.content(item).title, requirementVersion: item.requirementVersion },
+        proposal: { ...R.content(item), acceptance: [...(item.acceptanceCriteria || [])],
+          repoId: item.repoId || '', enabled: false },
+      });
     } catch (error) {
       if (epoch === identityEpoch) {
         if (request === seq && root) feedback(errorText(error));
@@ -1171,6 +1153,6 @@
     if (task && dialog && !dialog.hidden && dialog.dataset.panel === 'comments') void loadComments();
   });
   global.addEventListener('soduwork-data-scope-changed', () => {
-    identityEpoch++; pendingSchedules.clear(); close(true);
+    identityEpoch++; close(true);
   });
 })(window);

@@ -1,5 +1,6 @@
 """Device-owned automation schedules and conversation handoff receipts."""
 from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
@@ -86,6 +87,13 @@ async def preflight_my_schedule(body: dict = Body(default_factory=dict),
     from ..services import schedules as sch
 
     candidate = AiSchedule()
+    from ..services import schedule_requirement_source as requirement_source
+    source_identity = requirement_source.request_identity(body, client)
+    if source_identity:
+        saved_draft = await requirement_source.replay(session, source_identity, client)
+        if saved_draft is not None:
+            return {"state": "ready", "message": "此草稿已保存，将恢复原创建结果", "checks": []}
+        await requirement_source.snapshot(session, body["sourceRequirement"], client)
     owner_client_id, owner_user_id = client.id, client.user_ref
     schedule_id = str(body.get("scheduleId") or body.get("id") or "")
     if schedule_id:
@@ -94,6 +102,8 @@ async def preflight_my_schedule(body: dict = Body(default_factory=dict),
         owner_client_id, owner_user_id = saved.owner_client_id, saved.owner_user_id
     try:
         _sch_apply(candidate, dict(body or {}))
+        if source_identity:
+            candidate.enabled = False
         # Preview the same execution identity that the saved plan will use.
         candidate.owner_client_id, candidate.owner_user_id = owner_client_id, owner_user_id
         result = await sch.preflight_execution(session, candidate)
@@ -123,6 +133,13 @@ async def create_my_schedule(body: dict = Body(default_factory=dict),
 
     from .schedule_contract import apply_schedule_update as _sch_apply
     from ..models import AiSchedule
+    from ..services import schedule_requirement_source as requirement_source
+    from types import SimpleNamespace
+    request_owner = SimpleNamespace(id=client.id, user_ref=client.user_ref)
+    identity = requirement_source.request_identity(body, client)
+    existing = await requirement_source.replay(session, identity, client)
+    if existing is not None:
+        return _my_sch_api(existing)
     me = await _actor_user(session, client)
     s = AiSchedule(created_by=(str(me.id) if me else None),
                    created_by_name=_actor_label(me, client),
@@ -133,6 +150,13 @@ async def create_my_schedule(body: dict = Body(default_factory=dict),
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _sch_apply(s, body)
+    if identity:
+        s.id = identity[0]
+        s.source_requirement = {
+            **await requirement_source.snapshot(session, body["sourceRequirement"], client, lock=True),
+            "_requestHash": identity[1],
+        }
+        s.enabled = False
     s.owner_client_id = client.id          # Bind the schedule to the authenticated client, not a client supplied in the request.
     if not s.title:
         raise HTTPException(status_code=400, detail="请填任务标题")
@@ -147,7 +171,16 @@ async def create_my_schedule(body: dict = Body(default_factory=dict),
     if blocker:
         raise HTTPException(status_code=409, detail=blocker)
     session.add(s)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        if identity is None:
+            raise
+        await session.rollback()
+        existing = await requirement_source.replay(session, identity, request_owner)
+        if existing is None:
+            raise
+        return _my_sch_api(existing)
     await session.refresh(s)
     return _my_sch_api(s)
 
