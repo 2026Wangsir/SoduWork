@@ -162,12 +162,8 @@ test('installed account renewal retries a plugin grant only for its original acc
   const f = fixture(); t.after(() => f.close());
   delete require.cache[require.resolve('../main/device-auth')];
   const localAuth = require('../main/device-auth'), requestAuth = require('../main/device-auth-request');
-  localAuth.install({ app: f.app, ipcMain: { handle() {} }, safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: value => Buffer.from('cipher:' + value),
-    decryptString: value => value.toString().replace(/^cipher:/, ''),
-    getSelectedStorageBackend: () => 'dpapi',
-  } });
+  localAuth.install({ app: f.app, ipcMain: { handle() {} },
+    safeStorage: require('./helpers/device-safe-storage-fixture.cjs').createSafeStorage() });
   t.after(() => requestAuth.setIdentityRefresher(null));
   let account = 'alice', enrollments = 0;
   t.mock.method(global, 'fetch', async (url, options) => {

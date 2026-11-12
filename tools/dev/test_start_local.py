@@ -348,6 +348,91 @@ class LocalStartupTests(unittest.TestCase):
         for key in ('ADMIN_USER', 'ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL', 'OPENAI_API_KEY'):
             self.assertNotIn(key, desktop_env)
 
+    def test_linux_desktop_retains_login_session_and_native_keyring_paths(self):
+        native_home = Path(self.temp.name) / 'native-home'
+        sessions = [
+            {'XDG_CURRENT_DESKTOP': 'ubuntu:GNOME', 'DESKTOP_SESSION': 'ubuntu',
+             'XDG_SESSION_TYPE': 'wayland', 'XDG_SESSION_DESKTOP': 'ubuntu',
+             'WAYLAND_DISPLAY': 'wayland-fixture', 'DISPLAY': ':fixture'},
+            {'XDG_CURRENT_DESKTOP': 'KDE', 'DESKTOP_SESSION': 'plasma',
+             'XDG_SESSION_TYPE': 'x11', 'KDE_SESSION_VERSION': '6',
+             'KDE_FULL_SESSION': 'true', 'DISPLAY': ':fixture'},
+        ]
+        for session in sessions:
+            with self.subTest(session=session['XDG_CURRENT_DESKTOP']):
+                inherited = {**session, 'HOME': str(native_home),
+                             'XDG_CONFIG_HOME': str(native_home / 'custom-config'),
+                             'XDG_DATA_HOME': str(native_home / 'custom-data'),
+                             'XDG_CACHE_HOME': str(native_home / 'custom-cache'),
+                             'XDG_RUNTIME_DIR': '/run/user/fixture',
+                             'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/fixture/bus',
+                             'XAUTHORITY': str(native_home / '.Xauthority'),
+                             'OPENAI_API_KEY': 'fixture-only-key',
+                             'SODUWORK_ALLOW_INSECURE_KEYSTORE': '1',
+                             'ELECTRON_DISABLE_SANDBOX': '1'}
+                with patch.dict(os.environ, inherited, clear=True), \
+                        patch.object(start.sys, 'platform', 'linux'), \
+                        patch.object(Path, 'home', return_value=native_home), \
+                        patch.object(start.subprocess, 'Popen') as popen:
+                    service_env = start.runtime_environment(
+                        self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                        'fixture-password', '127.0.0.1', 18990)
+                    before = dict(service_env)
+                    start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                         'http://127.0.0.1:18990', io.BytesIO())
+                desktop_env = popen.call_args.kwargs['env']
+                for key, value in inherited.items():
+                    if key in {'OPENAI_API_KEY', 'SODUWORK_ALLOW_INSECURE_KEYSTORE',
+                               'ELECTRON_DISABLE_SANDBOX'}:
+                        self.assertNotIn(key, desktop_env)
+                    else:
+                        self.assertEqual(desktop_env[key], value)
+                self.assertEqual(service_env, before, 'desktop setup must not weaken service isolation')
+                self.assertEqual(service_env['HOME'], str(self.state / 'home'))
+                self.assertNotIn('XDG_CURRENT_DESKTOP', service_env)
+                self.assertEqual(desktop_env['SODUWORK_USER_DATA'], str(self.state / 'desktop-profile'))
+                for key in ('ADMIN_USER', 'ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL'):
+                    self.assertNotIn(key, desktop_env)
+
+    def test_linux_desktop_uses_native_xdg_defaults_without_inventing_a_session(self):
+        native_home = Path(self.temp.name) / 'native-home'
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(start.sys, 'platform', 'linux'), \
+                patch.object(Path, 'home', return_value=native_home), \
+                patch.object(start.subprocess, 'Popen') as popen:
+            service_env = start.runtime_environment(
+                self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                'fixture-password', '127.0.0.1', 18990)
+            start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                 'http://127.0.0.1:18990', io.BytesIO())
+        desktop_env = popen.call_args.kwargs['env']
+        self.assertEqual(desktop_env['HOME'], str(native_home))
+        for key in ('XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_DIRS',
+                    'XDG_DATA_DIRS', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'WAYLAND_DISPLAY'):
+            self.assertNotIn(key, desktop_env)
+
+    def test_linux_desktop_environment_changes_do_not_apply_to_other_platforms(self):
+        # sys.platform is shared with shutil; keep executable discovery host-independent.
+        for platform in ('win32', 'darwin'):
+            with self.subTest(platform=platform), \
+                    patch.dict(os.environ, {'XDG_CURRENT_DESKTOP': 'GNOME',
+                                           'XDG_SESSION_TYPE': 'wayland',
+                                           'XDG_DATA_HOME': '/native-data'}, clear=True), \
+                    patch.object(start.sys, 'platform', platform), \
+                    patch('shutil.which', return_value='fixture-node'), \
+                    patch.object(Path, 'home', return_value=Path(self.temp.name) / 'native-home'), \
+                    patch.object(start.subprocess, 'Popen') as popen:
+                service_env = start.runtime_environment(
+                    self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                    'fixture-password', '127.0.0.1', 18990)
+                start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                     'http://127.0.0.1:18990', io.BytesIO())
+                desktop_env = popen.call_args.kwargs['env']
+                self.assertEqual(desktop_env['XDG_DATA_HOME'], service_env['XDG_DATA_HOME'])
+                self.assertEqual(desktop_env['XDG_CONFIG_HOME'], service_env['XDG_CONFIG_HOME'])
+                self.assertNotIn('XDG_CURRENT_DESKTOP', desktop_env)
+                self.assertNotIn('XDG_SESSION_TYPE', desktop_env)
+
     def test_source_refresh_preserves_desktop_dependencies_but_removes_stale_code(self):
         source = Path(self.temp.name) / 'source'
         source.mkdir()

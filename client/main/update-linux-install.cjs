@@ -12,7 +12,12 @@ const { current } = require('./distribution.cjs');
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const PROBE_TIMEOUT_MS = 5000;
-const MAX_OUTPUT = 600;
+const INSTALL_ARGS = {
+  'apt-get': ['-y', '--no-remove', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'install', '--'],
+  dnf: ['-y', 'install', '--'],
+  yum: ['-y', 'localinstall', '--'],
+  zypper: ['--non-interactive', 'install', '--'],
+};
 
 function _exec(file, args, options) {
   return new Promise((resolve) => {
@@ -29,16 +34,19 @@ function _exec(file, args, options) {
 function _probeManager(manager, exec, packageName) {
   const run = exec || _exec;
   if (manager === 'dpkg') {
-    return run('dpkg-query', ['-W', '-f=${Status}', packageName]).then((r) =>
+    return run('dpkg-query', ['-W', '-f=${Status}', packageName], { timeout: PROBE_TIMEOUT_MS }).then((r) =>
       !r.error && /ok installed/.test(r.stdout), () => false);
   }
-  return run('rpm', ['-q', packageName]).then((r) => !r.error, () => false);
+  return run('rpm', ['-q', packageName], { timeout: PROBE_TIMEOUT_MS }).then((r) => !r.error, () => false);
 }
 
 async function _resolveProgram(name, exec) {
   const run = exec || _exec;
-  const r = await run('which', [name]);
-  return String(r.stdout || '').trim().split('\n')[0];
+  try {
+    const r = await run('which', [name], { timeout: PROBE_TIMEOUT_MS });
+    const resolved = String(r.stdout || '').trim().split('\n')[0];
+    return !r.error && resolved.startsWith('/') ? resolved : '';
+  } catch (_) { return ''; }
 }
 
 /*
@@ -48,16 +56,20 @@ async function _resolveProgram(name, exec) {
 async function plan(artifactName, deps = {}) {
   const exec = deps.exec || null;
   const name = String(artifactName || '').toLowerCase();
-  const manager = name.endsWith('.deb') ? 'dpkg'
+  const registry = name.endsWith('.deb') ? 'dpkg'
     : name.endsWith('.rpm') ? 'rpm' : null;
-  if (!manager) return { kind: 'manual' };
-  const owned = await _probeManager(manager, exec, (deps.profile || current()).linuxPackageName);
+  if (!registry) return { kind: 'manual' };
+  const owned = await _probeManager(registry, exec, (deps.profile || current()).linuxPackageName);
   if (!owned) return { kind: 'manual' };
-  const programPath = await _resolveProgram(manager, exec);
-  if (!programPath) return { kind: 'manual' };
   const pkexecPath = await _resolveProgram('pkexec', exec);
   if (!pkexecPath) return { kind: 'manual' };
-  return { kind: 'managed', manager, programPath, pkexecPath };
+  // Upgrades can introduce dependencies (including the desktop keyring).
+  // Raw dpkg/rpm cannot resolve them and can leave an unpacked, unusable app.
+  for (const manager of registry === 'dpkg' ? ['apt-get'] : ['dnf', 'yum', 'zypper']) {
+    const programPath = await _resolveProgram(manager, exec);
+    if (programPath) return { kind: 'managed', manager, programPath, pkexecPath };
+  }
+  return { kind: 'manual' };
 }
 
 function _failMessage(result) {
@@ -78,9 +90,9 @@ function _failMessage(result) {
  */
 async function run(planInfo, installer, deps = {}) {
   const exec = deps.exec || _exec;
-  const args = planInfo.manager === 'dpkg'
-    ? [planInfo.programPath, '-i', '--force-confnew', installer]
-    : [planInfo.programPath, '-U', installer];
+  if (!Object.hasOwn(INSTALL_ARGS, planInfo.manager)) return { ok: false, fallback: true };
+  // Keep the verified package as one literal operand, never a shell command or option.
+  const args = [planInfo.programPath, ...INSTALL_ARGS[planInfo.manager], installer];
   let result;
   try { result = await exec(planInfo.pkexecPath, args, { timeout: INSTALL_TIMEOUT_MS }); }
   catch (error) { result = { error }; }

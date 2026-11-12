@@ -3,6 +3,8 @@ if (require('./main/app-preflight-entry.cjs').dispatch()) return;
 require('./main/terminal-output.cjs').initialize();
 
 const { app, BrowserWindow, WebContentsView, webContents, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, Notification, shell, safeStorage, dialog, net, powerMonitor } = require('electron');
+const _linuxStartup = require('./main/linux-startup.cjs');
+_linuxStartup.configure({ app });
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -615,6 +617,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
+    if (_linuxStartup.focusRecovery(app)) return;
     if (_fileOpen.enqueue(_fileOpenModule.instanceFiles(
       argv, workingDirectory, app.isPackaged, additionalData))) return;
     // Reveal the existing instance even when minimized or hidden.
@@ -635,6 +638,7 @@ if (!gotTheLock) {
 
   _fileOpen.fromCommand(process.argv, process.cwd());
   app.whenReady().then(() => {
+    if (_linuxStartup.showRecovery({ app, BrowserWindow, safeStorage })) return;
     /*
      * Adopt the Runner-managed office engine so client probes and child processes use the same
      * installation. Missing engines must not block startup.

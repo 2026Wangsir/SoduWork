@@ -16,6 +16,7 @@ const catalog = require('../main/agent-runtime/runtime-catalog');
 const { createPiSessionBridge } = require('../main/agent-runtime/pi-session-bridge');
 const { createRunnerRuntimeAdapter, _uuidV5 } = require('../main/agent-runtime/runner-adapter');
 const { scope } = require('../main/platform-connections/runtime.cjs');
+const { createSafeStorage } = require('./helpers/device-safe-storage-fixture.cjs');
 
 function loadIpc(bridge) {
   const file = require.resolve('../main/pi-session/ipc');
@@ -53,12 +54,7 @@ async function fixture(t, spec, legacySendIdentity = false) {
   window.webContents = sender; window.isDestroyed = () => false;
   const event = { sender, senderFrame: mainFrame };
   const BrowserWindow = { getAllWindows: () => [window], fromWebContents: contents => contents === sender ? window : null };
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    getSelectedStorageBackend: () => 'dpapi',
-    encryptString: value => Buffer.from('fixture:' + value),
-    decryptString: value => value.toString().replace(/^fixture:/, ''),
-  };
+  const safeStorage = createSafeStorage();
   let auth = newAuth(), uid = 'fixture-account-a', enrollmentCount = 0, loggedOut = false;
   let failure = '', now = Date.now();
   const originalNow = Date.now, originalFetch = global.fetch;

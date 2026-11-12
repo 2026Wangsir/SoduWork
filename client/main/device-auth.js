@@ -70,12 +70,17 @@ function _available() {
 }
 function _readDoc(app) {
   const file = _file(app);
+  let unreadable = false;
   for (const candidate of [file, file + '.bak']) {
     try {
       const data = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-      if (data && data.v === 1 && data.profiles) return data;
-    } catch (_) { /* try the recovery copy */ }
+      if (data && data.v === 1 && data.profiles &&
+          (_credentials?.platform !== 'linux' || typeof data.profiles === 'object' && !Array.isArray(data.profiles))) return data;
+      unreadable = true;
+    } catch (error) { if (error.code !== 'ENOENT') unreadable = true; /* try the recovery copy */ }
   }
+  if (unreadable && _credentials?.platform === 'linux')
+    throw new Error('设备凭据文件暂时无法读取，原文件已保留，请检查文件权限或恢复备份');
   return { v: 1, profiles: {} };
 }
 function _replaceFile(next, file, backup) {
@@ -98,8 +103,24 @@ function _replaceFile(next, file, backup) {
   fs.rmSync(next, { force: true });
   if (backup) { try { fs.rmSync(backup, { force: true }); } catch (_) {} }
 }
-function _writeDoc(app, doc) {
-  const file = _file(app), next = file + '.next', backup = file + '.bak';
+function _writeDoc(app, doc, suffix = '') {
+  const file = _file(app) + suffix, next = file + '.next', backup = file + '.bak';
+  if (_credentials?.platform === 'linux') {
+    // Never overwrite a readable identity in-place when Linux persistence fails.
+    const temporary = file + '.next-' + crypto.randomUUID();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    try {
+      let stat;
+      try { stat = fs.lstatSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('Invalid credential file');
+      const fd = fs.openSync(temporary, 'wx', 0o600);
+      try { fs.writeFileSync(fd, JSON.stringify(doc), 'utf8'); fs.fsyncSync(fd); }
+      finally { fs.closeSync(fd); }
+      fs.renameSync(temporary, file);
+    } catch (_) { throw new Error('无法安全保存设备凭据，原记录已保留，请检查用户配置目录的写入权限'); }
+    finally { try { fs.unlinkSync(temporary); } catch (_) {} }
+    return;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(next, JSON.stringify(doc), { encoding: 'utf8', mode: 0o600 });
   try { _replaceFile(next, file, backup); }
@@ -169,7 +190,7 @@ function _scrubRunner(app) {
     catch (_) { fs.rmSync(file, { force: true }); _replaceFile(next, file); }
   } catch (_) { /* runner runtime also sanitizes its config on configure */ }
 }
-function _ensure(app, raw) {
+function _ensure(app, raw, allowLegacy = false) {
   if (!_available()) throw _credentials?.error() || new Error(TEXT.noStore);
   const hub = _origin(raw && raw.hub);
   if (!require('./hub-endpoint.cjs').accepts(app, hub)) throw new Error('此客户端使用固定的 SoduWork 服务');
@@ -179,6 +200,17 @@ function _ensure(app, raw) {
   let row = doc.profiles[key] || null;
   let changed = false;
   let clientId = row && String(row.clientId || '').trim();
+  if (row && _credentials.platform === 'linux' &&
+      (!DEVICE_ID.test(clientId) || row.hub !== hub))
+    throw new Error('设备凭据记录无效，已保留原记录，请联系支持人员检查');
+  const legacyKey = _credentials.legacySecret?.(row);
+  if (legacyKey) {
+    if (!allowLegacy) throw new Error('设备凭据需要安全升级，请重新登录；原设备身份已保留');
+    // Only an explicit account flow may use plaintext-patch or native-v10
+    // credentials. Re-encrypt only after the original Hub accepts the login.
+    _activate(hub, doc.activeHub);
+    return { hub, clientId, secret: legacyKey, pendingMigration: row.cipher };
+  }
   let secret = row ? _decrypt(app, row) : '';
   if (row && !DEVICE_ID.test(clientId) && process.platform === 'darwin')
     throw new Error('设备凭据记录无效，已保留原记录，请联系支持人员检查');
@@ -212,7 +244,7 @@ function _ensure(app, raw) {
     if (!DEVICE_ID.test(clientId)) throw new Error(TEXT.badDevice);
     secret = legacy || crypto.randomBytes(32).toString('base64url');
     row = { hub, clientId, cipher: _credentials.encrypt(secret).toString('base64'),
-      createdAt: new Date().toISOString() };
+      createdAt: new Date().toISOString(), ...(_credentials.platform === 'linux' ? { storage: 'electron-safe-storage' } : {}) };
     doc.profiles[key] = row;
     changed = true;
   }
@@ -226,6 +258,35 @@ function _ensure(app, raw) {
   _activate(hub, previousHub);
   _scrubRunner(app);
   return { hub, clientId, secret };
+}
+
+function _completeCredentialMigration(app, id) {
+  if (_credentials.platform !== 'linux') return;
+  const doc = _readDoc(app), key = _slot(id.hub), row = doc.profiles[key];
+  if (!row || row.clientId !== id.clientId || row.hub !== id.hub ||
+      id.pendingMigration && row.cipher !== id.pendingMigration)
+    throw new Error(TEXT.changed);
+  // Upgrade a matching plaintext/v10 backup first. If the primary write fails,
+  // both copies still hold the same identity and the backup is already safer.
+  let backup;
+  try { backup = JSON.parse(fs.readFileSync(_file(app) + '.bak', 'utf8')); }
+  catch (error) { if (error.code && error.code !== 'ENOENT') throw error; }
+  const oldBackup = backup?.v === 1 && backup.profiles?.[key];
+  let backupSecret = '';
+  if (oldBackup && oldBackup.hub === id.hub && oldBackup.clientId === id.clientId) {
+    // An unreadable auxiliary copy cannot invalidate the authenticated primary
+    // identity. Preserve it untouched; migrate only a proven matching secret.
+    try { backupSecret = _credentials.legacySecret(oldBackup); } catch (_) {}
+  }
+  if (backupSecret && backupSecret === id.secret) {
+    backup.profiles[key] = { ...oldBackup, cipher: _credentials.encrypt(id.secret).toString('base64'), storage: 'electron-safe-storage' };
+    _writeDoc(app, backup, '.bak');
+  }
+  if (!id.pendingMigration) return;
+  const cipher = _credentials.encrypt(id.secret).toString('base64');
+  doc.profiles[key] = { ...row, cipher, storage: 'electron-safe-storage' };
+  doc.activeHub = id.hub;
+  _writeDoc(app, doc);
 }
 
 function identity(app, hub = '', clientId = '') {
@@ -444,7 +505,7 @@ async function enroll(app, raw = {}) {
 
 async function login(app, raw = {}, action = 'legacy') {
   let id;
-  try { id = _ensure(app, raw); }
+  try { id = _ensure(app, raw, true); }
   catch (error) { return { ok: false, stored: false, error: String(error.message || error) }; }
   const generation = _invalidate(id);
   _authChanges.set(generation.slot, generation);
@@ -480,6 +541,7 @@ async function login(app, raw = {}, action = 'legacy') {
     if (!_current(generation)) return _changed(id);
     if (!res.ok) return { ok: false, stored: true, hub: id.hub, clientId: id.clientId,
       ..._failure(data, res.status) };
+    _completeCredentialMigration(app, id);
     const expiresIn = Math.max(30, Number(data.expiresIn) || 0);
     const safe = {
       ok: true, stored: true, hub: id.hub, clientId: id.clientId,
@@ -510,7 +572,7 @@ async function accountAction(app, raw = {}) {
   catch (error) { return { ok: false, error: error.message }; }
   if (spec.session) return login(app, raw, action);
   let id;
-  try { id = _ensure(app, raw); }
+  try { id = _ensure(app, raw, true); }
   catch (error) { return { ok: false, error: error.message }; }
   const generation = spec.reset ? _invalidate(id) : _generation(id);
   if (spec.reset) _authChanges.set(generation.slot, generation);

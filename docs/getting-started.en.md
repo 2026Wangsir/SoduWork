@@ -160,6 +160,14 @@ Existing mirror and proxy settings are passed to the installer, which verifies d
 
 Check `desktop.log` in the same data directory. Resolve Electron download problems and retry. Linux desktop mode requires a graphical session and Electron's native libraries, such as NSS, GTK, and X11/Wayland. The launcher does not disable the sandbox or install operating system packages.
 
+### Linux installation and secure sign-in
+
+Install `.deb` or `.rpm` packages through your distribution's software installer, or use `apt install ./package.deb` / `dnf install ./package.rpm`, so the package manager resolves dependencies. Packages declare D-Bus, libsecret, and alternative GNOME Keyring / KWallet service dependencies. An existing matching service satisfies the dependency without replacing the user's keyring. The `tar.gz` and source modes do not manage system dependencies; launch them from a graphical desktop session with these services configured.
+
+Start the application as the ordinary user logged into that desktop. First access may show the system's keyring creation or unlock dialog; use a protected keyring. Do not choose an empty password or disable the sandbox to bypass startup errors. If the keyring is locked or its service is temporarily unavailable, preserve the existing device credentials, restore the system service, then fully quit and reopen the application. Do not delete `device-auth.json`, remove keyring items, or convert credentials to plaintext.
+
+Linux installation acceptance first checks that a fresh `.deb` / `.rpm` installation supplies its credential-service dependencies, then uses an isolated real GNOME keyring to check ciphertext after first launch, restart, and upgrade. The current upgrade scenario reuses dependencies from the initial installation and does not certify that upgrading an older environment resolves newly added dependencies. Container acceptance also does not replace interactive GNOME/KDE and Wayland/X11 sign-in and unlock verification.
+
 To use management while resolving desktop setup, double-click `start.cmd` on Windows or `start.command` on macOS, or run `sh start.sh` on Linux. The browser management UI is for configuration; it is not the desktop AI conversation workspace.
 
 ### macOS Keychain and desktop identity

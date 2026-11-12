@@ -9,6 +9,12 @@ version=${4:?version}
 old_package=${5:?pinned old package}
 old_version=${6:?old version}
 case "$kind" in deb|rpm|tgz) ;; *) exit 64 ;; esac
+credential_provider() {
+  for provider in gnome-keyring-daemon kwalletd6 kwalletd5; do
+    if command -v "$provider" >/dev/null 2>&1; then printf '%s\n' "$provider"; return 0; fi
+  done
+  return 1
+}
 profile=/home/acceptance/soduwork-acceptance-profile-main
 archive_root=${package##*/}
 archive_root=${archive_root%.tar.gz}
@@ -30,11 +36,26 @@ if [ "$phase" = prepare ]; then
   printf '%s\n' "$app" > /acceptance-app
   ldd "$app/soduwork" > /evidence/electron-ldd.txt
   if grep -q 'not found' /evidence/electron-ldd.txt; then cat /evidence/electron-ldd.txt; exit 1; fi
+  # Check product dependencies before fixture packages can accidentally supply them.
+  if [ "$kind" != tgz ]; then
+    provider=$(credential_provider) || {
+      printf '%s\n' "Installed package did not supply a system credential service" >&2
+      exit 1
+    }
+    printf '%s\n' "$provider" > /evidence/installed-credential-provider.txt
+    if command -v apt-get >/dev/null; then
+      dpkg-query -W -f='${db:Status-Status}\n' libsecret-1-0 | grep -qx installed
+    else rpm -q libsecret > /dev/null; fi
+  fi
   if command -v apt-get >/dev/null; then
-    apt-get install -y --no-install-recommends xvfb xauth dbus-x11 fonts-noto-cjk procps util-linux
-  else dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 google-noto-sans-cjk-ttc-fonts procps-ng util-linux; fi
+    apt-get install -y --no-install-recommends xvfb xauth dbus-x11 gnome-keyring fonts-noto-cjk procps util-linux
+  else dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 gnome-keyring google-noto-sans-cjk-ttc-fonts procps-ng util-linux; fi
   useradd -m -o -u "${SODUWORK_ACCEPT_UID:-12001}" acceptance
   mkdir -p "$profile"
+  install -d -m 700 /home/acceptance/.runtime
+  # A random, nonempty fixture password protects the disposable test keyring.
+  # Never put it in arguments, logs, or release evidence.
+  (umask 077; od -vAn -N32 -tx1 /dev/urandom | tr -d " \n" > /home/acceptance/.keyring-password)
   chown -R acceptance:acceptance /home/acceptance /evidence
   exit 0
 fi
@@ -59,8 +80,28 @@ runuser -u acceptance -- env ELECTRON_RUN_AS_NODE=1 "$app/soduwork" -e \
 test -x "$profile/runner/node-shim/node"
 runuser -u acceptance -- env PATH="$profile/runner/node-shim:/usr/bin:/bin" node --version > /evidence/node-shim-version.txt
 smoke() {
+  # Every run gets a new D-Bus session, but unlocks the same persisted keyring.
+  # This exercises secure ciphertext across process restart and package upgrade.
   runuser -u acceptance -- env ELECTRON_RUN_AS_NODE=1 SODUWORK_ACCEPTANCE_CONTAINER=1 \
-    xvfb-run -a "$app/soduwork" /checks/ci/installed-client-smoke.cjs "$app/soduwork" "$app" "$profile" "/evidence/$1.json" "$2" "$3"
+    XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/home/acceptance/.runtime \
+    XDG_CONFIG_HOME=/home/acceptance/.config XDG_DATA_HOME=/home/acceptance/.local/share \
+    dbus-run-session -- bash -euc '
+      control=$(mktemp -d "$XDG_RUNTIME_DIR/keyring.XXXXXX")
+      gnome-keyring-daemon --daemonize --unlock --components=secrets --control-directory="$control" \
+        < /home/acceptance/.keyring-password > /dev/null
+      # Daemonization returns before Secret Service registration completes.
+      keyring_deadline=$((SECONDS + 10))
+      until dbus-send --session --print-reply --reply-timeout=1000 --dest=org.freedesktop.DBus \
+        /org/freedesktop/DBus org.freedesktop.DBus.NameHasOwner string:org.freedesktop.secrets \
+        2>/dev/null | grep -q "boolean true"; do
+        if (( SECONDS >= keyring_deadline )); then
+          printf "%s\n" "Timed out waiting for the acceptance Secret Service" >&2
+          exit 1
+        fi
+        sleep 0.2
+      done
+      exec xvfb-run -a "$1/soduwork" /checks/ci/installed-client-smoke.cjs "$1/soduwork" "$1" "$2" "$3" "$4" "$5"
+    ' bash "$app" "$profile" "/evidence/$1.json" "$2" "$3"
 }
 smoke fresh "$version" write
 smoke restart "$version" read
@@ -88,4 +129,10 @@ if [ "$kind" != tgz ]; then
   test "$(find /usr/share/icons/hicolor -type f -name soduwork.png | wc -l)" -eq 0
 fi
 test "$(cat "$profile/acceptance-sentinel.txt")" = preserve-install-acceptance-data
-printf '{"ok":true,"version":"%s","oldVersion":"%s","upgraded":true,"nodeShimExecutable":true}\n' "$version" "$old_version" > /evidence/result.json
+dependency_verified=false
+if [ "$kind" != tgz ]; then
+  test -s /evidence/installed-credential-provider.txt
+  dependency_verified=true
+fi
+printf '{"ok":true,"version":"%s","oldVersion":"%s","upgraded":true,"nodeShimExecutable":true,"credentialProviderDependencyVerified":%s,"upgradeDependencyResolutionVerified":false}\n' \
+  "$version" "$old_version" "$dependency_verified" > /evidence/result.json
