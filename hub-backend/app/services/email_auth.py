@@ -109,7 +109,7 @@ async def password_budget(session, account, device_id):
 
 
 async def request_challenge(session, *, email, purpose, device_id, user_id=None, remote_ip=""):
-    from . import account_mail
+    from . import account_mail, client_access
     email = normalize_email(email)
     if purpose not in PUBLIC_PURPOSES | SENSITIVE_PURPOSES:
         raise ClientAccessError("验证码用途不正确", code="CHALLENGE_PURPOSE_INVALID", status=422)
@@ -122,6 +122,16 @@ async def request_challenge(session, *, email, purpose, device_id, user_id=None,
     if remote_ip:
         limits.append(("send-ip:" + remote_ip, 60, 3600))
     await take_limits(session, limits)
+    if purpose == "login" and await verified_user(session, email) is None:
+        # Registration routing is authoritative and rate-limited, but does not
+        # issue a proof or mail for an account that cannot use email login.
+        reserved = await session.scalar(select(User.id).where(User.email_normalized == email))
+        if reserved or await client_access.find_user(session, email):
+            raise ClientAccessError("此邮箱对应已有账号，请用原密码登录后绑定邮箱",
+                                    code="LEGACY_EMAIL_BINDING_REQUIRED", status=409)
+        if not (await client_access.policy(session))["allowSelfRegistration"]:
+            raise ClientAccessError("自助注册已关闭", code="SELF_REGISTRATION_DISABLED", status=403)
+        raise ClientAccessError("此邮箱尚未注册，请先创建账号", code="ACCOUNT_NOT_REGISTERED", status=404)
     current = now()
     # A resend invalidates earlier proofs in this exact context, including unsent mail.
     await session.execute(update(EmailChallenge).where(

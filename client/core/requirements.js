@@ -14,7 +14,7 @@
     ['delivered', '已完成', '查看成果与验收记录'],
     ['closed', '已归档', '保留历史，随时查阅'],
   ];
-  const columns = [['intake', '收集箱', '收集想法，补齐目标与材料'], ...lanes.slice(2)];
+  const columns = [['intake', '收集箱', '待整理的需求；“待补充”表示仍需完善背景或完成标准'], ...lanes.slice(2)];
   const priorities = { critical: '紧急', high: '高', normal: '普通', low: '低' };
   const sorts = { priority: '优先级', updated: '最近更新', due: '截止日期', created: '最新提出' };
   /*
@@ -36,7 +36,11 @@
     return out;
   }
   const kinds = { requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' };
-  const scopes = { related: '与我相关', actionable: '需要我处理', created: '我提出', all: '全部' };
+  const scopes = { related: '与我相关', actionable: '需要我处理', created: '我提出', all: '全部可见' };
+  const scopeDescriptions = {
+    related: '我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。',
+    all: '当前账号有权查看的全部需求，不限于与我相关的需求。',
+  };
   function scopeOptions(archive) { return archive === 'archived' ? {related: scopes.related, all: scopes.all} : scopes; }
   function normalizeScope(scope, archive) { return Object.hasOwn(scopeOptions(archive), scope) ? scope : 'related'; }
   function content(task) {
@@ -133,18 +137,24 @@
     if (!item || (item.action === 'review' && !canReview(task))) return undefined;
     return item;
   }
+  function executionActive(task) {
+    const active = ['queued', 'starting', 'dispatching', 'running', 'working', 'streaming', 'waiting'];
+    return [task?.ai?.state, task?.ai?.executionState, task?.workRouting?.conversationTurn?.state]
+      .some(state => active.includes(state));
+  }
   function actionable(task, context) {
     if (stage(task) === 'closed') return false;
     if (stage(task) === 'reviewing' && task.canReview === true) return true;
     if (approvalActionable(task, context)) return true;
     if (task.canClaim === true) return true;
     if (stage(task) === 'delivered' || task.canViewExecution === false) return false;
-    if (task.status === 'done' && !task.reviewedAt) return false; // After submission, the reviewer owns the decision; role membership alone does not make it actionable.
     if (canSubmitReview(task) || canResumeRework(task)) return true;
     if (task.needsMe === true) return true;
     if (!roles(task).some(role => ['executor', 'assignee'].includes(role))) return false;
+    // Formal submission may retain status=doing; the reviewer now owns the decision.
+    if (stage(task) === 'reviewing') return task.ai?.attentionRaised === true;
     // Owning a device is not an instruction to interrupt its running agent.
-    if (['running', 'dispatching'].includes(task.ai?.state) && !task.ai.attentionRaised) return false;
+    if (executionActive(task) && !task.ai?.attentionRaised) return false;
     if (task.ai?.state === 'done') return false; // A decision comes from the approval queue, not a guessed role.
     return true;
   }
@@ -201,7 +211,7 @@
       return { text: labels[pending.action] || '查看证据并确认', action: '查看并确认', icon: 'confirm', attention: true };
     }
     if (phase === 'delivered') return { text: '查看成果与验收记录', action: '查看交付', icon: 'complete' };
-    if (phase === 'reviewing') return { text: '成果已提交，等待验收', action: '查看交付', icon: 'confirm' };
+    if (phase === 'reviewing') return { text: '已提交验收，等待验收人处理', action: '查看交付', icon: 'confirm' };
     if (canResumeRework(task)) return { text: '按验收意见继续修改', action: '继续修正', icon: 'edit', attention: true };
     if (canSubmitReview(task)) return { text: '本轮执行已结束，可提交验收', action: '查看并提交', icon: 'confirm', attention: true };
     if (task.ai?.state === 'failed') return { text: '执行未完成，查看原因', action: '查看执行情况', icon: 'attention', attention: actionable(task, context) };
@@ -209,6 +219,7 @@
       action: '查看执行情况', icon: task.ai.attentionRaised ? 'attention' : 'progress', attention: actionable(task, context) };
     if (task.status === 'paused') return { text: '已暂停，查看后安排继续', action: '查看进展', icon: 'pause', attention: actionable(task, context) };
     if (task.ai?.state === 'running') return { text: 'AI 正在执行，可查看进展', action: '查看进展', icon: 'progress' };
+    if (executionActive(task)) return { text: '执行已安排，可在“与我相关”查看进展', action: '查看进展', icon: 'progress' };
     if (task.ai?.state === 'done') return { text: '成果已返回，待确认', action: '查看交付', icon: 'confirm' };
     if (phase === 'intake') return { text: canEdit(task) ? '补充目标与完成标准' : '等待相关人梳理需求', action: canEdit(task) ? '完善需求' : '查看详情', icon: 'edit' };
     if (phase === 'clarifying') return { text: canEdit(task) ? '补齐背景与相关材料' : '等待相关人补充材料', action: canEdit(task) ? '完善需求' : '查看详情', icon: 'edit' };
@@ -224,6 +235,9 @@
       !['running', 'dispatching', 'done'].includes(task.ai?.state) &&
       !['queued', 'starting', 'running', 'waiting', 'done'].includes(task.workRouting?.conversationTurn?.state);
   }
+  function canEditProject(task) {
+    return canEdit(task) && task.readOnly === false && !String(task.repoId || '').trim();
+  }
   function capability(task, field) {
     return Boolean(task && (typeof task[field] === 'boolean' ? task[field] : task.canEditRequirement === true));
   }
@@ -231,16 +245,16 @@
   function canSubmitReview(task) {
     return Boolean(task && task.canSubmitReview === true && task.status === 'doing' &&
       stage(task) === 'delivering' && !task.archivedAt && !task.maintenanceBlocked &&
-      !['running', 'dispatching'].includes(task.ai?.state) &&
-      !['queued', 'starting', 'running', 'waiting'].includes(task.workRouting?.conversationTurn?.state));
+      !executionActive(task));
   }
   function canResumeRework(task) {
     return Boolean(task && task.canContinueExecution === true && task.workRouting?.reworkPending &&
       task.status === 'doing' && stage(task) === 'delivering' && !task.archivedAt && !task.maintenanceBlocked &&
-      !['running', 'dispatching'].includes(task.ai?.state) &&
-      !['queued', 'starting', 'running', 'waiting'].includes(task.workRouting?.conversationTurn?.state));
+      !executionActive(task));
   }
-  function canManageAutomation(task) { return capability(task, 'canManageRequirementAutomation'); }
+  function canManageAutomation(task) {
+    return Boolean(task && (!task.archivedAt || task.automationScheduleId) && capability(task, 'canManageRequirementAutomation'));
+  }
   // Definition editing, delivery operations and maintenance have separate capabilities.
   function executing(task) { return ['doing', 'paused', 'reviewing'].includes(task && task.status); }
   function maintenance(task, action) {
@@ -286,6 +300,7 @@
     if (!canEdit(task)) return {};
     const original = { ...task, ...content(task) };
     const fields = ['visibility'];
+    if (canEditProject(task)) fields.push('projectId');
     if (!task.readOnly) fields.push('assigneeUserId');
     if (canEdit(task)) fields.push('tags');
     if (!task.readOnly || task.status === 'todo') fields.push('title', 'note', 'priority');
@@ -293,8 +308,9 @@
     if (task.status === 'todo') fields.push('kind', 'acceptanceCriteria');
     if (canTriage(task)) fields.push('triageStage');
     return Object.fromEntries(fields.filter(key => Object.prototype.hasOwnProperty.call(values, key) &&
-      (key === 'due' ? day(values[key]) !== day(original[key]) : JSON.stringify(values[key]) !== JSON.stringify(original[key])))
-      .map(key => [key, key === 'due' ? dateTimestamp(values[key]) : values[key]]));
+      (key === 'due' ? day(values[key]) !== day(original[key]) : key === 'projectId' ?
+        String(values[key] || '') !== String(original[key] || '') : JSON.stringify(values[key]) !== JSON.stringify(original[key])))
+      .map(key => [key, key === 'due' ? dateTimestamp(values[key]) : key === 'projectId' ? values[key] || null : values[key]]));
   }
   function stagePatch(task, next) {
     if (!canTriage(task) || !['intake', 'clarifying', 'ready'].includes(next)) return null;
@@ -322,8 +338,8 @@
     if (action === 'triage' && !patch) return { blocked: true };
     return { action, patch };
   }
-  return { lanes, columns, priorities, sorts, defaults, viewSettings, kinds, scopes, scopeOptions, normalizeScope, content, displayNote, stage, column,
+  return { lanes, columns, priorities, sorts, defaults, viewSettings, kinds, scopes, scopeDescriptions, scopeOptions, normalizeScope, content, displayNote, stage, column,
     day, timeInfo, dateTimestamp, overdue, blocked, roles, approval, canReview, approvalActionable, waitingOn, actionable, inScope, isRequirement, select, owner, nextStep,
-    canEdit, canManageMaterials, canSubmitReview, canManageAutomation, canTriage, executing, maintenance,
+    canEdit, canEditProject, canManageMaterials, canSubmitReview, canManageAutomation, canTriage, executing, maintenance,
     canArchive, canDelete, canOpenConversation, editPatch, stagePatch, resolveStageMove };
 });

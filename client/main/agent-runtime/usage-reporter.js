@@ -8,6 +8,58 @@ const conversationTitles = require('../conversation/titles');
 const { empty, add, usageFromSnapshot } = require('./usage-values');
 const outboxStore = require('./usage-outbox');
 
+const isLocalReference = value => typeof value === 'string' && value.trim().startsWith('local:');
+
+function quarantineUnsafeUsage(rows) {
+  const scopeOf = row => row.scope || JSON.stringify([row.hub, row.clientId, row.payload?.idempotencyKey]);
+  const localScopes = new Set(Object.values(rows).filter(row => isLocalReference(row.payload?.model)).map(scopeOf));
+  const legacyScopes = new Set(Object.values(rows).filter(row => row.ownershipVersion !== 1 &&
+    (['pi', 'local:pi'].includes(row.payload?.agent) || row.payload?.provider === 'soduwork')).map(scopeOf));
+  // A local checkpoint contaminates later cumulative totals in the same scope,
+  // even when an older reporter stamped ownershipVersion. Preserve pending
+  // evidence locally and rebuild only reportable receipts; acknowledged Hub
+  // history is not modified. Legacy Pi scopes retain their existing migration.
+  return Object.keys(rows).filter(key => localScopes.has(scopeOf(rows[key])) ||
+    rows[key].ownershipVersion !== 1 && legacyScopes.has(scopeOf(rows[key])));
+}
+
+function protectQuarantinedUsage(rows) {
+  const changes = [];
+  const canonical = value => {
+    if (!isLocalReference(value)) return value;
+    const ref = require('../local-model-store.cjs').canonicalReference(value.trim(), { rememberMissing: true });
+    if (!ref) throw Error('Local usage quarantine requires secure migration');
+    return ref;
+  };
+  const structured = (value, key) => {
+    if (typeof value !== 'string') return value;
+    let parsed;
+    try { parsed = JSON.parse(value); } catch (_) { return value; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) !== (typeof key === 'number') ||
+        !isLocalReference(parsed[key])) return value;
+    const replacement = canonical(parsed[key]);
+    if (replacement === parsed[key]) return value;
+    parsed[key] = replacement;
+    return JSON.stringify(parsed);
+  };
+  try {
+    for (const row of Object.values(rows)) {
+      const model = canonical(row.payload?.model), bucket = structured(row.bucket, 3),
+        signature = structured(row.signature, 'model');
+      if (model !== row.payload?.model || bucket !== row.bucket || signature !== row.signature)
+        changes.push({ row, model, bucket, signature });
+    }
+  } catch (_) { throw Error('Local usage quarantine requires secure migration'); }
+  // Apply only after every encrypted alias is durable. Failure must preserve
+  // pending evidence, and no counter or already acknowledged record changes.
+  for (const { row, model, bucket, signature } of changes) {
+    row.payload.model = model;
+    if (bucket !== undefined) row.bucket = bucket;
+    if (signature !== undefined) row.signature = signature;
+  }
+  return changes.length > 0;
+}
+
 function createUsageReporter(options) {
   const app = options.app;
   const identityOf = options.identityOf;
@@ -17,7 +69,7 @@ function createUsageReporter(options) {
   const file = path.join(app.getPath('userData'), 'usage-outbox.json');
   const outbox = outboxStore.create(file, options.onError || (() => {
     console.warn('[usage] Pending usage could not be saved; retained for retry');
-  }));
+  }), { quarantine: quarantineUnsafeUsage, protectQuarantine: protectQuarantinedUsage });
   let timer = null;
   let flushing = false;
   const observed = new WeakMap();
@@ -109,6 +161,7 @@ function createUsageReporter(options) {
       const rawModel = handle.model;
       const model = String(rawModel && typeof rawModel === 'object'
         ? (rawModel.id || rawModel.name || '') : (rawModel || ''));
+      const localModel = rawModel?.localOnly === true || isLocalReference(model);
       /*
        * Prefer renamed titles from the title store, then the history-derived first-message
        * title. Persist the title in the outbox for offline retries; empty titles let
@@ -134,7 +187,7 @@ function createUsageReporter(options) {
         sourceTitle,
         agent: String(handle.usageAgentKey || handle.adapterId || 'unknown'),
         provider: String(handle.usageProvider || ''),
-        model,
+        model: localModel ? '' : model,
         credentialScope: String(handle.usageCredentialScope || 'personal'),
         billingMode: String(handle.usageBillingMode || 'unknown'),
         usage,
@@ -145,25 +198,32 @@ function createUsageReporter(options) {
       function checkpoint(payload) {
         const day = new Date(Date.parse(payload.occurredAt) + 8 * 3600000).toISOString().slice(0, 10);
         const bucket = JSON.stringify([day, payload.agent, payload.provider, payload.model,
-          payload.credentialScope, payload.billingMode]);
-        if (outbox.enqueue({ hub: identity.hub, clientId: identity.clientId, accountScope: identity.accountScope || '',
+          payload.credentialScope, payload.billingMode, payload.quotaUsageToken || '']);
+        if (outbox.enqueue({ ownershipVersion: 1, hub: identity.hub, clientId: identity.clientId, accountScope: identity.accountScope || '',
           scope, bucket, payload })) schedule();
       }
       if (Array.isArray(snapshot?.usageReceipts) && snapshot.usageReceipts.length) {
         const cumulative = empty();
         for (const receipt of snapshot.usageReceipts) {
+          // A local call belongs only to this device. Exclude it before
+          // summing so later managed checkpoints cannot disclose or bill it.
+          if (receipt.localOnly === true || receipt.reportable === false || isLocalReference(receipt.model)) continue;
           add(cumulative, receipt.usage);
-          checkpoint({ ...base, usage: { ...cumulative }, model: receipt.model || model,
+          checkpoint({ ...base, usage: { ...cumulative }, model: receipt.model || base.model,
             agent: receipt.agent || base.agent,
             provider: receipt.provider !== undefined ? receipt.provider : base.provider,
+            ...(typeof receipt.quotaUsageToken === 'string' && receipt.quotaUsageToken
+              ? { quotaUsageToken: receipt.quotaUsageToken } : {}),
             occurredAt: receipt.at ? new Date(receipt.at).toISOString() : base.occurredAt });
         }
-      } else checkpoint(base);
+      } else if (!localModel) checkpoint(base);
       if (receipts) accountedReceipts.set(handle, receipts);
     } catch (_) { /* accounting cannot block the user's session */ }
   }
 
   if (outbox.pending()) schedule();
+  // A migration may leave no deliverable rows; still preserve its quarantine.
+  else void outbox.persist().catch(() => {});
   return { observe, flush, persist: outbox.persist };
 }
 

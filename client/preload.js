@@ -381,6 +381,11 @@ const soduWorkBridge = {
     ipcRenderer.on('device-auth-quota-exceeded', handler);
     return () => ipcRenderer.removeListener('device-auth-quota-exceeded', handler);
   },
+  onDeviceAuthQuotaChanged: (cb) => {
+    const handler = (_event, detail) => { try { cb(detail || {}); } catch (_) {} };
+    ipcRenderer.on('device-auth-quota-changed', handler);
+    return () => ipcRenderer.removeListener('device-auth-quota-changed', handler);
+  },
 
   /* The main process controls update source, signature checks, download, and installation. */
   getAppVersion: () => ipcRenderer.invoke('app-version'),
@@ -433,6 +438,11 @@ const soduWorkBridge = {
     get: (id) => ipcRenderer.invoke('app-settings-get', id || '', {}),
     update: (id, options) => ipcRenderer.invoke('app-settings-update', id || '', options || {}),
   },
+  localModels: {
+    get: () => ipcRenderer.invoke('local-models-get'),
+    save: input => ipcRenderer.invoke('local-models-save', input || {}),
+    test: (providerId, modelName) => ipcRenderer.invoke('local-models-test', String(providerId || ''), String(modelName || '')),
+  },
   personalPlugins: {
     debug: (ref, options) => ipcRenderer.invoke('personal-plugin-debug', ref || '', options || {}),
     choosePackage: () => ipcRenderer.invoke('personal-plugin-choose-package'),
@@ -472,6 +482,7 @@ const soduWorkBridge = {
   },
   previewAttachment: (payload) => ipcRenderer.invoke('attachment-preview', payload || {}),
   downloadAttachment: (payload) => ipcRenderer.invoke('attachment-download', payload || {}),
+  exportAcceptanceSummary: (payload) => ipcRenderer.invoke('acceptance-summary-export', payload || {}),
   readAttachmentBinary: (payload) => ipcRenderer.invoke('attachment-read-binary', payload || {}),
   /* Open library bytes retrieved by the renderer through authenticated requests. */
   openLibraryExternally: (payload) => ipcRenderer.invoke('library-open-external', payload || {}),

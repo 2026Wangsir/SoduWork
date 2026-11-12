@@ -213,9 +213,8 @@ html[data-desk-panel="workspace"][data-workspace-layout="utility"] .ws-resizer{d
 .ws-chat-row.is-pinned .ws-chat-pin{color:var(--accent)}
 .ws-chat-pin svg,.ws-chat-more svg,.ws-chat-archive svg,.ws-chat-delete svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .ws-chat-delete svg{width:17px;height:17px;stroke-width:1.5}
-.ws-chat-menu{position:absolute;z-index:30;right:5px;top:36px;width:188px;box-sizing:border-box;padding:5px;
+.ws-chat-menu{position:fixed;z-index:30;inset:auto;margin:0;width:188px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow-y:auto;box-sizing:border-box;padding:5px;
   border:1px solid var(--line);border-radius:12px;background:var(--bg-0);box-shadow:var(--shadow-lg);color:var(--ink-2)}
-.ws-chat-menu.is-up{top:auto;bottom:36px}
 .ws-chat-menu[hidden]{display:none}
 .ws-chat-menu-item{appearance:none;width:100%;min-height:34px;display:flex;align-items:center;gap:9px;padding:7px 9px;
   border:0;border-radius:8px;background:transparent;color:var(--ink-2);font:inherit;font-size:max(var(--font-min-readable, 14.5px), 13px);text-align:left;cursor:pointer}

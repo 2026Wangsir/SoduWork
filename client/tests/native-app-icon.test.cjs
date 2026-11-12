@@ -7,6 +7,28 @@ const os = require('node:os');
 const { EventEmitter } = require('node:events');
 const { create } = require('../main/native-app-icon.cjs');
 
+test('native PNG artwork has complete chunks and valid checksums for strict decoders', () => {
+  const zlib = require('node:zlib');
+  const files = [path.join(__dirname, '../icon.png'),
+    ...fs.readdirSync(path.join(__dirname, '../build/icons')).filter(name => name.endsWith('.png'))
+      .map(name => path.join(__dirname, '../build/icons', name))];
+  for (const file of files) {
+    const png = fs.readFileSync(file);
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    let offset = 8, last = '';
+    while (offset < png.length) {
+      assert.ok(offset + 12 <= png.length, path.basename(file) + ': truncated chunk');
+      const length = png.readUInt32BE(offset), end = offset + length + 12;
+      assert.ok(end <= png.length, path.basename(file) + ': truncated payload');
+      last = png.toString('ascii', offset + 4, offset + 8);
+      assert.equal(png.readUInt32BE(end - 4), zlib.crc32(png.subarray(offset + 4, end - 4)),
+        path.basename(file) + ': invalid ' + last + ' checksum');
+      offset = end;
+    }
+    assert.equal(last, 'IEND');
+  }
+});
+
 function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-icon-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -14,6 +36,7 @@ function fixture(t, options = {}) {
   Object.assign(app, { isPackaged: true, getPath: key => path.join(root, key), getAppPath: () => root,
     setAppUserModelId: id => { app.identity = id; }, whenReady: () => Promise.resolve() });
   fs.copyFileSync(path.join(__dirname, '../icon.ico'), path.join(root, 'icon.ico'));
+  fs.copyFileSync(path.join(__dirname, '../icon.png'), path.join(root, 'icon.png'));
   const launcher = path.join(root, 'installed', 'SoduWork.exe');
   const args = { app, root, profile: { appId: 'com.soduwork.test', productName: 'SoduWork Test' },
     platform: 'win32', executable: launcher, launchPath: candidate => candidate || launcher,
@@ -63,14 +86,29 @@ test('source profiles have separate taskbar identities and never repair installe
   assert.notEqual(first.app.identity, second.app.identity);
 });
 
-test('macOS and Linux retain existing icons without Windows identity or cache writes', t => {
+test('macOS and Linux use PNG icons without Windows identity or cache writes', t => {
   for (const platform of ['darwin', 'linux']) {
     const { root, app, helper } = fixture(t, { platform });
     helper.install();
     assert.equal(app.identity, undefined);
-    assert.equal(helper.icon(), path.join(root, 'icon.ico'));
+    assert.equal(helper.icon(), path.join(root, 'icon.png'));
     assert.equal(fs.existsSync(path.join(root, 'userData')), false);
   }
+});
+
+test('macOS applies the product Dock icon after ready and tolerates native failures', async t => {
+  let ready;
+  const calls = [], warnings = [];
+  const { app, helper, root } = fixture(t, { platform: 'darwin', warn: (...args) => warnings.push(args) });
+  app.whenReady = () => new Promise(resolve => { ready = resolve; });
+  app.dock = { setIcon: file => calls.push(file) };
+  helper.install();
+  assert.deepEqual(calls, []);
+  ready(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [path.join(root, 'icon.png')]);
+  app.dock.setIcon = () => { throw Error('Dock unavailable'); };
+  helper.install(); ready(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(warnings.length, 1);
 });
 
 test('pin repair changes only this installation and preserves shortcut targets and arguments', t => {

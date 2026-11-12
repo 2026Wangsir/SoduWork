@@ -408,7 +408,11 @@ function closeChatMenu(restoreFocus = false) {
     const current = ctx.openChatMenu;
     if (!current) return;
     ctx.openChatMenu = null;
-    if (current.menu?.isConnected) current.menu.hidden = true;
+    current.dispose?.();
+    if (current.menu?.isConnected) {
+      current.menu.hidePopover?.();
+      current.menu.hidden = true;
+    }
     current.row?.classList.remove('has-chat-menu');
     current.more?.setAttribute('aria-expanded', 'false');
     if (restoreFocus && current.more?.isConnected) current.more.focus({ preventScroll: true });
@@ -545,6 +549,13 @@ function _newChatRow() {
     more.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
     const menu = document.createElement('div');
     menu.className = 'ws-chat-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
+    // Keep the row's styles and ownership, but escape sidebar overflow clipping.
+    menu.setAttribute('popover', 'manual');
+    // The desktop's capture-phase Escape handler also dismisses native popovers.
+    // Reconcile that path (and browser dismissal) with the row/menu state.
+    menu.addEventListener('toggle', event => {
+      if (event.newState === 'closed' && ctx.openChatMenu?.menu === menu) closeChatMenu(true);
+    });
     const rename = chatMenuItem('重命名', ctx.icon('rename'), 'ws-chat-rename');
     rename.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -595,13 +606,29 @@ function _newChatRow() {
       e.stopPropagation();
       if (ctx.openChatMenu?.row === row) { closeChatMenu(true); return; }
       closeChatMenu();
-      ctx.openChatMenu = { row, menu, more };
       row.classList.add('has-chat-menu'); menu.hidden = false; more.setAttribute('aria-expanded', 'true');
-      const rowRect = row.getBoundingClientRect();
+      menu.showPopover?.();
+      const anchor = more.getBoundingClientRect();
       const menuRect = menu.getBoundingClientRect();
-      const scrollRect = ctx.root?.querySelector('#wsSideScroll')?.getBoundingClientRect();
-      const lowerEdge = Math.min(window.innerHeight - 8, scrollRect?.bottom || window.innerHeight - 8);
-      menu.classList.toggle('is-up', rowRect.bottom + menuRect.height > lowerEdge);
+      const gap = 6, edge = 8;
+      const below = anchor.bottom + gap;
+      const top = below + menuRect.height <= window.innerHeight - edge
+        ? below : anchor.top - gap - menuRect.height;
+      menu.style.left = Math.max(edge, Math.min(anchor.right - menuRect.width,
+        window.innerWidth - menuRect.width - edge)) + 'px';
+      menu.style.top = Math.max(edge, Math.min(top,
+        window.innerHeight - menuRect.height - edge)) + 'px';
+      // A scroll/resize invalidates the anchor; do not leave a detached menu over
+      // another conversation. Scrolling inside a short viewport's menu is safe.
+      const dismiss = event => {
+        if (event.type === 'resize' || !menu.contains(event.target)) closeChatMenu();
+      };
+      window.addEventListener('scroll', dismiss, true);
+      window.addEventListener('resize', dismiss);
+      ctx.openChatMenu = { row, menu, more, dispose() {
+        window.removeEventListener('scroll', dismiss, true);
+        window.removeEventListener('resize', dismiss);
+      } };
       menu.querySelector('[role="menuitem"]:not([hidden]):not(:disabled)')?.focus({ preventScroll: true });
     });
     row.append(b, actions, menu);

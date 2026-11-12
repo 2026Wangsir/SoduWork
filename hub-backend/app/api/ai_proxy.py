@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..config import get_settings
-from ..deps import current_ai_client, enforce_client_quota
+from ..deps import current_ai_client, current_model_client, enforce_client_quota
 from ..models import Client
 from ..services import (
     device_auth,
@@ -56,16 +56,31 @@ async def _resolve_catalog(session, client, model_name="", modality="chat", *, a
         )
     except (TypeError, ValueError):
         supports_available = True
+    conf = None
     if supports_available:
         try:
-            return await resolver(session, client, model_name, modality, available=available)
+            conf = await resolver(session, client, model_name, modality, available=available)
         except TypeError as error:
             # AsyncMock exposes **kwargs even when its side effect has the
             # legacy narrow signature. Retry only that compatibility case;
             # never hide a TypeError raised by the resolver itself.
             if "unexpected keyword argument 'available'" not in str(error):
                 raise
-    return await resolver(session, client, model_name, modality)
+    if conf is None:
+        conf = await resolver(session, client, model_name, modality)
+    if getattr(client, "user_ref", None):
+        if conf:
+            personal_chat = modality == "chat" and getattr(client, "_proxy_quota_runtime", "") == "pi"
+            conf = {**conf, "quotaScope": conf.get("fundingScope", "platform")
+                    if personal_chat else "platform"}
+            from ..services import model_quota
+            prior_binding = getattr(client, "_proxy_quota_binding", "")
+            if personal_chat and prior_binding and prior_binding != model_quota.binding(conf):
+                raise HTTPException(409, "模型凭据已变化，请重新选择模型后继续")
+            if personal_chat:
+                conf["quotaBinding"] = model_quota.binding(conf)
+        await enforce_client_quota(session, client, conf=conf)
+    return conf
 settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/ai-proxy", tags=["ai-proxy"])
@@ -438,7 +453,8 @@ async def _client_by_bearer(
             if not settings.device_auth_compat:
                 raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         else:
-            await enforce_client_quota(session, client)
+            await enforce_client_quota(session, client,
+                conf={"quotaScope": "personal"} if getattr(client, "_proxy_quota_runtime", "") == "pi" else None)
             return client
         dev, _, sec = raw.partition(":")
         dev, sec = dev.strip(), sec.strip()
@@ -466,7 +482,7 @@ async def proxy_config(
     model: str = "",
     agent: str = "pi",
     ignore_preference: bool = False,
-    client: Client = Depends(current_ai_client),
+    client: Client = Depends(current_model_client),
     session: AsyncSession = Depends(get_session),
 ):
     """Resolve the execution endpoint and model before the desktop opens an AI conversation. Return
@@ -487,6 +503,9 @@ async def proxy_config(
     want = str(model or "").strip() or (
         "" if custom_acp or ignore_preference else model_catalog.agent_model(client, cli)
     )
+    # Only Pi implements per-call funding receipts. Other runtimes and old
+    # proxy tickets retain platform admission until they negotiate that contract.
+    client._proxy_quota_runtime = "pi" if cli == "pi" else ""
     usable = await model_catalog.usable(session, client)
     if want and not any(item["name"] == want for item in usable):
         return {"ok": False, "path": PROXY_PATH,
@@ -495,12 +514,6 @@ async def proxy_config(
     if not conf:
         return {"ok": False, "path": PROXY_PATH,
                 "reason": "还没有可用的模型：去「我的模型」配一把自己的密钥，或让管理员配好共享模型服务"}
-    from ..services import client_access
-    try:
-        await client_access.assert_quota(session, str(getattr(client, "user_ref", "") or ""),
-                                        provider=conf.get("provider", ""), model=conf["model"])
-    except client_access.ClientAccessError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail()) from exc
     if conf.get("kind") != "openai-compat":
         return {"ok": False, "path": PROXY_PATH, "code": "unsupported_model_protocol",
                 "protocol": conf.get("kind"), "supportedProtocols": ["openai-compat"],
@@ -508,7 +521,9 @@ async def proxy_config(
     hit = next((m for m in usable if m["name"] == conf["model"]), {})
     image_models = await model_catalog.usable(session, client, "image")
     video_models = await model_catalog.usable(session, client, "video")
-    proxy_key, expires_in = device_auth.issue_proxy_ticket(client)
+    from ..services import model_quota
+    proxy_key, expires_in = device_auth.issue_proxy_ticket(client, quota_runtime=cli,
+        quota_binding=model_quota.binding(conf) if cli == "pi" else "")
     mcp_key, mcp_expires_in = device_auth.issue_mcp_ticket(client)
     image_routing = model_catalog.normalize_image_routing(conf.get("imageRouting"))
     # Catalog values may come from an administrator-edited JSON payload. Keep
@@ -537,6 +552,9 @@ async def proxy_config(
     if thinking_config.get("thinkingMode") == "always":
         thinking_fields["thinkingAlwaysOn"] = True
     return {"ok": True, "path": PROXY_PATH,
+            "quotaVersion": model_quota.VERSION, "quotaScope": conf.get("quotaScope", "platform"),
+            "personalQuotaSupported": cli == "pi",
+            **({"quotaUsageToken": model_quota.usage_token(client, conf)} if cli == "pi" else {}),
             "key": proxy_key, "expiresIn": expires_in,
             "mcpKey": mcp_key, "mcpExpiresIn": mcp_expires_in,
             "model": conf["model"],

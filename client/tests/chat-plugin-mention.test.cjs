@@ -201,12 +201,12 @@ test('all plugin chooser surfaces use the shared artwork resolver', () => {
 
 test('retry restores a plugin identity even before the picker catalog is ready', () => {
   const picker = read('components', 'panels', 'chat-plugin-mention.js');
-  assert.match(picker, /const token = \+\+restoreToken/);
+  assert.match(picker, /function reconcileSelection\(payload\)/);
   assert.match(picker, /conversationUse: \{ available: true, code: 'restored'/);
   assert.match(picker, /selected = catalog\.filter\(\(item\) => ids\.has\(item\.pluginId\)\)/);
   assert.match(picker, /const catalogHasAll = \[\.\.\.ids\]\.every/);
-  assert.match(picker, /if \(token !== restoreToken\) return;/);
-  assert.match(picker, /restoreToken \+= 1/);
+  assert.match(picker, /selected = selected\.filter\(item => !missing\.has\(item\.pluginId\)\)\.map/);
+  assert.match(picker, /payload\.personalComplete === true/);
   assert.match(picker, /let loadTask = null/);
   assert.match(picker, /if \(loading\) return loadTask \|\| undefined/);
   assert.match(picker, /loadTask = task/);

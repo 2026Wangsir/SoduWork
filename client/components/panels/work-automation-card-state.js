@@ -87,6 +87,7 @@
       repos, reason: String(agents?.reason || ''), modelOptions: [], defaultModel: '' };
   }
   function savedHtml(value, agent, method, esc) {
+    const requirementDraft = Boolean(value.sourceRequirement?.id);
     const tx = text => global.SoduWorkI18n?.translateText?.(text) || text;
     const when = String(value.atHour).padStart(2, '0') + ':' + String(value.atMinute).padStart(2, '0');
     const selectedWeekdays = Array.isArray(value.weekdays) && value.weekdays.length ? value.weekdays : [value.weekday];
@@ -102,10 +103,13 @@
       (value.monthDayPolicy === 'last_day' ? ' · ' + tx('缺少日期时使用当月最后一天') : '') + ' · ' + when + range;
     else if (value.every === 'weekly') rhythm = selectedWeekdays.map(day =>
       tx(weekdayLabels[Math.max(0, Number(day) - 1)])).join(', ') + ' ' + when + range;
-    return '<div class="waz-saved"><span class="waz-saved-mark">✓</span><p>' + esc(tx('自动化已创建')) + '</p><h3 data-user-content>' + esc(value.title) + '</h3>' +
+    return '<div class="waz-saved"><span class="waz-saved-mark">✓</span><p>' + esc(tx(requirementDraft ? '自动化草稿已保存' : '自动化已创建')) + '</p><h3 data-user-content>' + esc(value.title) + '</h3>' +
       '<div><span>' + esc(rhythm) + '</span><span>' + esc(agent?.name || value.assigneeId) + '</span>' +
       (method ? '<span>' + esc(method.name) + ' · v' + esc(method.version || '') + '</span>' : '') +
-      '</div><small>' + esc(tx('以后每次运行都会生成可追踪的任务，并保留结果、异常与重试记录。')) + '</small>' +
+      '</div>' + (requirementDraft ? '<small data-user-content>' + esc(tx('来源需求')) + '：' + esc(value.sourceRequirement.title || '') +
+        ' · v' + esc(value.sourceRequirement.requirementVersion) + '</small>' : '') +
+      '<small>' + esc(tx(requirementDraft ? '尚未启用，原需求保持不变。可在自动化管理中启用。' :
+        '以后每次运行都会生成可追踪的任务，并保留结果、异常与重试记录。')) + '</small>' +
       '<button type="button" class="waz-button primary" data-waz-open>' + esc(tx('查看自动化')) + '</button></div>';
   }
   global.WorkAutomationCardState = { create, loadOptions, savedHtml };

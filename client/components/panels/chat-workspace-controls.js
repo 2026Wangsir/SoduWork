@@ -190,7 +190,9 @@ function editorSource(file) {
   }
 
 function mountEditor(tab) {
-    if (!tab || ctx.activeTab() !== tab || !isEditorFile(tab.file) || tab.view !== 'code' || ctx.WB.previewLoading || ctx.WB.previewError) return;
+    // A selected source view outlives the turn's change journal. Markdown
+    // must keep its editor even after a follow-up has no file changes.
+    if (!tab || ctx.activeTab() !== tab || !['markdown', 'text'].includes(tab.kind) || tab.view !== 'code' || ctx.WB.previewLoading || ctx.WB.previewError) return;
     const host = ctx.WB.root && ctx.WB.root.querySelector('[data-code-editor]');
     if (!host) return;
     const textarea = host.querySelector('textarea');
@@ -345,7 +347,7 @@ function tabBody(tab) {
         : ctx.WB.previewError ? '<div class="ncw-preview-error">' + ctx.esc(ctx.WB.previewError) + '</div>'
         : tab.view === 'code' || tab.kind === 'text' ? codeEditorBody(tab)
         : ctx.markdown(ctx.WB.previewText);
-      return (isEditorFile(tab.file) ? codeModeToolbar(tab, ctx.libraryUploadButton(tab.file)) : ctx.info.documentToolbar(tab, ctx.libraryUploadButton(tab.file), false, fileLocation(tab))) +
+      return (isEditorFile(tab.file) || tab.view === 'code' || tab.view === 'diff' ? codeModeToolbar(tab, ctx.libraryUploadButton(tab.file)) : ctx.info.documentToolbar(tab, ctx.libraryUploadButton(tab.file), false, fileLocation(tab))) +
         (ctx.WB.previewTooBig ? '<div class="ncw-truncated" role="status">' + (tab.file?.readSnapshot ?
           '仅显示本次工具返回的部分内容。' : '文件较大，仅预览前 2 MB；完整内容可在原生应用中打开。') + '</div>' : '') + body;
     }
@@ -484,7 +486,7 @@ function bindWorkbench(root, getContext) {
       }
       if (hit.hasAttribute('data-wb-code-view')) {
         const tab = ctx.activeTab();
-        if (!tab || !isEditorFile(tab.file)) return;
+        if (!tab || (!isEditorFile(tab.file) && tab.view !== 'code' && tab.view !== 'diff')) return;
         tab.autoPreview = false;
         tab.view = hit.dataset.wbCodeView === 'diff' ? 'diff' : 'code';
         ctx.WB.manualClosed = false; ctx.paint(); return;

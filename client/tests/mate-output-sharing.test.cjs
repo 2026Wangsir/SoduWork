@@ -165,12 +165,32 @@ test('system attachment opening rejects programs and scripts while supporting of
  for(const name of ['report.pdf.exe','run.ps1','start.cmd','open.lnk','code.js','foo.msi'])assert.equal(canOpenWithSystem(name),false);
 });
 
-test('summary request has its own timeout without changing ordinary API calls',async()=>{
+test('summary request uses the current UI locale and its own timeout without changing source facts',async()=>{
  const timers=[],calls=[],window={};const ctx={window,localStorage:{getItem:()=>null,setItem(){}},User:{id:'test'},navigator:{platform:'test'},console:{log(){},error(){}},
  AbortController:class{constructor(){this.signal={}}abort(){}},FormData:class{},WebSocket:class{},setTimeout:(_,ms)=>{timers.push(ms);return 0},clearTimeout(){},
  fetch:async(url,options)=>{calls.push({url,options});return{ok:true,status:200,text:async()=>JSON.stringify({text:'draft'})}}};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../api.js'),'utf8'),ctx);
  const facts={messages:[{role:'user',text:'work'}]};await window.SoduWorkAPI.draftMateMessage(facts);
- assert.equal(timers.at(-1),30000);assert.ok(calls[0].url.endsWith('/team/message-draft'));assert.deepEqual(JSON.parse(calls[0].options.body),facts);
+ assert.equal(timers.at(-1),30000);assert.ok(calls[0].url.endsWith('/team/message-draft'));assert.deepEqual(JSON.parse(calls[0].options.body),{...facts,locale:'zh-CN'});
+ for(const locale of ['en-US','ja-JP','ko-KR','zh-CN']){
+  window.SoduWorkI18n={getLocale:()=>locale};
+  await window.SoduWorkAPI.draftMateMessage({...facts,locale:'stale'});
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{...facts,locale});
+ }
+ assert.deepEqual(facts,{messages:[{role:'user',text:'work'}]});
  await window.SoduWorkAPI.mateMessageFile('file');assert.equal(timers.at(-1),8000);
+});
+
+test('empty and fallback summaries translate only generated labels, preserving original user content',()=>{
+ const translated={
+  '您好，以下是我当前的工作进展：':'Hello, here is my current work progress:',
+  '目前还没有可总结的工作内容，请补充后再发送。':'No work to summarize yet. Add details before sending.',
+  '当前工作':'Current work','请补充已完成的进展和后续安排。':'Add completed progress and next steps.',
+ };
+ const seen=[],window={SoduWorkI18n:{translateText:value=>{seen.push(value);return translated[value]||value;}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../components/panels/chat-mate-mention.js'),'utf8'),{window});
+ assert.doesNotMatch(window.ChatMateMention.progressDraft(null),/[\u4e00-\u9fff]/);
+ const original='保留我的原始描述';
+ const text=window.ChatMateMention.progressDraft({messages:[{role:'user',text:original}]});
+ assert.ok(text.includes(original));assert.ok(text.startsWith('Hello'));assert.ok(!seen.includes(original));
 });

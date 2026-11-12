@@ -19,17 +19,38 @@ async function fixture(t, options = {}) {
   fs.writeFileSync(path.join(resources, 'runner', binary), 'fixture');
   const file = path.resolve(__dirname, '../main/runner-runtime.js');
   const nativeRequire = createRequire(file), handlers = new Map(), children = [], timers = [];
+  const client = options.sourceLayout ? path.join(root, 'application', 'client') : path.dirname(path.dirname(file));
+  const python = path.join(root, 'venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']));
+  const env = { ...process.env, ...options.env };
+  delete env.SODUWORK_SOURCE_SESSION;
+  delete env.SODUWORK_SOURCE_RUNNER_PYTHON;
+  if (options.sourceLayout) {
+    const backend = path.join(root, 'application', 'hub-backend');
+    fs.mkdirSync(backend, { recursive: true });
+    fs.writeFileSync(path.join(backend, 'runner_main.py'), 'fixture');
+    if (options.projectPython) {
+      const projectPython = path.join(backend, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']));
+      fs.mkdirSync(path.dirname(projectPython), { recursive: true });
+      fs.writeFileSync(projectPython, 'fixture');
+    }
+    fs.mkdirSync(path.dirname(python), { recursive: true });
+    if (!options.missingSourcePython) fs.writeFileSync(python, 'fixture');
+    Object.assign(env, { SODUWORK_SOURCE_SESSION: '1', SODUWORK_SOURCE_RUNNER_PYTHON: python,
+      VIRTUAL_ENV: path.join(root, 'unrelated-environment') });
+  }
+  Object.assign(env, options.env);
   const app = { isPackaged: options.isPackaged !== false, getPath: () => root, whenReady: () => Promise.resolve(), on() {} };
-  const context = { module: { exports: {} }, __dirname: path.dirname(file), Buffer,
-    process: Object.assign(Object.create(process), { resourcesPath: resources }),
+  const context = { module: { exports: {} }, __dirname: path.join(client, 'main'), Buffer,
+    process: Object.assign(Object.create(process), { resourcesPath: resources, env }),
     setTimeout: fn => { timers.push(fn); return fn; }, clearTimeout() {},
     require(name) {
       if (name === './runner-process-lifecycle.cjs') return { supervise: () => ({ stop: async () => {} }) };
       if (name === 'fs' && options.missingPython) return { ...fs,
         existsSync: file => /[\\/]\.venv[\\/](?:Scripts[\\/]python\.exe|bin[\\/]python)$/.test(file)
           ? false : fs.existsSync(file) };
-      if (name === 'child_process') return { spawn() {
+      if (name === 'child_process') return { spawn(bin, args, options) {
         const child = new EventEmitter(); child.pid = 100 + children.length;
+        child.command = { bin, args, options };
         child.stdout = new EventEmitter(); child.stdin = new EventEmitter();
         child.stdin.writable = true; child.stdin.write = () => true; child.stdin.end = () => {};
         children.push(child); return child;
@@ -43,7 +64,7 @@ async function fixture(t, options = {}) {
   await Promise.resolve();
   const configure = () => handlers.get('runner-configure')(null, { hub: 'https://fixture.invalid', clientId: 'fixture-device' });
   await configure();
-  return { configure, children, timers, status: () => handlers.get('runner-status')(), rpc: context.module.exports.rpc,
+  return { configure, children, timers, python, client, status: () => handlers.get('runner-status')(), rpc: context.module.exports.rpc,
     mobile: context.module.exports.setMobileCapabilities,
     report: data => children.at(-1).stdout.emit('data', '@@SODUWORK_RUNNER_STATUS@@' + JSON.stringify(data) + '\n') };
 }
@@ -105,6 +126,60 @@ test('missing development Runner environment is reported by status and local RPC
     assert.equal(error.message, f.status().error);
     return true;
   });
+});
+
+test('the source launcher starts Runner with its own prepared Python and supports catalog RPC', async t => {
+  const f = await fixture(t, { isPackaged: false, sourceLayout: true });
+  assert.equal(f.children.length, 1, f.status().error);
+  const child = f.children[0];
+  assert.equal(child.command.bin, f.python);
+  assert.deepEqual(Array.from(child.command.args), [path.join(f.client, '..', 'hub-backend', 'runner_main.py'), '--config-stdin']);
+  f.report({ state: 'online' });
+  assert.equal(f.status().connected, true);
+  child.stdin.write = value => {
+    const packet = JSON.parse(value.slice('@@SODUWORK_LOCAL_RPC@@'.length));
+    assert.equal(packet.message.op, 'agent.setup');
+    child.stdout.emit('data', '@@SODUWORK_LOCAL_RPC@@' + JSON.stringify({ id: packet.id, ok: true,
+      result: { agents: [{ key: 'pi', installed: true }], env: { ok: true } } }) + '\n');
+    return true;
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(await f.rpc('agent.setup'))), {
+    agents: [{ key: 'pi', installed: true }], env: { ok: true } });
+});
+
+test('source Runner Python cannot be replaced by an inherited virtual environment or arbitrary override', async t => {
+  for (const value of ['', '/usr/bin/python3', 'python3']) {
+    const f = await fixture(t, { isPackaged: false, sourceLayout: true,
+      env: { SODUWORK_SOURCE_RUNNER_PYTHON: value } });
+    assert.equal(f.children.length, 0);
+    assert.equal(f.status().state, 'error');
+    assert.match(f.status().error, /start\.sh --desktop/);
+  }
+});
+
+test('a missing launcher environment reports repair guidance without falling back to system Python', async t => {
+  const f = await fixture(t, { isPackaged: false, sourceLayout: true, missingSourcePython: true });
+  assert.equal(f.children.length, 0);
+  assert.equal(f.status().state, 'error');
+  assert.match(f.status().error, /start\.sh --desktop/);
+});
+
+test('packaged Runner ignores all source Python overrides', async t => {
+  const f = await fixture(t, { sourceLayout: true,
+    env: { SODUWORK_SOURCE_RUNNER_PYTHON: '/unexpected/python' } });
+  assert.equal(f.children.length, 1);
+  assert.match(f.children[0].command.bin, /resources[\\/]runner[\\/]soduwork-runner/);
+  assert.deepEqual(Array.from(f.children[0].command.args), ['--config-stdin']);
+});
+
+test('ordinary development keeps its backend environment unless the source-session flag is explicit', async t => {
+  for (const flag of [undefined, '', '0', 'unexpected']) {
+    const f = await fixture(t, { isPackaged: false, sourceLayout: true, projectPython: true,
+      env: { SODUWORK_SOURCE_SESSION: flag, SODUWORK_SOURCE_RUNNER_PYTHON: '/unexpected/python' } });
+    assert.equal(f.children.length, 1, f.status().error);
+    assert.equal(f.children[0].command.bin, path.join(f.client, '..', 'hub-backend', '.venv',
+      ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'])));
+  }
 });
 
 test('asynchronous spawn failure clears phantom process and schedules recovery', async t => {

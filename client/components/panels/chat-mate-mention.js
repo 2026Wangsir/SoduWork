@@ -25,6 +25,7 @@
   }
 
   const GREETING = '您好，以下是我当前的工作进展：';
+  const uiText = value => (typeof window !== 'undefined' && window.SoduWorkI18n?.translateText?.(value)) || value;
 
   function progressContext(snapshot, extra) {
     const options = extra || {};
@@ -49,10 +50,10 @@
   // Compatibility for a blank/new conversation, not a fabricated AI summary.
   function progressDraft(snapshot, extra) {
     const facts = progressContext(snapshot, extra);
-    return GREETING + '\n\n' + (facts.messages.length
-      ? '当前工作：' + String(facts.topic || facts.messages.find(m => m.role === 'user')?.text || '当前工作').slice(0, 120) +
-        '\n\n请补充已完成的进展和后续安排。'
-      : '目前还没有可总结的工作内容，请补充后再发送。');
+    return uiText(GREETING) + '\n\n' + (facts.messages.length
+      ? uiText('当前工作') + '：' + String(facts.topic || facts.messages.find(m => m.role === 'user')?.text || uiText('当前工作')).slice(0, 120) +
+        '\n\n' + uiText('请补充已完成的进展和后续安排。')
+      : uiText('目前还没有可总结的工作内容，请补充后再发送。'));
   }
 
   async function conversationOutputs(context) {
@@ -289,7 +290,7 @@
       blank.textContent = '手动填写';
       blank.addEventListener('click', () => {
         summaryStarted = true; summaryRequest++; summarizing = false;
-        box.value = GREETING + '\n\n'; messageId = crypto.randomUUID();
+        box.value = uiText(GREETING) + '\n\n'; messageId = crypto.randomUUID();
         summaryStatus.textContent = '手动填写工作进展，附件可按需勾选'; renderFiles(); box.focus();
       });
       const folder = document.createElement('button');

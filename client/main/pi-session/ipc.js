@@ -61,7 +61,8 @@ function _skillDirs(app) {
  * is unavailable instead of enabling bundled capabilities implicitly.
  */
 function _contextSnapshot(handle, snapshot) {
-  return { ...snapshot, ...(handle.requirementContext ? { requirementContext: handle.requirementContext } : {}),
+  const { usageReceipts, ...display } = snapshot || {};
+  return { ...display, ...(handle.requirementContext ? { requirementContext: handle.requirementContext } : {}),
     ...(handle.deliverySync ? { deliverySync: handle.deliverySync } : {}) };
 }
 function _send(win, handle, touched, snapshot, includeSnapshot, presenceSnapshot) {
@@ -360,7 +361,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
   const historyActions = require('./history-ipc').install({ app, ipcMain, session, BrowserWindow, dialog, shell,
     cloudHistory: _cloudHandoff, accountHistory: _accountSync, sharedHistory: _sharedHistory });
   require('../conversation/work-conversation-cards').install({ app, ipcMain, session, BrowserWindow,
-    identityOf: sendIdentityOf || identityOf,
+    identityOf: sendIdentityOf || identityOf, accountHistory: _accountSync, sharedHistory: _sharedHistory,
     newCwd: options => _newSessionCwd(app, 'chat-' + require('node:crypto').randomUUID(), options) });
   /*
    * Read fixed-name plugin drafts only from outputs of active registered sessions; never
@@ -464,11 +465,13 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       historyAccess.assertCurrent(app, requestActor, identity);
       const historyActor = historyAccess.actor(app, identity);
       const openingConnection = connectionOf(identity);
-      const assertHistoryCurrent = async () => {
+      const assertHistoryCurrent = async connectionError => {
         const current = await identityOf(app);
-        historyAccess.assertCurrent(app, historyActor, current);
         if (expectedIdentity && (!openingConnection || connectionOf(current) !== openingConnection))
           throw Error('连接环境已切换，本次自动化未启动');
+        if (connectionError && historyAccess.actor(app, current).owner === historyActor.owner &&
+            (!openingConnection || connectionOf(current) !== openingConnection)) throw Error(connectionError);
+        historyAccess.assertCurrent(app, historyActor, current);
         return current;
       };
       if (automationContext) automationAccess.assertCurrent(automationContext, identity);
@@ -606,7 +609,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
           'cloud-' + require('node:crypto').randomUUID());
         if (remote) {
           try {
-            const current = await assertHistoryCurrent();
+            const current = await assertHistoryCurrent('账号或服务已切换，请在当前连接重新打开会话');
             if (!openingConnection || connectionOf(current) !== openingConnection)
               throw Error('账号或服务已切换，请在当前连接重新打开会话');
           }
@@ -1067,9 +1070,15 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
         .replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64),
     };
     if (typeof authorizeAI === 'function') {
-      // Admission runs when the queued turn executes, including personal models.
+      // Resolve ownership for each captured turn, not the session's current
+      // model: queued turns can alternate between local and managed services.
+      // Pi can attribute personal funding per call. Other runtimes retain the
+      // strict account gate until they provide equally reliable usage receipts.
+      const agent = s.adapterId || 'pi';
+      const modelMode = require('../agent-runtime/runtime-catalog').runtime(agent)?.modelMode;
       sendOptions.beforeTurn = require('../conversation/quota-admission.cjs').beforeTurn(
-        authorizeAI, currentIdentity, sendOptions.beforeTurn);
+        authorizeAI, currentIdentity, sendOptions.beforeTurn, { agent, modelMode, controlled: Boolean(sendOptions.controlled),
+          localModel: name => require('../local-model-store.cjs').resolve(name) });
     }
     let workflowTurn;
     try {
@@ -1159,7 +1168,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
     const win = BrowserWindow.fromWebContents(event.sender);
     const attached = _uiWindow.request(s, win, options);
     if (s.localReplica) {
-      return Promise.resolve(s.loadHistory?.(options || {})).then(() => ({ ok: true, snapshot: s.snapshot() }));
+      return Promise.resolve(s.loadHistory?.(options || {})).then(() => ({ ok: true, snapshot: _contextSnapshot(s, s.snapshot()) }));
     }
     const raw = attached ? _uiWindow.snapshot(s) :
       (typeof s.uiSnapshot === 'function' ? s.uiSnapshot(options || {}) : s.snapshot());

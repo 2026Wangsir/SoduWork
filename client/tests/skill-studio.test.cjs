@@ -214,3 +214,24 @@ test('duplicate current skill-studio targets are collapsed', async t => {
   assert.ok(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')));
   assert.equal(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')), true);
 });
+
+
+test('Skill Studio draft and translated-name archive produce one install candidate', async t => {
+  const f = await fixture(t);
+  const report = build(f);
+  const candidates = require('../main/pi-session/plugin-draft-candidates');
+  const files = fs.readdirSync(f.out).map(name => ({ path: path.join(f.out, name) }));
+  const rows = candidates.collect(f.out, { files });
+  const current = rows.filter(row => !row.pluginSuperseded);
+  assert.equal(current.length, 1);
+  assert.equal(current[0].name, 'soduwork-plugin-draft.json');
+  assert.equal(current[0].pluginIdentity, 'key:skill-purchase-check');
+  const archive = path.join(f.out, report.exports.find(row => row.target === 'soduwork').file);
+  const renamed = path.join(f.out, 'arbitrary-export-name.soduwork-plugin');
+  fs.renameSync(archive, renamed);
+  const onlyArchive = candidates.collect(f.out, { files: [{ path: renamed }] });
+  assert.equal(onlyArchive.length, 1);
+  assert.equal(onlyArchive[0].pluginIdentity, current[0].pluginIdentity);
+  assert.equal(onlyArchive[0].pluginName, current[0].pluginName);
+  assert.equal(onlyArchive[0].pluginVersion, '1.0.0');
+});

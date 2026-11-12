@@ -2,14 +2,14 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const contract = require('../main/account-auth-contract.cjs');
+const { createSafeStorage } = require('./helpers/device-safe-storage-fixture.cjs');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-account-auth-'));
   const file = require.resolve('../main/device-auth'); delete require.cache[file];
   const auth = require(file), app = { getPath: () => root }, handlers = new Map();
   auth.install({ app, ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
-    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'dpapi',
-      encryptString: value => Buffer.from('cipher:' + value), decryptString: value => value.toString().replace(/^cipher:/, '') } });
+    safeStorage: createSafeStorage() });
   const realFetch = global.fetch;
   t.after(() => { global.fetch = realFetch;
     assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep + 'soduwork-account-auth-'));

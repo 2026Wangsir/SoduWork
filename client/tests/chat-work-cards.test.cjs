@@ -90,6 +90,27 @@ test('rejected card IPC is a blocked result, while obsolete rejections remain si
   assert.equal((await pending).stale, true);
 });
 
+test('account aliases keep recovered cards and subsequent writes under the authoritative native session', async () => {
+  const h = boot(), seed = await h.cards.prepare(command);
+  seed.onCardState({ phase: 'draft', draft: { title: 'Saved source form' } });
+  await h.cards.flush();
+  const sourceId = h.ctx._sessionId;
+  const fresh = boot(h.shared), read = fresh.api.workCards;
+  fresh.api.workCards = async id => ({ ...await read(id === 'acct-alias' ? sourceId : id), sessionId: sourceId });
+  const restored = await fresh.cards.restore('acct-alias');
+  assert.equal(restored.ok, true);
+  assert.equal(fresh.ctx._sessionId, sourceId);
+  assert.equal(fresh.ctx._draftKey, sourceId);
+  assert.equal(fresh.ctx._snap.workOnly, true);
+  assert.equal(fresh.cards.timeline([]).length, 1, 'the canonical conversation must show its recovered card');
+  assert.equal(fresh.calls.reserve, 0, 'opening a projection creates no second archive');
+  const edited = await fresh.cards.prepare(command, {});
+  edited.onCardState({ phase: 'draft', draft: { title: 'Updated source form' } });
+  await fresh.cards.flush();
+  assert.equal(fresh.shared.has('aliceacct-alias'), false);
+  assert.ok([...fresh.shared.get('alice' + sourceId).values()].some(row => row.state.draft?.title === 'Updated source form'));
+});
+
 test('本会话创建回执查询不会把其他账号、会话、未成功或已删除的需求当作新建需求', async () => {
   const h=boot(), seed=await h.cards.prepare(command);
   const id=h.ctx._sessionId;

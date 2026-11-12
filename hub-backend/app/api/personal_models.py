@@ -3,10 +3,66 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..deps import current_ai_client, current_client
+from ..deps import current_model_client, current_client, enforce_client_quota
 from ..models import Client
 
 router = APIRouter()
+
+
+def _local_provider_ids(client) -> set[str]:
+    """Identify legacy client-local providers that must not remain in Hub state."""
+    config = getattr(client, "config", None) or {}
+    rows = config.get("modelProviders") if isinstance(config, dict) else None
+    ids = {
+        str(row.get("id") or "").strip().lower()
+        for row in (rows or [])
+        if isinstance(row, dict)
+        and row.get("localOnly") is True
+    }
+    ids.update(
+        str(row.get("providerId") or "").strip().lower()
+        for row in (getattr(client, "models", None) or [])
+        if isinstance(row, dict)
+        and row.get("localOnly") is True
+    )
+    return ids
+
+
+def _purge_local_model_state(client) -> bool:
+    """Remove legacy local model services, models, and keys from the Hub-owned client row."""
+    local_ids = _local_provider_ids(client)
+    if not local_ids:
+        return False
+    changed = False
+    config = dict(getattr(client, "config", None) or {})
+    providers = config.get("modelProviders")
+    if isinstance(providers, list):
+        kept = [row for row in providers
+                if not isinstance(row, dict)
+                or str(row.get("id") or "").strip().lower() not in local_ids]
+        if kept != providers:
+            changed = True
+            if kept:
+                config["modelProviders"] = kept
+            else:
+                config.pop("modelProviders", None)
+    models = list(getattr(client, "models", None) or [])
+    kept_models = [row for row in models
+                   if not isinstance(row, dict)
+                   or str(row.get("providerId") or "").strip().lower() not in local_ids]
+    if kept_models != models:
+        client.models = kept_models
+        changed = True
+    keys = dict(getattr(client, "model_keys", None) or {})
+    kept_keys = {key: value for key, value in keys.items()
+                 if str(key).strip().lower() not in local_ids}
+    if kept_keys != keys:
+        client.model_keys = kept_keys
+        changed = True
+    if config != (getattr(client, "config", None) or {}):
+        client.config = config
+        changed = True
+    return changed
 
 
 @router.get("/my-models")
@@ -14,11 +70,16 @@ async def my_models(
     client: Client = Depends(current_client),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return this client's usable models and masked personal credential metadata. Store
-    credentials where execution can resolve them; never return plaintext keys.
+    """Return Hub-managed usable models and masked personal credential metadata.
+
+    Client-local services are removed from legacy rows and are never returned or persisted here.
+    Credentials are masked and never returned in plaintext.
     """
     from ..services import model_catalog
     from ..services import model_config_guard
+    if _purge_local_model_state(client):
+        await session.commit()
+        await session.refresh(client)
     cat = await model_catalog.catalog(session, client)
     # Include each provider's models so users can see what their credentials enable.
     # Exclude disabled providers, but retain enabled providers without organization credentials.
@@ -60,8 +121,10 @@ async def put_my_models(
     client: Client = Depends(current_client),
     session: AsyncSession = Depends(get_session),
 ):
-    """Save personal provider keys and custom models. Empty key values preserve existing keys; null
-    explicitly removes a personal key.
+    """Save Hub-managed personal providers, models, and credential overrides.
+
+    Client-local services and models are persisted by the desktop client and are rejected here.
+    Empty key values preserve existing keys; null explicitly removes a personal key.
     """
     import re as _re
 
@@ -71,6 +134,7 @@ async def put_my_models(
     from ..services import model_config_guard
     await model_config_guard.personal(session, client, body.get("expectedRevision"),
         allow_patch=not any(k in body for k in ("providers", "models")))
+    _purge_local_model_state(client)
     valid_ids = {p.id for p in (await session.execute(select(ModelProvider))).scalars().all()}
     if isinstance(body.get("providers"), list):
         rows, seen = [], set()
@@ -81,6 +145,9 @@ async def put_my_models(
             base = str(raw.get("baseUrl") or "").strip()[:400]
             if not pid or pid in seen:
                 continue
+            if raw.get("localOnly") is True:
+                raise HTTPException(status_code=403,
+                                    detail="本地模型配置由客户端管理，不能保存到 Hub")
             if base and not base.startswith(("http://", "https://")):
                 raise HTTPException(status_code=400, detail="接口地址要以 http(s):// 开头")
             if pid in valid_ids:
@@ -115,12 +182,12 @@ async def put_my_models(
     keys = body.get("keys")
     if isinstance(keys, dict):
         for pid, v in keys.items():
-            pid = str(pid)[:48]
+            pid = str(pid).strip().lower()[:48]
             if v is None:
-                cur.pop(pid, None)                       # Remove the personal key and fall back to organization credentials.
+                cur.pop(pid, None)  # Remove the personal key and fall back to organization credentials.
             elif str(v).strip():
                 if pid not in valid_ids:
-                    continue                             # Ignore references to nonexistent providers.
+                    raise HTTPException(status_code=400, detail="模型服务不存在，请刷新后重试")
                 cur[pid] = str(v).strip()[:400]
     for pid in removed:
         cur.pop(pid, None)
@@ -130,7 +197,11 @@ async def put_my_models(
         for m in body["models"][:40]:
             if not isinstance(m, dict):
                 continue
-            pid, nm = str(m.get("providerId") or "")[:48], str(m.get("name") or "").strip()[:160]
+            pid = str(m.get("providerId") or "").strip().lower()[:48]
+            nm = str(m.get("name") or "").strip()[:160]
+            if m.get("localOnly") is True:
+                raise HTTPException(status_code=403,
+                                    detail="本地模型配置由客户端管理，不能保存到 Hub")
             if pid in valid_ids and nm:
                 modality = model_catalog.normalize_modality(m.get("modality"))
                 try:
@@ -143,6 +214,8 @@ async def put_my_models(
                             "label": str(m.get("label") or nm)[:80],
                             "modality": modality, "config": config,
                             "ctxWindow": context_size})
+            elif pid and nm:
+                raise HTTPException(status_code=400, detail="模型服务不存在，请刷新后重试")
         client.models = out
     await session.commit()
     await session.refresh(client)
@@ -161,7 +234,7 @@ async def put_my_models(
 @router.post("/my-models/test")
 async def test_my_model(
     body: dict = Body(default_factory=dict),
-    client: Client = Depends(current_ai_client),
+    client: Client = Depends(current_model_client),
     session: AsyncSession = Depends(get_session),
 ):
     """Probe the client's currently effective credential, preferring a personal key over the
@@ -182,6 +255,11 @@ async def test_my_model(
     for modality in model_catalog.MODEL_MODALITIES:
         lst.extend(await model_catalog.usable(session, client, modality))
     probe = next((m["name"] for m in lst if m["providerId"] == pid), "")
+    from ..services import model_quota
+    # A probe can fall back to paid inference. Use the same credential-derived
+    # admission, with the exact probe model for restricted plans.
+    await enforce_client_quota(session, client, conf={"provider": pid, "model": probe,
+        "quotaScope": model_quota.scope(p, key_from) if probe else "platform"})
     r = await _aio.to_thread(model_catalog.probe_sync, p["baseUrl"], key, probe, p["kind"])
     return {**r, "keyFrom": key_from, "protocol": p["kind"],
             "gatewayCompatible": p["kind"] == "openai-compat"}

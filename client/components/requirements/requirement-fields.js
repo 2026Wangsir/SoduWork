@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
   const esc = value => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const wired = new WeakSet(), composing = new WeakSet();
+  const wired = new WeakSet(), composing = new WeakSet(), visibilityWired = new WeakSet();
   const sectionPaths = {
     content: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     criteria: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
@@ -40,6 +40,18 @@
     const value = storedTags(field), input = field?.closest?.('[data-rq-tag-editor]')?.querySelector('[data-rq-tag-input]');
     const pending = input?.disabled ? '' : input?.value || '';
     return normalizeTags([...value, ...normalizeTags(pending)]);
+  }
+  function setTags(field, tags) {
+    const value = normalizeTags(tags); field.value = JSON.stringify(value);
+    const chips = field.closest?.('[data-rq-tag-editor]')?.querySelector('[data-rq-tag-chips]');
+    if (chips) chips.replaceChildren(...value.map((tag, index) => {
+      const chip = document.createElement('span'), label = document.createElement('span'), button = document.createElement('button');
+      chip.className = 'rq-tag-chip'; label.textContent = tag; label.setAttribute('data-user-content', '');
+      button.type = 'button'; button.setAttribute('data-rq-tag-remove', String(index));
+      button.setAttribute('aria-label', '删除标签：' + tag); button.title = '删除标签';
+      const icon = document.createElement('span'); icon.textContent = '×'; icon.setAttribute('aria-hidden', 'true');
+      button.append(icon); chip.append(label, button); return chip;
+    }));
   }
   function validateTags(root) {
     for (const editor of root?.querySelectorAll?.('[data-rq-tag-editor]') || []) {
@@ -104,19 +116,134 @@
       editor.querySelector('[data-rq-tag-input]').focus();
     });
   }
+  function visibilityDescription(value, scope) {
+    if (scope === 'repository') return '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。';
+    if (scope === 'organization') value = 'organization';
+    return value === 'organization' ? '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。' :
+      '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。';
+  }
+  function visibilityHint(value, id, scope) {
+    return '<span class="rq-visibility-hint" id="' + esc(id) + '">' + visibilityDescription(value, scope) + '</span>';
+  }
+  function bindVisibility(root) {
+    if (!root?.addEventListener || visibilityWired.has(root)) return;
+    visibilityWired.add(root);
+    root.addEventListener('change', event => {
+      const select = event.target.closest('[data-rq-visibility]');
+      if (!select || select.disabled) return;
+      const hint = root.querySelector('#' + select.getAttribute('aria-describedby'));
+      if (hint) {
+        const text = visibilityDescription(select.value);
+        hint.textContent = global.SoduWorkI18n?.translateText?.(text) || text;
+      }
+    });
+  }
   function html(draft, options) {
     const kinds = global.Requirements?.kinds || { requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' };
     return '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpKind">类型</label>' +
       '<select id="cpKind">' + Object.entries(kinds).map(([key, label]) => '<option value="' + key + '"' +
         (draft.kind === key ? ' selected' : '') + '>' + esc(label) + '</option>').join('') + '</select>' +
-      '<label class="cp-k cp-k2" for="cpVisibility">可见范围</label><select id="cpVisibility">' +
+      '<label class="cp-k cp-k2" for="cpVisibility">可见范围</label><select id="cpVisibility" data-rq-visibility aria-describedby="cpVisibilityHint">' +
       '<option value="related"' + (draft.visibility !== 'organization' ? ' selected' : '') + '>仅相关人</option>' +
-      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>团队可见</option></select></div>' +
+      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>同公司可见</option></select></div>' +
+      visibilityHint(draft.visibility, 'cpVisibilityHint') +
       '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTagsInput">标签</label>' +
       tagHtml(draft.tags, {id: 'cpTags'}) + '</div>' +
       (options?.saveOnly ? '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTriage">加入阶段</label><select id="cpTriage">' +
         [['intake', '收集箱'], ['clarifying', '收集箱 · 待补充'], ['ready', '待开始']].map(([key,label]) => '<option value="' + key + '"' +
           ((draft.triageStage || options.triageStage || 'intake') === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div>' : '');
   }
-  global.RequirementFields = { html, tagHtml, bindTags, readTags, validateTags, normalizeTags, sectionIcon };
+  function projectPicker(options = {}) {
+    const owner = String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
+    let value = String(options.value || ''), rows = [], phase = 'idle', request = 0, disposed = false, host = null;
+    const initial = value, initialName = String(options.name || '');
+    const current = () => !disposed && owner === String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '') &&
+      (!options.current || options.current());
+    const editable = () => current() && options.editable?.() !== false;
+    const knownName = () => rows.find(row => row.id === value)?.name ||
+      (phase !== 'ready' && value === initial ? initialName : '');
+    const label = () => !value ? '不关联项目' : knownName() || (phase === 'ready' ? '当前关联项目（不可用）' : '当前关联项目');
+    const statusHtml = () => '<span class="rq-field-hint" data-rq-project-error role="alert" hidden></span>' +
+      '<button type="button" data-rq-project-retry hidden>重试</button>';
+    function choiceRows() {
+      const list = [['', '不关联项目'], ...rows.map(row => [row.id, row.name])];
+      if (value && !rows.some(row => row.id === value)) list.push([value, label()]);
+      return list.map(([id, name]) => ({id, name, selected:id === value,
+        userContent:Boolean(id && (rows.some(row => row.id === id) || phase !== 'ready' && id === initial && initialName)),
+        disabled:Boolean(id && !rows.some(row => row.id === id))}));
+    }
+    function choices() {
+      return choiceRows().map(row => '<option value="' + esc(row.id) + '"' +
+        (row.userContent ? ' data-user-content' : '') + (row.selected ? ' selected' : '') +
+        (row.disabled ? ' disabled' : '') + '>' + esc(row.name) + '</option>').join('');
+    }
+    function paint() {
+      if (!current() || !host || host.isConnected === false) return;
+      const select = host.querySelector('[data-rq-project-select]');
+      if (select) {
+        select.replaceChildren(...choiceRows().map(row => {
+          const option = document.createElement('option'); option.value = row.id; option.textContent = row.name;
+          option.selected = row.selected; option.disabled = row.disabled;
+          if (row.userContent) option.setAttribute('data-user-content', '');
+          return option;
+        }));
+        select.value = value;
+        select.disabled = !editable() || phase !== 'ready';
+        if (select.disabled) select.setAttribute('data-rq-locked', '');
+        else select.removeAttribute?.('data-rq-locked');
+        select.setAttribute('aria-busy', String(phase === 'loading'));
+      }
+      const name = host.querySelector('[data-rq-project-name]');
+      if (name) {
+        if (value && knownName()) name.setAttribute('data-user-content', '');
+        else name.removeAttribute?.('data-user-content');
+        name.textContent = label();
+      }
+      const error = host.querySelector('[data-rq-project-error]');
+      if (error) {
+        error.hidden = phase !== 'error';
+        error.textContent = phase === 'error' ? '项目列表暂时无法加载，当前关联已保留。' : '';
+      }
+      const retry = host.querySelector('[data-rq-project-retry]'); if (retry) retry.hidden = phase !== 'error';
+    }
+    async function load() {
+      if (!current()) return false;
+      const ticket = ++request; phase = 'loading'; paint();
+      try {
+        if (!global.SoduWorkAPI?.getProjects) throw Error('Project lookup is unavailable');
+        const result = await global.SoduWorkAPI.getProjects();
+        if (!current() || ticket !== request || host?.isConnected === false) return false;
+        if (!Array.isArray(result) || result.some(row => !row || typeof row.id !== 'string' ||
+            !row.id.trim() || typeof row.name !== 'string')) throw Error('Project lookup returned invalid data');
+        rows = result.filter((row, index) => result.findIndex(other => other.id === row.id) === index);
+        phase = 'ready'; paint(); return true;
+      } catch (_) {
+        if (!current() || ticket !== request || host?.isConnected === false) return false;
+        phase = 'error'; paint(); return false;
+      }
+    }
+    return {
+      html({id, name, hint = ''} = {}) {
+        return '<select data-rq-project-select id="' + esc(id || 'rqProject') + '"' +
+          (name ? ' name="' + esc(name) + '"' : '') + ' disabled data-rq-locked aria-busy="true">' + choices() + '</select>' +
+          (hint ? '<span class="rq-field-hint">' + esc(hint) + '</span>' : '') +
+          statusHtml();
+      },
+      bind(root) {
+        host = root;
+        const select = host?.querySelector('[data-rq-project-select]');
+        select?.addEventListener?.('change', () => {
+          const next = String(select.value || '');
+          if (!editable() || phase !== 'ready' || next && !rows.some(row => row.id === next)) { paint(); return; }
+          value = next; options.onChange?.(value);
+        });
+        host?.querySelector('[data-rq-project-retry]')?.addEventListener?.('click', () => { void load(); });
+        paint(); if (phase === 'idle') void load();
+      },
+      value: () => value, label, statusHtml, paint, load,
+      setValue(next) { if (current()) { value = String(next || ''); paint(); } },
+      dispose() { disposed = true; request++; host = null; },
+    };
+  }
+  global.RequirementFields = { html, tagHtml, bindTags, readTags, setTags, validateTags, normalizeTags, sectionIcon, visibilityHint, bindVisibility, projectPicker };
 })(window);

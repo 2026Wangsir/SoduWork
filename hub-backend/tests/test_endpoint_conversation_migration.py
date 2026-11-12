@@ -36,6 +36,67 @@ class EndpointMigrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await session.get(AccountConversation, identity)).storage_mode, "endpoint")
             self.assertEqual(list((await session.scalars(select(AccountConversationMessage))).all()), [])
 
+    async def test_directory_distinguishes_source_and_migrated_content_without_exposing_pointer(self):
+        identity = await self.seed()
+        source_url = f"/api/v1/account-conversations/{identity}/source"
+        self.assertEqual((await self.http.get(source_url)).json()["conversation"]["contentLocation"], "hub")
+        upgrade = self.checkpoint(2, [], storageMode="endpoint", snapshotComplete=False, messageCount=1)
+        self.assertEqual((await self.http.post("/api/v1/account-conversations/sync", json=upgrade)).status_code, 200)
+        self.assertEqual((await self.http.get(source_url)).json()["conversation"]["contentLocation"], "source")
+
+        pointer = {"localReplicaId": "migrated-private-copy", "targetClientId": "private-target-device",
+                   "sourceRevision": 2, "sha256": "a" * 64, "scope": "private-content-scope"}
+        async with self.sessions() as session:
+            row = await session.get(AccountConversation, identity)
+            row.content_ref = pointer
+            await session.commit()
+        for url in (source_url, "/api/v1/account-conversations"):
+            response = await self.http.get(url)
+            self.assertEqual(response.status_code, 200, response.text)
+            data = response.json()
+            item = data["conversation"] if "conversation" in data else data["items"][0]
+            self.assertEqual(item["contentLocation"], "replica")
+            for private_value in (pointer["localReplicaId"], pointer["targetClientId"], pointer["scope"], pointer["sha256"]):
+                self.assertNotIn(private_value, response.text)
+            self.assertNotIn("contentRef", item)
+
+        with patch.object(desktop_capabilities, "request", AsyncMock(return_value={
+            "conversation": {"id": pointer["localReplicaId"]}, "items": [], "hasMore": False,
+        })) as request:
+            response = await self.http.get(f"/api/v1/account-conversations/{identity}/messages")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["conversation"]["contentLocation"], "replica")
+            self.assertEqual(request.await_args.args[0], pointer["targetClientId"])
+            self.assertEqual(request.await_args.args[1]["args"]["id"], pointer["localReplicaId"])
+
+        self.client.user_ref = "unrelated-account"
+        self.assertEqual((await self.http.get(source_url)).status_code, 404)
+        self.assertEqual((await self.http.get("/api/v1/account-conversations")).json()["items"], [])
+
+    async def test_uncertain_endpoint_reference_never_claims_source_content(self):
+        identity = await self.seed()
+        source_url = f"/api/v1/account-conversations/{identity}/source"
+        references = [
+            {"localReplicaId": "copy", "targetClientId": "target", "sourceRevision": 0},
+            {"localReplicaId": "copy", "sourceRevision": 1},
+            {"sha256": "a" * 64}, [], "invalid-reference", False,
+        ]
+        for reference in references:
+            with self.subTest(reference=reference):
+                async with self.sessions() as session:
+                    row = await session.get(AccountConversation, identity)
+                    row.storage_mode, row.content_ref = "endpoint", reference
+                    await session.commit()
+                response = await self.http.get(source_url)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["conversation"]["contentLocation"], "unknown")
+        for reference in (None, {}):
+            async with self.sessions() as session:
+                row = await session.get(AccountConversation, identity)
+                row.content_ref = reference
+                await session.commit()
+            self.assertEqual((await self.http.get(source_url)).json()["conversation"]["contentLocation"], "source")
+
     async def test_wrong_receipt_keeps_sole_copy_then_verified_retry_clears_only_the_body(self):
         identity = await self.seed()
         pointer = {"sha256": "a" * 64, "size": 30, "scope": "b" * 64, "runnerId": "runner", "schema": 1}

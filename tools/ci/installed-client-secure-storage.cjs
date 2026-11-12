@@ -14,17 +14,26 @@ function secureStorageProbe(profile, mode) {
   if (!directory.isDirectory() || directory.isSymbolicLink()) throw Error('Unsafe secure-storage acceptance profile');
   if (!safeStorage.isEncryptionAvailable()) throw Error('Electron safeStorage is unavailable');
   const backend = process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : null;
-  if (backend === 'basic_text' || backend === 'unknown') throw Error('Real Linux secret storage is required');
+  if (process.platform === 'linux' && !['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'].includes(backend))
+    throw Error('Linux acceptance requires a real system credential store');
+  const requireStrongCipher = value => {
+    // Linux v10 uses Chromium's fixed fallback key, even if today's backend is secure.
+    if (process.platform === 'linux' && value.subarray(0, 3).toString('ascii') !== 'v11')
+      throw Error('Linux acceptance requires system-key encrypted v11 ciphertext');
+  };
   const file = path.join(profile, 'acceptance-secure-storage.bin');
   const marker = 'soduwork-keychain-smoke-v1';
   if (mode === 'write') {
     // Never replace earlier ciphertext: a fresh key must not hide data loss.
-    fs.writeFileSync(file, safeStorage.encryptString(marker), { flag: 'wx', mode: 0o600 });
+    const cipher = safeStorage.encryptString(marker);
+    requireStrongCipher(cipher);
+    fs.writeFileSync(file, cipher, { flag: 'wx', mode: 0o600 });
   }
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > 65536)
     throw Error('Invalid secure-storage acceptance ciphertext');
   const cipher = fs.readFileSync(file);
+  requireStrongCipher(cipher);
   if (safeStorage.decryptString(cipher) !== marker)
     throw Error('Electron safeStorage did not preserve the earlier ciphertext');
   return { available: true, backend, roundTrip: true, persisted: true, mode,

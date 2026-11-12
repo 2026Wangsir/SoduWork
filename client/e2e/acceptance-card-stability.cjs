@@ -122,10 +122,38 @@ app.whenReady().then(async () => {
     entry.trace.approvals=[{id:'review-2',action:'review',status:'pending',createdAt:1}];
     ctx._sessionOptions={taskRef:'task',approvalId:'review-2',acceptanceExecutionSession:true};
     ctx._snap.messages.push({role:'assistant',done:true,sentAt:2,blocks:[{kind:'text',done:true,text:'【验收分析结果】\\n\\nCurrent delivery checked.'}]});
-    paint();document.querySelector('[data-acceptance-result-note]').value='Fix the layout';failDecision=true;void 0;
+    paint();void 0;
   `);
   await click('[data-acceptance-result-action="reject"]');
-  assert.equal(await js(`document.querySelector('[data-acceptance-result-note]').value`), 'Fix the layout');
+  const fieldError = async field => js(`(() => {
+    const input=document.querySelector('[data-acceptance-result-'+${JSON.stringify(field)}+']');
+    const error=document.querySelector('[data-acceptance-result-error]');
+    const bounds=input.getBoundingClientRect(),hint=error.getBoundingClientRect();
+    return {adjacent:error.parentElement===input.parentElement,role:error.getAttribute('role'),
+      invalid:input.getAttribute('aria-invalid'),described:input.getAttribute('aria-describedby')?.split(' ').includes(error.id),
+      focused:document.activeElement===input,styled:getComputedStyle(error).color!==getComputedStyle(input).color,
+      distance:hint.top-bounds.bottom};
+  })()`);
+  const requiredNote = await fieldError('note');
+  assert.ok(requiredNote.distance >= 0 && requiredNote.distance <= 16, 'validation belongs directly below its input');
+  delete requiredNote.distance;
+  assert.deepEqual(requiredNote, {adjacent:true,role:'alert',invalid:'true',described:true,focused:true,styled:true});
+  assert.equal(await js('calls.length'),1,'empty rejection must not submit');
+  fs.writeFileSync(path.join(output, 'review-note-required.png'), (await win.webContents.capturePage()).toPNG());
+  await click('[data-acceptance-result-action="analyze"]');
+  assert.equal((await fieldError('analysis')).adjacent,true);
+  assert.equal(await js(`document.querySelector('[data-acceptance-result-note]').hasAttribute('aria-invalid')`),false);
+  await win.webContents.insertText('Keep this supplemental analysis');
+  assert.equal(await js(`document.querySelector('[data-acceptance-result-error]')===null`),true);
+  await click('[data-acceptance-result-note]');
+  const reviewNote='Fix the layout\n  Preserve <img src=x> as literal feedback';
+  await win.webContents.insertText(reviewNote);
+  await js(`failDecision=true;void 0;`);
+  await click('[data-acceptance-result-action="reject"]');
+  assert.equal(await js(`document.querySelector('[data-acceptance-result-note]').value`), reviewNote);
+  assert.equal(await js(`document.querySelector('[data-acceptance-result-analysis]').value`), 'Keep this supplemental analysis');
+  assert.equal(await js(`document.querySelector('[data-acceptance-result-error]').getAttribute('role')`),'alert');
+  assert.equal(await js(`Boolean(document.querySelector('[data-acceptance-result-error]').compareDocumentPosition(document.querySelector('.nacceptance-result-buttons'))&Node.DOCUMENT_POSITION_FOLLOWING)`),true);
   assert.equal(await js(`document.querySelector('[data-acceptance-result-action="reject"]').disabled`), false);
   await js(`failDecision=false;void 0;`);
   await click('[data-acceptance-result-action="reject"]');
@@ -135,6 +163,17 @@ app.whenReady().then(async () => {
   await js(`ctx._snap.status='streaming';ctx._pending='Continue editing';for(let i=0;i<20;i++)renderer._render();void 0;`);
   assert.equal(await js(`document.querySelectorAll('[data-acceptance-result-action],details.nacceptance-result').length`), 0);
   assert.match(await js(`document.querySelector('[data-chat-node="message:1"] .nacceptance-result').textContent`), /Fix the layout/);
+  assert.equal(await js(`document.querySelector('.nacceptance-result-outcome-note').textContent`),reviewNote);
+  assert.equal(await js(`getComputedStyle(document.querySelector('.nacceptance-result-outcome-note')).whiteSpace`),'pre-wrap');
+  assert.equal(await js(`document.querySelector('.nacceptance-result-outcome-note img')===null`),true);
+  win.setSize(480,900);
+  await js(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  assert.equal(await js(`(() => {const note=document.querySelector('.nacceptance-result-outcome-note'),box=note.closest('.nacceptance-result-outcome');
+    return note.scrollWidth<=note.clientWidth+1&&box.getBoundingClientRect().width<=box.closest('.nacceptance-result-body').getBoundingClientRect().width;})()`),true);
+  await js(`document.querySelector('.nacceptance-result-outcome').scrollIntoView({block:'center',behavior:'instant'});void 0;`);
+  fs.writeFileSync(path.join(output, 'rejection-feedback-narrow.png'), (await win.webContents.capturePage()).toPNG());
+  win.setSize(1100,900);
+  report.checks.push('Required review and analysis feedback is field-linked, clears on input, preserves failed drafts, and renders literal multiline rejection notes within a narrow receipt');
   report.checks.push('Failed analysis decision keeps its draft and retry; success remains immutable during follow-up streaming');
 
   await js(`

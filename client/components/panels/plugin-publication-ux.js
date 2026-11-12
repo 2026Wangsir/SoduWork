@@ -176,6 +176,27 @@
       }).join('') + '</div></section>';
   }
 
+  function reviewHistoryHtml(item) {
+    const history = Array.isArray(item.reviewHistory) ? item.reviewHistory.filter(review => review && typeof review === 'object') : [];
+    const reviewer = row => row.reviewedBy
+      ? '<span data-user-content>' + h(row.reviewedBy) + '</span>' : '企业插件管理员';
+    const reviewed = row => row.reviewedAt
+      ? '<span data-user-content>' + h(new Date(row.reviewedAt).toLocaleString()) + '</span>' : '等待管理员处理';
+    if (history.length) return '<section class="cap-detail-section cap-review-history"><b>审核记录</b>' +
+      history.map(review => '<section class="cap-review-feedback"><b>' +
+        (review.decision === 'approve' ? '审核已通过' : review.decision === 'reject' ? '审核未通过' :
+          review.decision === 'revoke' ? '上架已撤销' : '最近审查结论') + '</b>' +
+        (review.note ? '<p data-user-content>' + h(review.note) + '</p>' : '') +
+        '<small>' + reviewer(review) + ' · ' + reviewed(review) + '</small></section>').join('') + '</section>';
+    const feedback = item.reviewNote ||
+      (item.reviewDecision === 'approve' ? '管理员已通过这个版本。' :
+        item.reviewDecision === 'revoke' ? '管理员已撤销这个版本。' : '管理员还没有给出审查结论。');
+    return '<section class="cap-review-feedback"><b>' +
+      (item.reviewDecision === 'reject' ? '管理员修改要求' : '最近审查结论') + '</b><p' +
+      (item.reviewNote ? ' data-user-content' : '') + '>' + h(feedback) + '</p><small>' +
+      reviewer(item) + ' · ' + reviewed(item) + '</small></section>';
+  }
+
   function openSubmission(item, ctx, options) {
     const opts = options || {};
     const catalog = { items: opts.items || [] };
@@ -193,17 +214,12 @@
     const rejected = item.reviewDecision === 'reject';
     const local = (catalog.items || []).find(function (candidate) {
       return candidate.personal && !candidate.builtIn &&
-        ((item.key && candidate.key === item.key) || candidate.name === item.name);
+        (opts.localPluginId ? candidate.pluginId === opts.localPluginId :
+          ((item.key && candidate.key === item.key) || candidate.name === item.name));
     });
     const scope = item.visibility === 'users' ? '指定 ' + Number(item.audienceCount || 0) + ' 人' :
       item.visibility === 'org_units' ? '指定 ' + Number(item.audienceCount || 0) + ' 个团队' :
       '全公司';
-    const reviewed = item.reviewedAt ?
-      new Date(item.reviewedAt).toLocaleString() : '等待管理员处理';
-    const feedback = item.reviewNote ||
-      (item.reviewDecision === 'approve' ? '管理员已通过这个版本。' :
-        item.reviewDecision === 'revoke' ? '管理员已撤销这个版本。' :
-          '管理员还没有给出审查结论。');
     const recovery = rejected
       ? local
         ? '<p class="cap-governance-note"><b>下一步</b>打开本机个人插件，使用 SoduWork 按反馈改进；确认改进后重新提交会生成新的不可变版本，原审查记录保留。</p>'
@@ -222,10 +238,7 @@
       '<section class="cap-submission-proof"><b>' + h(proofText[0]) + '</b><span>' +
       h(proofText[1]) + '</span>' + (proof.signatureKeyId ? '<code>' +
       h(proof.signatureKeyId) + '</code>' : '') + '</section>' +
-      '<section class="cap-review-feedback"><b>' +
-      (rejected ? '管理员修改要求' : '最近审查结论') + '</b><p>' +
-      h(feedback) + '</p><small>' + h(item.reviewedBy || '企业插件管理员') +
-      ' · ' + h(reviewed) + '</small></section>' + recovery,
+      reviewHistoryHtml(item) + recovery,
       '<button class="btn-mini" id="capSubmissionClose">' + (opts.onBack ? '返回我的申请' : '关闭') + '</button><span class="push"></span>' +
       (rejected ? local
         ? '<button class="btn-mini primary" id="capSubmissionImprove">打开个人插件继续改进</button>'
@@ -400,6 +413,13 @@
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))[0] || null;
   }
 
+  function submissionLabel(receipt) {
+    return !receipt ? '申请上架' :
+      receipt.reviewDecision === 'reject' ? '审核未通过' :
+      receipt.trustState === 'revoked' || receipt.reviewDecision === 'revoke' ? '上架已撤销' :
+      receipt.trustState === 'approved' ? (receipt.catalogReady ? '已上架' : '审核已通过') : '上架审核中';
+  }
+
   async function refreshPersonalSubmission(button, item, options) {
     if (!button) return;
     const opts = options || {}, api = opts.api || global.SoduWorkAPI;
@@ -414,10 +434,7 @@
       if (!catalog || catalog.remoteError || catalog.error) throw Error(catalog?.remoteError || catalog?.error || '上架状态暂不可用');
       const receipt = personalSubmission(item, catalog.submissions);
       button.disabled = Boolean(receipt);
-      button.textContent = !receipt ? '申请上架' :
-        receipt.reviewDecision === 'reject' ? '审核未通过' :
-        receipt.trustState === 'revoked' || receipt.reviewDecision === 'revoke' ? '上架已撤销' :
-        receipt.trustState === 'approved' ? (receipt.catalogReady ? '已上架' : '审核已通过') : '上架审核中';
+      button.textContent = submissionLabel(receipt);
       button.title = receipt ? (receipt.reviewNote || currentStep(receipt).detail) : '';
     } catch (error) {
       if (!current()) return;
@@ -428,6 +445,6 @@
 
   global.SoduWorkPluginPublication = {
     progress, currentStep, openUpgrade, submissionStrip, openSubmission, openPersonalPublish,
-    personalSubmission, refreshPersonalSubmission,
+    personalSubmission, refreshPersonalSubmission, submissionLabel,
   };
 })(window);

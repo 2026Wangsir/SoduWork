@@ -1,7 +1,7 @@
 'use strict';
 /* Follow-up-turn semantics regression (second round in one session): after a successful send, consume
    keeps workflow plugins selected while plain plugins stay one-shot; the all-kept case must not
-   clear the restoreToken of a pending draft. */
+   replace a pending restored draft. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -76,7 +76,7 @@ test('consume keeps everything untouched when only workflow plugins were sent', 
   // consume the plain plugin first, leaving only workflow; the next send hands consume workflow only.
   api.consume([{ pluginId: 'local:plain', name: '普通小工具', version: '', scopeLabel: '仅自己' }]);
   assert.equal(api.selected().length, 1);
-  // restoreToken reset is not directly observable; verify the all-kept branch by consuming workflow again and checking the selection survives.
+  // Verify the all-kept branch by consuming workflow again and checking the selection survives.
   api.consume([{ pluginId: 'local:wf-doc', name: '文档流水线', version: '', scopeLabel: '仅自己' }]);
   assert.equal(api.selected().length, 1, 'all-workflow send does not clear the selection');
   assert.equal(api.selected()[0].pluginId, 'local:wf-doc');
@@ -95,4 +95,58 @@ test('restore of a failed draft still brings back consumed plain plugins', async
   ]);
   const ids = api.selected().map((item) => item.pluginId).sort();
   assert.deepEqual(ids, ['local:plain', 'local:wf-doc'], 'both plugins back after failed-draft restore');
+});
+
+test('restore retains personal parameters when only the enterprise catalog is available', async () => {
+  const api = mention.create({ input, host, actions: [], catalog: async () => ({
+    personalComplete: false,
+    items: [{ pluginId: 'enterprise-a', name: 'Enterprise A', installed: true, organizationWide: true }],
+  }) });
+  api.restore([{ pluginId: 'enterprise-a' }, { pluginId: 'local:offline', inputValues: { retained: 'value' } }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(api.draft().map(item => item.pluginId), ['enterprise-a', 'local:offline']);
+  assert.deepEqual(api.draft()[1].inputValues, { retained: 'value' });
+  assert.equal(api.selected()[0].name, 'Enterprise A');
+  api.destroy();
+});
+
+test('restore removes missing personal plugins only after a complete catalog confirms their absence', async () => {
+  const api = mention.create({ input, host, actions: [], catalog: async () => ({
+    personalComplete: true,
+    items: [{ pluginId: 'enterprise-a', name: 'Enterprise A', installed: true, organizationWide: true }],
+  }) });
+  api.restore([{ pluginId: 'enterprise-a' }, { pluginId: 'local:deleted', inputValues: { retained: 'value' } }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(api.draft().map(item => item.pluginId), ['enterprise-a']);
+  api.destroy();
+});
+
+test('a pending restored catalog cannot resurrect a cleared draft', async () => {
+  let finish;
+  const api = mention.create({ input, host, actions: [], catalog: () => new Promise(resolve => { finish = resolve; }) });
+  api.restore([{ pluginId: 'local:pending', inputValues: { retained: 'value' } }]);
+  assert.equal(api.draft()[0].pluginId, 'local:pending');
+  await new Promise(resolve => setImmediate(resolve));
+  api.clear();
+  finish({ personalComplete: true, items: [{ pluginId: 'local:pending', installed: true, personal: true }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(api.draft(), []);
+  api.destroy();
+});
+
+test('a pending restored catalog reconciles the latest draft without reviving previous selections', async () => {
+  let finish;
+  const api = mention.create({ input, host, actions: [], catalog: () => new Promise(resolve => { finish = resolve; }) });
+  api.restore([{ pluginId: 'local:previous' }]);
+  await new Promise(resolve => setImmediate(resolve));
+  api.restore([{ pluginId: 'local:current', inputValues: { retained: 'current value' } }]);
+  finish({ personalComplete: true, items: [
+    { pluginId: 'local:previous', installed: true, personal: true },
+    { pluginId: 'local:current', name: 'Current plugin', installed: true, personal: true },
+  ] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(api.draft().map(item => item.pluginId), ['local:current']);
+  assert.equal(api.selected()[0].name, 'Current plugin');
+  assert.deepEqual(api.draft()[0].inputValues, { retained: 'current value' });
+  api.destroy();
 });

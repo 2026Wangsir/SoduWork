@@ -47,6 +47,7 @@ function _mdModelEditorHtml(p) {
 }
 function _mdBindModels(box) {
   box.querySelectorAll('[data-mdedit]').forEach(button => button.addEventListener('click', () => {
+    if (button.isConnected === false) return;
     const [pid, index] = button.dataset.mdedit.split('|'), model = _mdMyModels.filter(row => row.providerId === pid)[+index];
     if (!model) return;
     _mdDrafts.set(pid, { original: model.name, model: structuredClone(model), open: true });
@@ -54,6 +55,7 @@ function _mdBindModels(box) {
     box.querySelector('[data-padd]')?.focus();
   }));
   box.querySelectorAll('[data-mdcancel]').forEach(button => button.addEventListener('click', () => {
+    if (button.isConnected === false) return;
     _mdDrafts.delete(button.dataset.mdcancel); _mdRender();
   }));
   box.querySelectorAll('[data-mdeditor]').forEach(editor => {
@@ -96,17 +98,21 @@ function _mdBindModels(box) {
     });
   });
   box.querySelectorAll('[data-mdcheck]').forEach(button => button.addEventListener('click', () => {
+    if (button.isConnected === false) return;
     const [pid, name] = JSON.parse(button.closest('[data-md-model]').dataset.mdModel);
     _mdCheckModel(pid, name);
   }));
 }
 function _mdApplyModel(editor) {
+  if (editor.isConnected === false) return;
   const pid = editor.dataset.mdeditor, draft = _mdDrafts.get(pid), original = draft?.original;
   const old = _mdMyModels.find(row => row.providerId === pid && row.name === original);
+  // A removed edit target must not become an implicit new model.
+  if (!_mdProvider(pid) || (original && !old)) return;
   const value = selector => editor.querySelector(selector)?.value.trim() || '';
   const name = value('[data-padd]'), modality = _mdType(value('[data-paddtype]'));
   if (!name) return;
-  if (_mdMyModels.some(row => row !== old && row.providerId === pid && row.name === name) || (_mdProvider(pid)?.modelDefs || []).some(row => row.name === name)) {
+  if (_mdMyModels.some(row => row !== old && row.providerId === pid && row.name === name) || _mdCatalogModels(_mdProvider(pid)).some(row => row.name === name)) {
     petSay('这个模型已经在清单里了'); return;
   }
   try {

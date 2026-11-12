@@ -19,6 +19,74 @@ test('device and account history controls retain all four locale translations', 
     assert.deepEqual(keys.map(key => c.api.t('workspace.history.' + key)), values);
   }
 });
+test('company visibility copy distinguishes related people in all supported locales', () => {
+  const c = client();
+  const phrases = ['同公司可见', '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。',
+    '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。', '仓库成员可见',
+    '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。'];
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    const translated = phrases.map(text => c.api.translateText(text));
+    assert.notEqual(translated[1],translated[2]);
+    for (const [index,text] of translated.entries()) {
+      if (locale === 'zh-CN') assert.equal(text,phrases[index]);
+      else assert.notEqual(text,phrases[index]);
+    }
+  }
+});
+test('personal action scope guidance follows every supported locale', () => {
+  const c = client();
+  const phrases = ['“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。',
+    '查看与我相关', '执行已安排，可在“与我相关”查看进展', '已提交验收，等待验收人处理'];
+  for (const locale of ['en-US', 'ja-JP', 'ko-KR', 'zh-CN']) {
+    c.api.setLocale(locale);
+    for (const phrase of phrases) {
+      const translated = c.api.translateText(phrase);
+      if (locale === 'zh-CN') assert.equal(translated, phrase);
+      else assert.notEqual(translated, phrase, locale + ': ' + phrase);
+    }
+  }
+});
+
+test('scope and approval tooltips explain visibility in all four locales', () => {
+  const c = client();
+  const phrases = ['全部可见','我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。',
+    '当前账号有权查看的全部需求，不限于与我相关的需求。','查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。',
+    '查看已归档或已取消的需求；它们不再显示在当前需求池中。','返回未归档且未取消的当前需求。'];
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    for (const phrase of phrases) {
+      const translated = c.api.translateText(phrase);
+      if (locale === 'zh-CN') assert.equal(translated,phrase);
+      else assert.notEqual(translated,phrase,locale+': '+phrase);
+    }
+  }
+});
+
+test('collection inbox guidance names the same clarification flag in every locale', () => {
+  const c = client(),phrase = '待整理的需求；“待补充”表示仍需完善背景或完成标准';
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    const translated = c.api.translateText(phrase);
+    assert.ok(translated.includes(c.api.translateText('待补充')),locale);
+    if (locale === 'zh-CN') assert.equal(translated,phrase);
+    else assert.notEqual(translated,phrase,locale);
+  }
+});
+
+test('business project association and conflict recovery copy follow all four locales',()=>{
+  const c=client(),phrases=['关联项目','不关联项目','当前关联项目','当前关联项目（不可用）',
+    '项目由已关联仓库确定，本次不迁移仓库','项目列表暂时无法加载，当前关联已保留。','项目列表响应不完整，请重试',
+    '已加载最新需求，未保存的修改已保留。请核对后再保存。','需求已开始执行，未保存内容已保留。'];
+  for(const locale of ['zh-CN','en-US','ja-JP','ko-KR']){
+    c.api.setLocale(locale);
+    for(const phrase of phrases){
+      const translated=c.api.translateText(phrase);
+      if(locale==='zh-CN')assert.equal(translated,phrase);else assert.notEqual(translated,phrase,locale+': '+phrase);
+    }
+  }
+});
+
 test('renderer catalog packages preserve frozen snapshots and match canonical package order', () => {
   const context = vm.createContext({}), expected = {};
   const directory = path.join(__dirname, '../core/locales');
@@ -391,6 +459,20 @@ test('server message descriptors switch locale without translating interpolated 
     api.setLocale(locale);
     assert.equal(api.t('notification.task_assignment', 'legacy fallback', params), expected[locale]);
     assert.notEqual(api.t('agent.auth.required', 'untranslated'), 'untranslated');
+  }
+});
+
+test('publication notices translate in every shipped locale while retaining exact plugin names and versions', () => {
+  const { api } = client(), params = { name: '保存 {version}', version: '2.0.0-beta' };
+  for (const locale of ['en-US', 'ja-JP', 'ko-KR', 'zh-CN']) {
+    api.setLocale(locale);
+    for (const key of ['notification.plugin_unpublished', 'notification.plugin_version_revoked']) {
+      const text = api.t(key, 'missing', params);
+      assert.notEqual(text, 'missing');
+      assert.ok(text.includes(params.name), locale + ' preserves business text');
+      if (key.endsWith('revoked')) assert.ok(text.includes(params.version));
+    }
+    if (locale !== 'zh-CN') assert.notEqual(api.translateText('发布状态更新'), '发布状态更新');
   }
 });
 

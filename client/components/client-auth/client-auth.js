@@ -231,6 +231,43 @@
 
   function createGate() {
     if (gate) return gate;
+    try { return mountGate(); }
+    catch (error) {
+      // Authentication hides the workspace before mounting. A partially built
+      // gate must be replaced with visible recovery, never leave a blank page
+      // or reveal account data by removing the authentication boundary.
+      console.error('[auth] Login surface initialization failed:', error);
+      try { emailView?.dispose?.(); } catch (_) {}
+      emailView = null;
+      form = accountInput = passwordInput = passwordEye = displayInput = null;
+      submitButton = retryButton = recoveryNode = connectionDetails = hubInput = hubButton = null;
+      if (gate) gate.remove();
+      gate = document.createElement('div');
+      gate.id = 'soduWorkClientAuthGate';
+      gate.className = 'soduwork-auth-gate';
+      gate.setAttribute('role', 'dialog');
+      gate.setAttribute('aria-modal', 'true');
+      gate.setAttribute('aria-labelledby', 'soduWorkAuthTitle');
+      const element = (tag, className, text) => Object.assign(document.createElement(tag), {
+        className: className || '', textContent: text || '',
+      });
+      const card = element('main', 'soduwork-auth-card');
+      const title = element('h1', '', 'SoduWork'); title.id = 'soduWorkAuthTitle';
+      statusNode = element('div', 'soduwork-auth-status');
+      statusNode.setAttribute('role', 'status'); statusNode.setAttribute('aria-live', 'polite');
+      const reload = element('button', 'soduwork-auth-submit'); reload.type = 'button';
+      reload.setAttribute('data-auth-reload', ''); reload.appendChild(element('span', '', '重新加载'));
+      reload.addEventListener('click', function () { global.location.reload(); });
+      const footer = element('footer'), connection = element('span', 'soduwork-auth-hub', '连接 ');
+      connection.appendChild(element('b', '', hubLabel())); footer.appendChild(connection);
+      card.append(title, element('p', '', '登录界面未能加载，请重新打开客户端。'), statusNode, reload, footer);
+      gate.appendChild(card);
+      document.body.appendChild(gate);
+      return gate;
+    }
+  }
+
+  function mountGate() {
     gate = document.createElement('div');
     gate.id = 'soduWorkClientAuthGate';
     gate.className = 'soduwork-auth-gate';

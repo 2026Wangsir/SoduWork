@@ -28,7 +28,7 @@ async function fixture(t, count = 123) {
       title: 'Account-only metadata', accountProjection: true, at: 100000 + i })) };
   } });
   const file = path.join(root, 'history.sqlite');
-  let store = createWorker(file), shared = create({ app, session: bridge, store });
+  let store = createWorker(file), shared = create({ app, session: bridge, store, identityOf: () => require('./helpers/platform-session-fixture.cjs').identity(account === 'a' ? 'one' : 'two') });
   bridge.setReplicaHistory(shared);
   for (let start = 0; start < count; start += 200) await shared.register(Array.from({ length: Math.min(200, count - start) }, (_, i) => ({
     id: 'local-' + String(start + i).padStart(5, '0'), historyAliasIds: ['native-' + (start + i)],
@@ -42,7 +42,7 @@ async function fixture(t, count = 123) {
     switch(value) { account = value; },
     async restart() {
       await shared.close();
-      store = createWorker(file); shared = create({ app, session: bridge, store }); bridge.setReplicaHistory(shared);
+      store = createWorker(file); shared = create({ app, session: bridge, store, identityOf: () => require('./helpers/platform-session-fixture.cjs').identity(account === 'a' ? 'one' : 'two') }); bridge.setReplicaHistory(shared);
     } };
 }
 

@@ -343,10 +343,12 @@ def _m_api(m) -> dict:
 
 
 def _personal_provider_rows(client) -> list[dict]:
-    """Return this client's personal model services and organization endpoint overrides."""
+    """Return managed personal overrides while excluding legacy client-local services."""
     cfg = dict(getattr(client, "config", None) or {}) if client is not None else {}
     rows = cfg.get("modelProviders") or []
-    return [dict(x) for x in rows if isinstance(x, dict)]
+    return [dict(x) for x in rows
+            if isinstance(x, dict)
+            and x.get("localOnly") is not True]
 
 
 def _clear_provider_cache(session, _flush_context):
@@ -630,9 +632,13 @@ async def resolve(session: AsyncSession, client, model_name: str = "",
         "contextWindow": m.get("ctxWindow"), "modelName": m.get("name"),
         "providerId": m.get("providerId"),
     })
+    from . import model_quota
     return {"base": p["baseUrl"], "key": key, "model": m["name"],
             "user": str(getattr(client, "user_ref", None) or getattr(client, "id", "") or "internal"),
             "quotaUserId": str(getattr(client, "user_ref", None) or ""),
+            "quotaClientId": str(getattr(client, "id", None) or ""),
+            "quotaAuthVersion": int(getattr(client, "auth_version", 1) or 1),
+            "fundingScope": model_quota.scope(p, key_from), "quotaScope": "platform",
             "provider": p["id"], "kind": p["kind"], "keyFrom": key_from,
             "contextWindow": resolved_window["contextWindow"],
             "contextWindowKnown": resolved_window["contextWindowKnown"],

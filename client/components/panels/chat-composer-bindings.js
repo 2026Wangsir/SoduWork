@@ -95,6 +95,14 @@
     };
   }
   function create(ctx) {
+  let skillLoading = null, skillLoadingPicker = null, skillRefreshQueued = false;
+  const refreshSkills = () => { if (ctx._skillPicker) void _loadChatSkills(true); };
+  global.addEventListener?.('soduwork:skills-changed', refreshSkills);
+  global.addEventListener?.('soduwork-data-scope-changed', () => {
+    ctx._skillLoadSeq++;
+    ctx._skillPicker?.setItems([]);
+    refreshSkills();
+  });
   function _refreshDisclaimer(root) {
     const node = root?.querySelector?.('.ai-disclaimer [data-i18n]');
     if (!node) return;
@@ -212,16 +220,24 @@ function _openPluginBuilder(seed, context) {
     return global.PluginBuilderEntry.open(seed, context);
   }
 
-async function _loadChatSkills(force) {
+function _loadChatSkills(force) {
     const picker = ctx._skillPicker;
     const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
     if (!picker) return;
+    // A changed catalog invalidates the active response, but only one trailing
+    // request is needed even when several install or preference events arrive.
+    if (force === true) ctx._skillLoadSeq++;
+    if (skillLoading) {
+      if (force === true || picker !== skillLoadingPicker) skillRefreshQueued = true;
+      return skillLoading;
+    }
     if (!api || typeof api.capabilities !== 'function') {
       picker.setError('\u5f53\u524d\u5ba2\u6237\u7aef\u6682\u4e0d\u652f\u6301\u56e2\u961f Skill');
       return;
     }
     const seq = ++ctx._skillLoadSeq;
     picker.setLoading(true, '\u6b63\u5728\u52a0\u8f7d\u56e2\u961f Skill\u2026');
+    const task = (async () => {
     let timer;
     try {
       const timeout = new Promise((resolve, reject) => {
@@ -253,6 +269,15 @@ async function _loadChatSkills(force) {
     } finally {
       if (timer) clearTimeout(timer);
     }
+    })();
+    skillLoading = task;
+    skillLoadingPicker = picker;
+    task.finally(() => {
+      if (skillLoading === task) { skillLoading = null; skillLoadingPicker = null; }
+      const again = skillRefreshQueued; skillRefreshQueued = false;
+      if (again && ctx._skillPicker) void _loadChatSkills(true);
+    });
+    return task;
   }
 
 function _canStop() {
@@ -312,6 +337,7 @@ function _bind(el) {
     if (global.ComposeSkills) {
       ctx._skillPicker = ComposeSkills.create({
         host: el.querySelector('.nbox'), input,
+        onRefresh: () => _loadChatSkills(true),
         onChange: names => {
           el.dataset.skillCount = String(names.length);
           ChatTools.paintSendButton(el, ctx._runtimeBusy(), ctx._messageAttachments, ctx._stopState, _canStop(), ctx._sendState);

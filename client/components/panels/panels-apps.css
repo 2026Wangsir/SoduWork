@@ -210,9 +210,9 @@ html[data-desk-panel] .appsx-search input:focus-visible { outline: none; box-sha
 }
 .appsx-field input:focus, .appsx-field textarea:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .appsx-modal-note { margin: 0; font-size: 12px; line-height: 1.55; color: var(--ink-3); }
-.appsx-modal-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; padding: 10px 18px 16px; }
+.appsx-modal-foot { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 18px 16px; }
 .appsx-modal-foot .push { flex: 1; }
-.appsx-publish { flex: none; margin-right: 8px; padding: 7px 12px; border: 1px solid var(--line-2); border-radius: var(--r-full); background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
+.appsx-publish { flex: none; padding: 7px 12px; border: 1px solid var(--line-2); border-radius: var(--r-full); background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
 .appsx-publish:hover { background: var(--bg-2); }
 .appsx-publish:disabled { opacity: .6; cursor: default; }
 .appsx-remove { border: 0; padding: 7px 0; background: transparent; color: var(--s-critical, #c64151); font: inherit; font-size: 12.5px; cursor: pointer; }

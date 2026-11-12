@@ -2,6 +2,8 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../components/client-auth/email-auth.js'), 'utf8');
+const uiContext = { window: {} };
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/client-auth/account-ui.js'), 'utf8'), uiContext);
 
 function element(dataset = {}) {
   const listeners = new Map(), classes = new Set();
@@ -43,8 +45,7 @@ function view() {
   const form = gate.querySelector('form'), submit = gate.querySelector('[type="submit"]');
   form.querySelectorAll = () => [...nodes.values()]; submit.querySelector = () => gate.querySelector('submit-label');
   const localeListeners = new Map();
-  const calls = [], window = { AccountUI: { email: value => /^.+@.+\..+$/.test(value), code: value => /^\d{6}$/.test(value),
-    check: value => value, error: error => error.message, bindPassword() {}, legal() {} } };
+  const calls = [], window = { AccountUI: { ...uiContext.window.AccountUI, bindPassword() {}, legal() {} } };
   window.addEventListener = (type, listener) => {
     if (!localeListeners.has(type)) localeListeners.set(type, new Set());
     localeListeners.get(type).add(listener);
@@ -86,6 +87,33 @@ test('login labels stay in one locale and repaint after a language change', () =
   assert.equal(f.gate.querySelector('.ac-account-label').textContent, '账号');
   assert.equal(f.gate.querySelector('.ac-password-label').textContent, '密码');
   assert.equal(f.gate.querySelector('[data-password-toggle]').textContent, '显示');
+});
+
+test('registration and recovery explain password limits before and after invalid input', async () => {
+  const f = view();
+  f.mounted.setPolicy({ mailReady: true, passwordMinLength: 12 });
+  for (const mode of ['register', 'resetPassword']) {
+    f.mode(mode);
+    for (const locale of ['zh-CN', 'en-US', 'ja-JP', 'ko-KR']) {
+      f.setLocale(locale);
+      const hint = f.gate.querySelector('#acPasswordRequirements');
+      assert.equal(hint.hidden, false);
+      assert.match(hint.textContent, /12.*128/);
+      assert.doesNotMatch(hint.textContent, /\{min\}|\{max\}/);
+    }
+    f.mounted.accountInput.value = 'person@example.test';
+    f.api.clientAccountAction = async () => ({ ok: true, challengeId: 'test', expiresIn: 300, retryAfter: 0 });
+    await f.gate.querySelector('[data-send-code]').fire('click');
+    f.gate.querySelector('#acEmailCode').value = '123456';
+    f.mounted.passwordInput.value = 'short';
+    await f.mounted.form.fire('submit');
+    assert.equal(f.gate.querySelector('.soduwork-auth-status').textContent,
+      f.gate.querySelector('#acPasswordRequirements').textContent);
+    f.setLocale('en-US');
+    assert.equal(f.gate.querySelector('.soduwork-auth-status').textContent, 'Use 12 to 128 characters for your password.');
+  }
+  f.mode('password');
+  assert.equal(f.gate.querySelector('#acPasswordRequirements').hidden, true);
 });
 
 test('login starts with a generic account field while registration uses email verification', () => {
@@ -255,6 +283,111 @@ function deliveryView(statusReply, sentReply = {}) {
   return f;
 }
 
+test('invalid email never requests a code or changes to registration', async () => {
+  const f = deliveryView(null);
+  for (const value of ['', 'person', 'person@', 'person@example', 'person @example.test']) {
+    f.mounted.accountInput.value = value;
+    await f.send();
+    assert.match(f.status(), /请输入有效的邮箱地址/);
+    assert.equal(f.gate.querySelector('[data-auth-consent]').hidden, true);
+  }
+  assert.equal(f.calls.length, 0);
+  f.mounted.dispose();
+});
+
+test('unregistered email opens registration without sending mail or inheriting login proof', async () => {
+  const f = deliveryView(null);
+  f.mounted.accountInput.value = ' New.Person@example.test ';
+  f.gate.querySelector('#acEmailCode').value = '123456';
+  f.gate.querySelector('#soduWorkAuthPassword').value = 'Previous-password';
+  f.gate.querySelector('#acConsent').checked = true;
+  f.api.clientAccountAction = async (kind, payload) => {
+    f.calls.push({kind, payload});
+    return {ok: false, status: 404, code: 'ACCOUNT_NOT_REGISTERED', error: 'This email is not registered'};
+  };
+  await f.send();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].payload.purpose, 'login');
+  assert.equal(f.calls[0].payload.email, 'New.Person@example.test');
+  assert.equal(f.mounted.accountInput.value.trim(), 'New.Person@example.test');
+  assert.equal(f.gate.querySelector('[data-auth-consent]').hidden, false);
+  assert.equal(f.gate.querySelector('[data-auth-confirm]').hidden, false);
+  assert.equal(f.gate.querySelector('#acConsent').checked, false);
+  assert.equal(f.gate.querySelector('#acEmailCode').value, '');
+  assert.equal(f.gate.querySelector('#soduWorkAuthPassword').value, '');
+  assert.match(f.status(), /此邮箱尚未注册/);
+  assert.equal(f.gate.querySelector('[data-send-code]').disabled, false);
+  for (const [locale, expected] of [
+    ['en-US', 'This email is not registered. Create an account to continue.'],
+    ['ja-JP', 'このメールアドレスは未登録です。アカウントを作成してください。'],
+    ['ko-KR', '등록되지 않은 이메일입니다. 계정을 만들어 주세요.'],
+  ]) {
+    f.setLocale(locale);
+    assert.equal(f.status(), expected);
+  }
+  f.setLocale('zh-CN');
+  await f.advance(120000);
+  assert.equal(f.calls.length, 1, 'navigation must not automatically send a registration code');
+  await f.mounted.form.fire('submit');
+  assert.match(f.status(), /请先获取有效/);
+  f.api.clientAccountAction = async (kind, payload) => {
+    f.calls.push({kind, payload});
+    return {ok: true, challengeId: 'registration-proof', expiresIn: 300, retryAfter: 60};
+  };
+  await f.send();
+  assert.equal(f.calls[1].payload.purpose, 'register');
+  assert.equal(f.calls[1].payload.email, 'New.Person@example.test');
+  assert.equal(f.gate.querySelector('[data-send-code]').disabled, true);
+  f.mounted.dispose();
+});
+
+for (const reply of [
+  {ok: false, status: 422, code: 'EMAIL_INVALID', error: 'Invalid email'},
+  {ok: false, status: 429, code: 'AUTH_RATE_LIMITED', error: 'Try later'},
+  {ok: false, status: 503, code: 'MAIL_NOT_READY', error: 'Mail unavailable'},
+  {ok: false, status: 404, error: 'Unknown endpoint'},
+  {ok: false, status: 409, code: 'LEGACY_EMAIL_BINDING_REQUIRED', error: 'Use your password'},
+  {ok: false, status: 403, code: 'SELF_REGISTRATION_DISABLED', error: 'Registration disabled'},
+]) test('code request stays on login for ' + (reply.code || 'an untyped HTTP failure'), async () => {
+  const f = deliveryView(null);
+  f.api.clientAccountAction = async () => reply;
+  await f.send();
+  assert.equal(f.gate.querySelector('[data-auth-consent]').hidden, true);
+  assert.equal(f.status(), reply.error);
+  assert.equal(f.gate.querySelector('[data-send-code]').disabled, false);
+  f.mounted.dispose();
+});
+
+test('an unregistered result cannot bypass a disabled registration policy', async () => {
+  const f = deliveryView(null);
+  f.mounted.setPolicy({mailReady: true, allowSelfRegistration: false});
+  f.api.clientAccountAction = async () => ({ok: false, code: 'ACCOUNT_NOT_REGISTERED'});
+  await f.send();
+  assert.equal(f.gate.querySelector('[data-auth-consent]').hidden, true);
+  assert.match(f.status(), /自助注册已关闭/);
+  f.mounted.dispose();
+});
+
+for (const change of ['email', 'tab', 'invalidate', 'dispose', 'hidden', 'switchHub', 'switchDevice', 'switchUser']) {
+  test('late registration routing cannot replace the current form after ' + change, async () => {
+    let resolve;
+    const f = deliveryView(null);
+    f.api.clientAccountAction = () => new Promise(done => { resolve = done; });
+    const pending = f.send();
+    if (change === 'email') { f.mounted.accountInput.value = 'changed@example.test'; f.mounted.accountInput.fire('input'); }
+    else if (change === 'tab') f.mode('password');
+    else if (change === 'hidden') f.gate.hidden = true;
+    else if (['invalidate', 'dispose'].includes(change)) f.mounted[change]();
+    else f[change]();
+    const before = f.status();
+    resolve({ok: false, code: 'ACCOUNT_NOT_REGISTERED'});
+    await pending;
+    assert.equal(f.status(), before);
+    assert.equal(f.gate.querySelector('[data-auth-consent]').hidden, true);
+    f.mounted.dispose();
+  });
+}
+
 test('queued mail waits for delivery status and sent means SMTP sending, not inbox receipt', async () => {
   const f = deliveryView({ ok: true, challengeId: 'challenge-1', deliveryState: 'sent' });
   await f.send(); assert.match(f.status(), /请求已受理.*确认发送结果/); assert.equal(f.polls(), 0);
@@ -351,3 +484,31 @@ test('older policy response cannot overwrite a newer explicit recheck', async ()
   f.resolvers[0]({ mailReady: false }); await first;
   assert.equal(f.auth.snapshot().policy.mailReady, true);
 });
+
+for (const [locale, welcome, register, recover, script] of [
+  ['ja-JP', 'おかえりなさい', 'アカウントを作成', 'パスワードを再設定', /[\u3040-\u30ff]/],
+  ['ko-KR', '다시 오신 것을 환영합니다', '계정 만들기', '비밀번호 재설정', /[\uac00-\ud7af]/],
+]) {
+  test(locale + ' localizes login, registration, recovery and mail errors without changing input', () => {
+    const f = view();
+    f.mounted.setPolicy({ mailReady: true, allowSelfRegistration: true });
+    f.mounted.accountInput.value = 'person@example.test';
+    f.mounted.passwordInput.value = 'User-entered-value';
+    f.setLocale(locale);
+    assert.equal(f.gate.querySelector('h1').textContent, welcome);
+    assert.equal(f.mounted.accountInput.value, 'person@example.test');
+    assert.equal(f.mounted.passwordInput.value, 'User-entered-value');
+    for (const selector of ['.ac-brand span', '.ac-auth-intro', '[data-auth-mode="emailCode"]',
+      '[data-auth-mode="password"]', '[data-auth-mode="register"]', '[data-auth-mode="resetPassword"]', '.soduwork-auth-secure'])
+      assert.match(f.gate.querySelector(selector).textContent, script, selector);
+    assert.match(f.mounted.passwordInput.placeholder, script);
+    f.mode('register'); assert.equal(f.gate.querySelector('h1').textContent, register);
+    f.mode('resetPassword'); assert.equal(f.gate.querySelector('h1').textContent, recover);
+    f.mounted.setPolicy({ mailReady: false });
+    assert.match(f.gate.querySelector('[data-mail-message]').textContent, script);
+    f.mounted.setPolicyError();
+    assert.match(f.gate.querySelector('[data-mail-message]').textContent, script);
+    f.setLocale('en-US'); assert.equal(f.gate.querySelector('h1').textContent, 'Reset password');
+    f.setLocale(locale); assert.equal(f.gate.querySelector('h1').textContent, recover);
+  });
+}

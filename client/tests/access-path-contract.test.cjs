@@ -64,7 +64,12 @@ test('read fallback variants match Pi and cannot disguise external junctions as 
     fs.symlinkSync(outside, path.join(workspace, actual), 'junction');
     const input = path.join(raw, 'secret.txt');
     const native = await sdk.resolveReadPathAsync(input, workspace);
-    assert.equal(native, path.join(workspace, actual, 'secret.txt'));
+    const expected = path.join(workspace, actual, 'secret.txt');
+    // macOS may resolve canonically equivalent Unicode without taking the SDK
+    // fallback. Preserve the physical identity and byte checks on every OS.
+    assert.equal(native.normalize('NFC'), expected.normalize('NFC'));
+    assert.equal(fs.realpathSync(native), fs.realpathSync(expected));
+    assert.equal(fs.readFileSync(native, 'utf8'), 'private');
     for (const mode of ['standard', 'readonly']) {
       const op = policy.operation(policy.create(mode, workspace), 'read', { path: input });
       assert.equal(op.source, native);

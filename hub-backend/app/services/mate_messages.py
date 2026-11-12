@@ -18,6 +18,7 @@ from ..auth import sign_claims
 from ..config import get_settings
 from . import task_assignment
 from .agent_messages import descriptor as _message_descriptor
+from . import plugin_lifecycle_notifications
 
 log = logging.getLogger("uvicorn.error")
 
@@ -100,12 +101,16 @@ def public(row, sender=None, recipient=None):
             "notification.task_assignment", row.text,
             params={"sender": assignment[1], "title": assignment[2], "taskId": task_id},
         )
+    result.update(plugin_lifecycle_notifications.public_metadata(row))
     return result
 
 
 async def create(session: AsyncSession, sender, recipient, payload, text, attachments, *, task_id=""):
     client_id = str((payload or {}).get("messageId") or uuid.uuid4())[:64]
     conversation_id = str((payload or {}).get("conversationId") or "")[:180]
+    if (conversation_id.startswith(plugin_lifecycle_notifications.PREFIX) or
+            client_id.startswith(plugin_lifecycle_notifications.PREFIX)):
+        raise HTTPException(400, "插件状态通知只能由服务器创建")
     if task_id:
         conversation_id = "task:" + str(task_id)
     elif conversation_id.startswith("task:") or client_id.startswith(("task:", "handoff:")):
@@ -128,7 +133,7 @@ async def create(session: AsyncSession, sender, recipient, payload, text, attach
     return row
 
 
-async def _list_revision(session, user_id, side, column):
+async def _list_revision(session, user_id, side, column, visibility=None, scope=()):
     # Message bodies are immutable; delivery/read timestamps only transition
     # from NULL to a value. Counts therefore detect even an update to an old
     # row (MAX(updated_at) alone would miss same-timestamp/late-commit writes).
@@ -138,9 +143,9 @@ async def _list_revision(session, user_id, side, column):
         func.max(models.MateMessage.created_at), func.max(models.MateMessage.updated_at),
         func.count(models.MateMessage.delivered_at), func.count(models.MateMessage.read_at),
         func.max(models.MateMessage.delivered_at), func.max(models.MateMessage.read_at),
-    ).where(column == user_id))).one()
+    ).where(column == user_id, *([visibility] if visibility is not None else [])))).one()
     # Periodically refresh derived names and 24-hour website preview tickets.
-    payload = ["v1", user_id, side, int(time.time() // 900), *stats]
+    payload = ["v2", user_id, side, scope, int(time.time() // 900), *stats]
     return hashlib.sha256(json.dumps(payload, default=str, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -154,14 +159,16 @@ async def list_for(session: AsyncSession, client, folder="received", limit=100, 
     side = str(folder or "received").lower()
     column = models.MateMessage.sender_id if side == "sent" else models.MateMessage.recipient_id
     side = "sent" if side == "sent" else "received"
-    revision = await _list_revision(session, me.id, side, column) if not before else ""
+    visibility, scope = await plugin_lifecycle_notifications.inbox_visibility(session, me)
+    conditions = [visibility] if visibility is not None else []
+    revision = await _list_revision(session, me.id, side, column, visibility, scope) if not before else ""
     if revision and if_revision == revision:
         return {"ok": True, "folder": side, "items": [], "nextCursor": "",
                 "notModified": True, "revision": revision}
-    query = select(models.MateMessage).where(column == me.id)
+    query = select(models.MateMessage).where(column == me.id, *conditions)
     if before:
         cursor = (await session.execute(select(models.MateMessage).where(
-            models.MateMessage.id == str(before), column == me.id))).scalar_one_or_none()
+            models.MateMessage.id == str(before), column == me.id, *conditions))).scalar_one_or_none()
         if cursor is None:
             raise HTTPException(400, "通知分页位置已失效，请刷新重试")
         query = query.where(or_(models.MateMessage.created_at < cursor.created_at,
@@ -174,10 +181,11 @@ async def list_for(session: AsyncSession, client, folder="received", limit=100, 
     # Only the first and final pages need a snapshot check. The client must
     # not cache a revision if a commit occurs anywhere during pagination.
     if before and not more:
-        revision = await _list_revision(session, me.id, side, column)
+        revision = await _list_revision(session, me.id, side, column, visibility, scope)
     unread = await session.scalar(select(func.count()).select_from(models.MateMessage).where(
         models.MateMessage.recipient_id == me.id,
         models.MateMessage.read_at.is_(None),
+        *conditions,
     ))
     ids = {x.sender_id for x in rows} | {x.recipient_id for x in rows}
     users = {}
@@ -203,21 +211,26 @@ async def publish_state(session, row, event_type, *, recipients=True):
     from .client_domain_events import account_changed
     for uid in {row.sender_id, row.recipient_id}:
         await account_changed(session, uid, "team-messages")
-    sender = await session.get(models.User, row.sender_id)
-    recipient = await session.get(models.User, row.recipient_id)
+    sender = await session.get(models.User, row.sender_id, populate_existing=True)
+    recipient = await session.get(models.User, row.recipient_id, populate_existing=True)
     value = public(row, sender, recipient)
     event = {**value, "type": event_type, "messageId": row.id,
              "serverMessageId": row.id, "clientMessageId": row.client_message_id}
     users = {row.sender_id, row.recipient_id} if recipients else {row.sender_id}
     for uid in users:
+        user = sender if uid == row.sender_id else recipient
+        if not await plugin_lifecycle_notifications.visible_to(session, user, row):
+            continue
         for box in await task_assignment.active_devices(session, uid):
             await publish_event(box.id, event, user_id=uid)
 
 
 async def _acknowledge(session: AsyncSession, client, message_id, *, read=False):
-    me = await session.get(models.User, client.user_ref) if client.user_ref else None
+    me = await session.get(models.User, client.user_ref, populate_existing=True) if client.user_ref else None
     row = await session.get(models.MateMessage, str(message_id or ""), with_for_update=True, populate_existing=True)
     if me is None or not me.is_active or row is None or row.recipient_id != me.id:
+        raise HTTPException(404, "Message not found")
+    if not await plugin_lifecycle_notifications.visible_to(session, me, row):
         raise HTTPException(404, "Message not found")
     now = datetime.now(timezone.utc)
     condition = or_(models.MateMessage.read_at.is_(None), models.MateMessage.delivered_at.is_(None)) if read else models.MateMessage.delivered_at.is_(None)

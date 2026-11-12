@@ -41,7 +41,7 @@
 .cap-mcp-tool-chips{display:flex;flex-wrap:wrap;gap:8px;padding-top:12px}
 .cap-mcp-tool-chips code{font:14.5px var(--font-mono);padding:5px 8px;border:1px solid var(--line);border-radius:6px}
 .cap-mcp-modal .btn-mini{font:14.5px/1.4 var(--font-ui);min-height:34px;padding:7px 13px}
-#capModalLayer .cap-mcp-modal .btn-mini.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#capModalLayer .cap-mcp-modal .btn-mini.primary:not(:disabled){background:var(--accent);border-color:var(--accent);color:#fff}
 .cap-mcp-manage-bar .btn-mini{font-size:max(var(--font-min-readable, 14.5px), 13px);min-height:34px}
 .cap-mcp-modal .cap-confirm{font-size:max(var(--font-min-readable, 14.5px), 13px)}
 

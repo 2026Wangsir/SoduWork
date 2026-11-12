@@ -2,6 +2,8 @@
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 from sqlalchemy import event
 from test_model_runtime import IsolatedDatabase
 from app.models import Client, ModelDef, ModelProvider
@@ -132,3 +134,104 @@ class ClientDomainEventsTests(IsolatedDatabase):
             self.assertEqual([call.args for call in wake.await_args_list], [("one", "alice", "config")])
             async with self.sessions() as session:
                 self.assertEqual((await session.get(Client, "one")).config["theme"], "dark")
+
+    async def test_admin_client_detail_hides_local_model_configuration(self):
+        async with self.sessions() as session:
+            client = await session.get(Client, "one")
+            client.config = {
+                "theme": "dark",
+                "modelProviders": [{"id": "custom-local", "localOnly": True,
+                                     "baseUrl": "http://127.0.0.1:8686/v1"}],
+            }
+            await session.commit()
+            result = admin._admin_client_config(client.config)
+        self.assertEqual(result, {"theme": "dark"})
+
+    async def test_admin_cannot_push_local_model_configuration(self):
+        with patch.object(admin, "_assert_client_in_scope", new_callable=AsyncMock):
+            async with self.sessions() as session:
+                with self.assertRaises(HTTPException) as raised:
+                    await admin.client_push(
+                        "one",
+                        {"type": "config.patch", "patch": {
+                            "modelProviders": [{"id": "custom-local", "localOnly": True}],
+                        }},
+                        SimpleNamespace(id="admin"), session,
+                    )
+                self.assertEqual(raised.exception.status_code, 403)
+                self.assertIn("本地模型配置", str(raised.exception.detail))
+                client = await session.get(Client, "one")
+                self.assertNotIn("modelProviders", client.config or {})
+
+    async def test_personal_model_read_purges_legacy_local_state(self):
+        async with self.sessions() as session:
+            client = await session.get(Client, "one")
+            client.config = {
+                "theme": "dark",
+                "modelProviders": [{"id": "custom-local", "localOnly": True,
+                                     "baseUrl": "http://127.0.0.1:8686/v1"}],
+            }
+            client.models = [{"providerId": "custom-local", "name": "llama3", "localOnly": True}]
+            client.model_keys = {"custom-local": "local-secret", "provider": "managed-secret"}
+            await session.commit()
+            result = await personal_models.my_models(client, session)
+            self.assertEqual(result["myModels"], [])
+            persisted = await session.get(Client, "one")
+            self.assertNotIn("modelProviders", persisted.config or {})
+            self.assertEqual(persisted.models, [])
+            self.assertEqual(persisted.model_keys, {"provider": "managed-secret"})
+
+            orphan = await session.get(Client, "two")
+            orphan.models = [{"providerId": "custom-orphan", "name": "llama3", "localOnly": True}]
+            orphan.model_keys = {"custom-orphan": "orphan-secret"}
+            await session.commit()
+            await personal_models.my_models(orphan, session)
+            persisted_orphan = await session.get(Client, "two")
+            self.assertEqual(persisted_orphan.models, [])
+            self.assertEqual(persisted_orphan.model_keys, {})
+
+    async def test_personal_model_write_rejects_local_provider_payload(self):
+        async with self.sessions() as session:
+            client = await session.get(Client, "one")
+            revision = model_config_guard.revision(client)
+            with self.assertRaises(HTTPException) as raised:
+                await personal_models.put_my_models(
+                    {"expectedRevision": revision, "providers": [{
+                        "id": "custom-local", "name": "Local", "localOnly": True,
+                        "baseUrl": "http://127.0.0.1:8686/v1",
+                    }]},
+                    client,
+                    session,
+                )
+            self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_personal_model_write_rejects_local_only_rows_without_reserved_ids(self):
+        async with self.sessions() as session:
+            client = await session.get(Client, "one")
+            revision = model_config_guard.revision(client)
+            with self.assertRaises(HTTPException) as raised:
+                await personal_models.put_my_models(
+                    {"expectedRevision": revision, "providers": [{
+                        "id": "desktop-service", "name": "Local", "localOnly": True,
+                        "baseUrl": "http://127.0.0.1:8686/v1",
+                    }]},
+                    client,
+                    session,
+                )
+            self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_personal_model_read_purges_local_only_rows_without_reserved_ids(self):
+        async with self.sessions() as session:
+            client = await session.get(Client, "one")
+            client.config = {"modelProviders": [{
+                "id": "desktop-service", "localOnly": True,
+                "baseUrl": "http://127.0.0.1:8686/v1",
+            }]}
+            client.models = [{"providerId": "desktop-service", "name": "llama3", "localOnly": True}]
+            client.model_keys = {"desktop-service": "local-secret", "provider": "managed-secret"}
+            await session.commit()
+            await personal_models.my_models(client, session)
+            persisted = await session.get(Client, "one")
+            self.assertNotIn("modelProviders", persisted.config or {})
+            self.assertEqual(persisted.models, [])
+            self.assertEqual(persisted.model_keys, {"provider": "managed-secret"})

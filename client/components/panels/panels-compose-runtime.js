@@ -198,11 +198,8 @@
         item.className = 'wc-runtime-missing-icon'; item.dataset.runtimeMissing = row.id;
         item.title = _rtText(row.displayName);
         item.setAttribute('aria-hidden', 'true');
-        const src = global.AgentBrand?.ICONS?.[row.id];
-        if (src) {
-          const image = document.createElement('img'); image.src = src; image.alt = ''; image.draggable = false;
-          image.className = 'agent-brand'; item.append(image);
-        } else item.textContent = '•';
+        const brand = global.AgentBrand?.element?.(row.id, { document });
+        if (brand) item.append(brand); else item.textContent = '•';
         return item;
       }));
       missingWrap.hidden = rows.length === 0; missingHost.hidden = rows.length === 0; missingMore.hidden = rows.length === 0;

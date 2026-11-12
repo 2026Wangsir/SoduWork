@@ -439,17 +439,32 @@
     }
   }
 
-  if (window.soduWorkAPI && window.soduWorkAPI.onDeviceAuthQuotaExceeded) {
-    window.soduWorkAPI.onDeviceAuthQuotaExceeded(function (detail) {
-      if (detail?.hub && detail.hub !== base()) return;
-      if (detail?.clientId && detail.clientId !== device()) return;
-      requireClientAuth('TOKEN_QUOTA_EXCEEDED', {
-        code: 'TOKEN_QUOTA_EXCEEDED',
-        message: '\u672c\u6708 AI Token \u989d\u5ea6\u5df2\u7528\u5b8c\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u8c03\u6574\u989d\u5ea6\u3002',
-        quota: detail && detail.quota || null,
-      });
-    });
+  var _quotaRefreshFlight = null;
+  function refreshNativeQuota(detail) {
+    if (detail?.hub && detail.hub !== base() || detail?.clientId && detail.clientId !== device()) return;
+    if (!_clientUser || !hasValidDeviceSession()) return;
+    // Usage acknowledgements and admission failures may arrive after an admin
+    // restores quota. They are refresh hints, never newer account truth.
+    var epoch = _registrationEpoch, hub = base();
+    if (_quotaRefreshFlight?.epoch === epoch && _quotaRefreshFlight.hub === hub) {
+      _quotaRefreshFlight.pending = true;
+      return _quotaRefreshFlight.promise;
+    }
+    var flight = { epoch: epoch, hub: hub, pending: false, promise: null };
+    _quotaRefreshFlight = flight;
+    flight.promise = (async function () {
+      do {
+        flight.pending = false;
+        await SoduWorkAPI.clientAuthMe();
+      } while (flight.pending && epoch === _registrationEpoch && hub === base());
+    })().catch(function () { /* Keep the last confirmed quota when offline. */ })
+      .finally(function () { if (_quotaRefreshFlight === flight) _quotaRefreshFlight = null; });
+    return flight.promise;
   }
+  window.soduWorkAPI?.onDeviceAuthQuotaExceeded?.(refreshNativeQuota);
+  window.soduWorkAPI?.onDeviceAuthQuotaChanged?.(function (detail) {
+    if (_clientQuota?.exceeded) return refreshNativeQuota(detail);
+  });
 
   async function syncRunnerConfig(workRootNow, registration) {
     try {
@@ -716,14 +731,25 @@
   function mark(ok) {
     if (_online !== ok) { _online = ok; try { console.log('[hub]', ok ? '已连后端' : '后台不可达'); } catch (e) {} }
   }
-  function pluginsChanged(pluginId) {
+  function pluginsChanged(pluginId, removed = false) {
     try {
       if (typeof global.dispatchEvent !== 'function' ||
           typeof global.CustomEvent !== 'function') return;
       global.dispatchEvent(new global.CustomEvent('soduwork:plugins-changed', {
-        detail: { pluginId: String(pluginId || '') }
+        detail: { pluginId: String(pluginId || ''), removed: removed === true }
       }));
     } catch (e) { /* catalog refresh is best-effort; the mutation already succeeded */ }
+  }
+  var _skillScopeEpoch = 0;
+  global.addEventListener?.('soduwork-data-scope-changed', function () { _skillScopeEpoch++; });
+  function skillMutationScope() { return { key: taskStorageKey('ops'), epoch: _skillScopeEpoch }; }
+  function skillsChanged(scope) {
+    // A completed mutation for an old account must not invalidate the current
+    // account's picker or cause a stale catalog to be published into it.
+    if (scope.key !== taskStorageKey('ops') || scope.epoch !== _skillScopeEpoch) return;
+    try {
+      global.dispatchEvent?.(new global.CustomEvent('soduwork:skills-changed'));
+    } catch (_) { /* The mutation succeeded even if a renderer is closing. */ }
   }
   function approvalsInvalidated() {
     try {
@@ -806,6 +832,24 @@
     try { if (global.soduWorkAPI?.clientDomainInvalidate) await global.soduWorkAPI.clientDomainInvalidate(domain, scope); }
     catch (_) { /* Cache maintenance cannot turn a committed write into a failure. */ }
     if (!sameDomainScope(scope)) throw staleTaskScope();
+  }
+  function isLocalModelChoice(value) {
+    var name = String(value || '').trim();
+    return name.startsWith('local:') || /^image::[^:]+::local:/.test(name);
+  }
+  function requireRemoteModel(value) {
+    if (isLocalModelChoice(value)) throw new Error('本地模型仅支持本机对话，请为后台任务选择托管模型');
+  }
+  async function localModelCatalog() {
+    var bridge = global.soduWorkAPI?.localModels;
+    if (!bridge || typeof bridge.get !== 'function') return null;
+    // A failed secure-store read is not an empty catalog. Keep ownership
+    // unknown rather than forwarding desktop credentials or probes to Hub.
+    var catalog = await bridge.get();
+    if (!catalog || catalog.ok === false || !Array.isArray(catalog.providers)) {
+      throw new Error('本地模型配置无法读取，请检查系统安全存储后重试');
+    }
+    return catalog;
   }
   global.soduWorkAPI?.onClientDomainChanged?.(value => {
     if (!sameDomainScope(value?.scope)) return;
@@ -997,9 +1041,10 @@
 
     /* Projects available when assigning tasks. */
     async getProjects() {
-      var res = await fetch(apiUrl('/projects'), { headers: authHeaders(), signal: _abortSignal(DEFAULT_TIMEOUT) });
-      if (!res.ok) { markFromError(new Error('HTTP ' + res.status)); return []; }
-      var txt = await res.text(); mark(true); return parseJSON(txt) || [];
+      var rows = await jfetch('/projects');
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row.id !== 'string' || !row.id.trim() ||
+          typeof row.name !== 'string')) throw new Error('项目列表响应不完整，请重试');
+      return rows;
     },
 
     /* Personal and team daily/weekly reports, with client reading and confirmation. */
@@ -1035,6 +1080,7 @@
 
     /* Derive task fields from instructions and materials. Preserve input for manual editing when the API rejects or fails. */
     async parseTaskText(text, model, attachments, options) {
+      if (isLocalModelChoice(model)) return { _parseError: '本地模型不能用于后台解析；原文已保留，请选择托管模型或手动填写' };
       var signal;
       var timeoutMs = options?.kind === 'automation' ? 90000 : 130000;
       try {
@@ -1043,6 +1089,7 @@
           { method: 'POST', headers: { ...authHeaders(true), Accept: 'application/json; keepalive=1' },
             /* Use the model selected for this request, or the personal default when empty. */
             body: JSON.stringify({ text: text || '', model: model || '', keepalive: true,
+              locale: window.SoduWorkI18n?.getLocale?.() || 'zh-CN',
               attachments: Array.isArray(attachments) ? attachments : [],
               ...(options && (!options.kind || options.kind === 'requirement' || options.kind === 'automation') &&
                 Object.prototype.hasOwnProperty.call(options, 'instruction') ? { instruction: options.instruction } : {}),
@@ -1199,30 +1246,158 @@
      */
     /* Personal model configuration returns availability and secret metadata, never plaintext keys. */
     async myModels() {
-      var r = await domainRead('models', '/my-models');
-      return r || { providers: [], usable: [], myModels: [] };
+      var scope = domainScope();
+      var localCatalog = await localModelCatalog();
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      localCatalog = localCatalog || { providers: [], usable: [], myModels: [], mediaUsable: {} };
+      var r;
+      try { r = await domainRead('models', '/my-models'); }
+      catch (error) {
+        if (error?.code === 'STALE_TASK_SCOPE') throw error;
+        if (!(localCatalog.providers || []).length) throw error;
+        r = { providers: [], usable: [], myModels: [], mediaUsable: {}, defaultModels: {} };
+      }
+      r = r || { providers: [], usable: [], myModels: [], mediaUsable: {} };
+      var localProviderIds = new Set((localCatalog.providers || []).map(row => String(row?.id || '')));
+      var managedProviders = (r.providers || []).filter(row => !localProviderIds.has(String(row?.id || '')));
+      var managedModels = row => (row || []).filter(item => !localProviderIds.has(String(item?.providerId || '')));
+      return {
+        ...r,
+        providers: (localCatalog.providers || []).concat(managedProviders),
+        usable: (localCatalog.usable || []).concat(managedModels(r.usable)),
+        myModels: (localCatalog.myModels || []).concat(managedModels(r.myModels)),
+        mediaUsable: {
+          image: (localCatalog.mediaUsable?.image || []).concat(managedModels(r.mediaUsable?.image)),
+          video: (localCatalog.mediaUsable?.video || []).concat(managedModels(r.mediaUsable?.video)),
+        },
+        localRevision: localCatalog.revision,
+      };
     },
     /*
      * Accept provider overrides, keys, and models. Omitted keys remain unchanged; null removes
      * the personal key and restores the company fallback.
      */
     async saveMyModels(body) {
+      body = body || {};
       var scope = domainScope();
-      var r = await jfetch('/my-models', { method: 'PUT', body: JSON.stringify(body || {}) });
+      var local = global.soduWorkAPI?.localModels;
+      var providers = Array.isArray(body.providers) ? body.providers : [];
+      var isLocalId = id => { id = String(id || '').trim().toLowerCase(); return id === 'local' || id.startsWith('local-'); };
+      var isLocalProvider = row => row && (row.localOnly === true || isLocalId(row.id));
+      var isLocalModel = row => row && (row.localOnly === true || localIds.has(String(row.providerId || '')) || isLocalId(row.providerId));
+      var localCatalog = await localModelCatalog();
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      var explicitLocal = Array.isArray(body.localProviders);
+      var localProviderInput = explicitLocal ? body.localProviders.filter(row => row && row.localOnly !== false) : providers.filter(isLocalProvider);
+      var localIds = new Set((localCatalog?.providers || []).filter(isLocalProvider).map(row => String(row.id || '')));
+      localProviderInput.forEach(row => localIds.add(String(row.id || '')));
+      (Array.isArray(body.localModels) ? body.localModels : []).forEach(row => {
+        if (row && row.providerId) localIds.add(String(row.providerId));
+      });
+      Object.keys(body.localKeys || {}).forEach(id => localIds.add(String(id)));
+      var localProviders = explicitLocal || localProviderInput.length ? localProviderInput :
+        (localCatalog?.providers || []).filter(isLocalProvider);
+      var localModelInput = Array.isArray(body.localModels) ? body.localModels :
+        (Array.isArray(body.models) ? body.models.filter(isLocalModel) : []);
+      var localModels = Array.isArray(body.localModels) || localModelInput.length ? localModelInput :
+        (localCatalog?.myModels || []).filter(row => row?.localOnly);
+      // Generic managed saves must never mutate the desktop-owned key store.
+      // Accept the legacy keys field only when the same payload explicitly
+      // carries local provider or model rows.
+      var keySource = Object.hasOwn(body, 'localKeys') ? body.localKeys :
+        (localProviderInput.length || localModelInput.length ? body.keys : {});
+      var localKeys = Object.fromEntries(Object.entries(keySource || {}).filter(([id]) => localIds.has(id) || isLocalId(id)));
+      var localResult = null;
+      var hasLocal = explicitLocal || localProviderInput.length || localModelInput.length || Object.keys(localKeys).length ||
+        (Array.isArray(body.localModels) && body.localRevision != null);
+      if (hasLocal) {
+        if (!local || typeof local.save !== 'function') throw new Error('本地模型存储不可用');
+        localResult = await local.save({ providers: localProviders, models: localModels, keys: localKeys, expectedRevision: body.localRevision });
+      }
+      var { localProviders: _localProviders, localModels: _localModels, localKeys: _localKeys,
+        localRevision: _localRevision, ...managedInput } = body;
+      var managedBody = {
+        ...managedInput,
+        providers: Array.isArray(body.providers) ? providers.filter(row => !isLocalProvider(row) && !localIds.has(String(row.id || ''))) : body.providers,
+        models: Array.isArray(body.models) ? body.models.filter(row => !isLocalModel(row) && !localIds.has(String(row.providerId || ''))) : body.models,
+        keys: Object.fromEntries(Object.entries(body.keys || {}).filter(([id]) => !localIds.has(id) && !isLocalId(id))),
+      };
+      // Local-only fields are never part of the Hub request, even when the
+      // desktop catalog is temporarily unavailable or an older caller sends
+      // both localKeys and keys in the same payload.
+      delete managedBody.localProviders;
+      delete managedBody.localModels;
+      delete managedBody.localKeys;
+      // The explicit local envelope distinguishes a merged catalog replacement
+      // from legacy local-only saves. Filtering legacy local rows to empty lists
+      // must never turn their revision into permission to clear Hub models.
+      // Omitted lists remain omitted for key patches.
+      var managedReplacement = body.expectedRevision != null &&
+        (Array.isArray(body.providers) || Array.isArray(body.models)) &&
+        (explicitLocal || (!localProviderInput.length && !localModelInput.length));
+      var hasManaged = managedBody.providers?.length || managedBody.models?.length || Object.keys(managedBody.keys || {}).length ||
+        managedReplacement;
+      if (!hasManaged && hasLocal) return localResult || { ok: true };
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      var r = await jfetch('/my-models', { method: 'PUT', body: JSON.stringify(managedBody) });
       await invalidateDomain('models', scope);
       mark(true); return r;
+    },
+    async localModels() {
+      var local = global.soduWorkAPI?.localModels;
+      return local && typeof local.get === 'function' ? local.get() : { providers: [], usable: [], myModels: [], mediaUsable: {} };
+    },
+    async saveLocalModels(body) {
+      var local = global.soduWorkAPI?.localModels;
+      if (!local || typeof local.save !== 'function') throw new Error('本地模型存储不可用');
+      return local.save(body || {});
+    },
+    async testLocalModel(providerId, modelName) {
+      var local = global.soduWorkAPI?.localModels;
+      if (!local || typeof local.test !== 'function') throw new Error('本地模型存储不可用');
+      return local.test(providerId || '', modelName || '');
     },
     /*
      * Test the effective key immediately: use a personal override when configured, otherwise
      * the company key.
      */
     async testMyModel(providerId) {
+      var scope = domainScope();
+      var local = global.soduWorkAPI?.localModels;
+      var catalog = await localModelCatalog();
+      if (catalog && (catalog.providers || []).some(row => row.id === providerId && row.localOnly)) {
+        var model = (catalog.myModels || []).find(row => row.providerId === providerId);
+        return local.test(providerId, model?.name || '');
+      }
+      if (!sameDomainScope(scope)) throw staleTaskScope();
       var r = await jfetch('/my-models/test', { method: 'POST',
         body: JSON.stringify({ providerId: providerId }) });
       mark(true); return r;
     },
     async checkMyModelCapabilities(body) {
+      body = body || {};
       var scope = domainScope();
+      var local = global.soduWorkAPI?.localModels;
+      var localCatalog = await localModelCatalog();
+      var localProvider = (localCatalog?.providers || []).find(row => row?.id === body.providerId && row.localOnly);
+      if (localProvider) {
+        if (!local || typeof local.test !== 'function') throw new Error('本地模型存储不可用');
+        var localModel = String(body.model || '').trim() ||
+          (localCatalog?.myModels || []).find(row => row.providerId === body.providerId)?.name || '';
+        var probe = await local.test(body.providerId, localModel);
+        var checks = {};
+        for (var key of (Array.isArray(body.checks) ? body.checks : ['connection'])) {
+          checks[key] = key === 'connection'
+            ? { status: probe?.ok ? 'passed' : 'failed', code: probe?.ok ? 'verified' : 'request_not_accepted' }
+            : { status: 'inconclusive', code: 'protocol_not_tested' };
+        }
+        return { ok: Boolean(probe?.ok), providerId: body.providerId, model: localModel,
+          checks, capabilityProfile: { imageInput: { state: 'unknown', source: 'unknown' },
+            toolCalling: { state: 'unknown', source: 'unknown' }, streaming: { state: 'unknown', source: 'unknown' } },
+          checkedAt: new Date().toISOString(), localOnly: true,
+          detail: probe?.detail || '' };
+      }
+      if (!sameDomainScope(scope)) throw staleTaskScope();
       var result = await jfetch('/my-models/capabilities/check', { method: 'POST',
         body: JSON.stringify(body), signal: _abortSignal(140000) });
       await invalidateDomain('models', scope); return result;
@@ -1306,6 +1481,7 @@
     },
     /* Run a minimal real task using the same effective-key resolution as normal dispatch. */
     async agentProbe(key, model, runnerId) {
+      if (isLocalModelChoice(model)) throw new Error('本地模型请在「我的模型」中测试');
       var r = await jfetch('/agent-setup/probe', { method: 'POST', taskScope: taskStorageKey('ops'),
         body: JSON.stringify({ key: key, model: model || '', runnerId: runnerId || '' }) });
       mark(true); return r;
@@ -1316,6 +1492,7 @@
     },
 
     async setAgentModel(key, model) {
+      if (isLocalModelChoice(model)) throw new Error('本地模型仅能在本机对话中选择，不能设为后台默认模型');
       var scope = domainScope();
       var r = await jfetch('/agent-setup/model', {
         method: 'PUT', taskScope: taskStorageKey('ops'), body: JSON.stringify({ key: key, model: model || '' })
@@ -1491,25 +1668,30 @@
       catch (e) { markFromError(e); return { skills: [] }; }
     },
     async setMySkills(names) {
-      var r = await jfetch('/skills', { method: 'PUT', body: JSON.stringify({ enabled: names || [] }) });
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills', { method: 'PUT', taskScope: scope.key, body: JSON.stringify({ enabled: names || [] }) });
+      mark(true); skillsChanged(scope); return r;
     },
-    async refreshMySkills() {
-      var r = await jfetch('/skills/refresh', { method: 'POST', body: '{}' });
-      mark(true); return r || { skills: [], mcpTemplates: [], summary: {} };
+    async refreshMySkills(options) {
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills/refresh', { method: 'POST', taskScope: scope.key, body: '{}' });
+      mark(true); if (options?.notify !== false) skillsChanged(scope);
+      return r || { skills: [], mcpTemplates: [], summary: {} };
     },
     async capabilityCatalog() {
       var r = await jfetch('/capabilities');
       mark(true); return r || { skills: [], mcpTemplates: [], summary: {} };
     },
     async createMySkill(body) {
-      var r = await jfetch('/skills/create', { method: 'POST', body: JSON.stringify(body || {}) });
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await jfetch('/skills/create', { method: 'POST', taskScope: scope.key, body: JSON.stringify(body || {}) });
+      mark(true); skillsChanged(scope); return r;
     },
     async deleteMySkill(name, checksum) {
+      var scope = skillMutationScope();
       var r = await jfetch('/skills/' + encodeURIComponent(name), {
-        method: 'DELETE', body: JSON.stringify({ checksum: checksum }) });
-      mark(true); return r;
+        method: 'DELETE', taskScope: scope.key, body: JSON.stringify({ checksum: checksum }) });
+      mark(true); skillsChanged(scope); return r;
     },
     async deleteMyMcpServer(id) {
       var r = await jfetch('/mcp-servers/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1547,8 +1729,9 @@
       setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
     },
     async importMySkill(file) {
-      var r = await uploadFile('/skills/import', file);
-      mark(true); return r;
+      var scope = skillMutationScope();
+      var r = await uploadFile('/skills/import', file, false, null, scope.key);
+      mark(true); skillsChanged(scope); return r;
     },
     async exportMyMcp(ids) { return jfetch('/mcp-servers/export', {method:'POST', taskScope:taskStorageKey('ops'), body:JSON.stringify({ids:ids})}); },
     async previewMyMcpImport(file) { return uploadFile('/mcp-servers/import/preview', file, false, null, taskStorageKey('ops')); },
@@ -1618,6 +1801,7 @@
       var v = await jfetch('/schedules/templates'); mark(true); return Array.isArray(v) ? v : [];
     },
     async preflightSchedule(b, options) {
+      requireRemoteModel(b?.modelName);
       var epoch = _registrationEpoch, hub = base(), owner = taskStorageKey('ops');
       var r = await jfetch('/schedules/preflight',
         { method: 'POST', body: JSON.stringify(b || {}) });
@@ -1630,10 +1814,12 @@
       mark(true); return r || {};
     },
     async createSchedule(b) {
+      requireRemoteModel(b?.modelName);
       var r = await jfetch('/schedules', { method: 'POST', taskScope: taskStorageKey('ops'), body: JSON.stringify(b || {}) });
       mark(true); return r;
     },
     async updateSchedule(sid, b) {
+      requireRemoteModel(b?.modelName);
       var r = await jfetch('/schedules/' + encodeURIComponent(sid),
         { method: 'PUT', body: JSON.stringify(b || {}) });
       mark(true); return r;
@@ -1701,7 +1887,7 @@
     },
     async draftMateMessage(context) {
       return await jfetch('/team/message-draft', {
-        method: 'POST', body: JSON.stringify(context || {}), signal: _abortSignal(30000)
+        method: 'POST', body: JSON.stringify({ ...(context || {}), locale: window.SoduWorkI18n?.getLocale?.() || 'zh-CN' }), signal: _abortSignal(30000)
       });
     },
     async mateMessageFile(id) {
@@ -1869,6 +2055,7 @@
     /* The initial run produces a plan without modifying code. */
     async aiPlan(tid, opts) {
       var o = opts || {};
+      requireRemoteModel(o.model);
       var r = await jfetch('/tasks/' + encodeURIComponent(tid) + '/ai-plan',
         { method: 'POST', body: JSON.stringify({
           assigneeId: o.assigneeId || '', assigneeType: o.assigneeType || '',

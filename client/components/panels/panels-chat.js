@@ -800,7 +800,8 @@
     if (workCards?.workOnly && typeof _restoreCollaboration === 'function') _restoreCollaboration(_sessionId);
     if (workCards) _workCards?.restoreRequirements?.();
     _restoreRetainedConversationFailure();
-    global.SoduWorkQuotaNotice?.modelChanged?.(_snap?.modelSelection?.model || _model);
+    global.SoduWorkQuotaNotice?.modelChanged?.(_snap?.modelSelection?.model || _model,
+      _snap?.adapterId || _sessionOptions.adapterId || 'pi', document.querySelector('#cpChat .work-composer'));
     _render();
     if (inputFiles.length) _rememberConversationDraft(_sessionId);
     if (previewInput) global.ChatWorkbench?.openInput(previewInput);

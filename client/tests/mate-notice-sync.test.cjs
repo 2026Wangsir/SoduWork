@@ -29,6 +29,7 @@ function fixture({ values = new Map(), received = [], sent = [] } = {}) {
   ctx.window = ctx; vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/store-lifecycle.js'), 'utf8'), ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/store.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../core/notice-persistence.js'), 'utf8'), ctx);
   const helper = path.join(__dirname, '../core/mate-notice-sync.js');
   if (fs.existsSync(helper)) vm.runInContext(fs.readFileSync(helper, 'utf8'), ctx);
   return { ctx, values, calls, events, timers, bubbles, alerts, api: ctx.SoduWorkAPI,
@@ -43,6 +44,111 @@ function fixture({ values = new Map(), received = [], sent = [] } = {}) {
 const message = (changes = {}) => ({ id: 'server-1', messageId: 'client-1', senderId: 'user-b', recipientId: 'user-a',
   senderName: '发件人', recipientName: '接收人', text: '完整需求说明', kind: 'task_assignment', taskId: 'task-1',
   createdAt: 100, status: 'accepted', deliveredAt: null, readAt: null, attachments: [], ...changes });
+
+test('both production renderers load durable notice storage before reconciliation', () => {
+  for (const name of ['desk.html', 'index.html']) {
+    const html = fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
+    const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)].map(match => match[1]);
+    const storage = scripts.indexOf('core/notice-persistence.js');
+    assert.ok(storage > scripts.indexOf('core/store.js'), name + ' loads the notice store first');
+    assert.ok(storage >= 0 && storage < scripts.indexOf('core/mate-notice-sync.js'), name + ' enables persistence before reconciliation');
+    assert.equal(scripts.filter(file => file === 'core/notice-persistence.js').length, 1);
+  }
+});
+
+test('storage capability fallback keeps local notices and receipt acknowledgements working', async () => {
+  const f = fixture({ received: [message()] });
+  assert.equal(f.ctx.SoduWorkNoticePersistence.create(), null);
+  assert.equal(f.sync.persistent, false);
+  await f.sync.refresh('received');
+  assert.equal(f.sync.rows('received').length, 1);
+  assert.ok(f.values.get('user-a:notices').includes('server-1'));
+  assert.ok(f.calls.some(call => call[0] === 'delivered' && call[1] === 'server-1'));
+});
+
+test('publication notices survive reconnect and self-recipient delivery without duplicate sender receipts', async () => {
+  const item = message({ kind: 'plugin_lifecycle', taskId: '', senderId: 'user-a',
+    text: 'Publication changed', textMessage: { key: 'notification.plugin_unpublished', params: { name: 'Example' } } });
+  const f = fixture({ received: [item], sent: [item] });
+  await f.sync.refresh();
+  assert.equal(f.sync.rows('received').length, 1);
+  assert.equal(f.sync.rows('received')[0].kind, 'plugin_lifecycle');
+  assert.equal(f.sync.rows('sent').length, 1);
+  assert.ok(!f.all().some(row => row.kind === 'mate_receipt'));
+  const reopened = fixture({ values: f.values, received: [item], sent: [item] });
+  await reopened.sync.refresh();
+  assert.equal(reopened.sync.rows('received').length, 1);
+  await reopened.sync.markRead(item.id);
+  assert.equal(reopened.sync.rows('received')[0].read, true);
+  assert.equal(reopened.sync.rows('received')[0].textMessage.params.name, 'Example');
+});
+
+test('only a complete consistent inbox snapshot removes publication notices outside current scope', async () => {
+  const lifecycle = id => message({ id, messageId: id, kind: 'plugin_lifecycle', taskId: '', status: 'read', readAt: 300 });
+  const f = fixture({ received: [lifecycle('old'), lifecycle('kept'), message({ id: 'ordinary' })] });
+  await f.sync.refresh('received');
+  let fail = true;
+  f.api.mateMessages = async (_folder, _limit, before) => {
+    if (!before) return { ok: true, items: [lifecycle('kept')], nextCursor: 'kept', revision: 'scope-two' };
+    if (fail) throw Error('offline');
+    return { ok: true, items: [], nextCursor: '', revision: 'scope-two' };
+  };
+  await assert.rejects(f.sync.refresh('received'), /offline/);
+  assert.ok(f.sync.rows('received').some(row => row.serverMessageId === 'old'));
+  fail = false;
+  await f.sync.refresh('received');
+  assert.deepEqual(Array.from(f.sync.rows('received'), row => row.serverMessageId).sort(), ['kept', 'ordinary']);
+});
+
+test('mixed revisions and arrivals during a refresh cannot erase publication notices', async () => {
+  const lifecycle = id => message({ id, messageId: id, kind: 'plugin_lifecycle', taskId: '', status: 'delivered', deliveredAt: 200 });
+  const f = fixture({ received: [lifecycle('prior')] });
+  await f.sync.refresh('received');
+  f.api.mateMessages = async (_folder, _limit, before) => before
+    ? { ok: true, items: [], nextCursor: '', revision: 'changed' }
+    : { ok: true, items: [], nextCursor: 'page-two', revision: 'first' };
+  await f.sync.refresh('received');
+  assert.ok(f.sync.rows('received').some(row => row.serverMessageId === 'prior'));
+  assert.equal(await f.sync.present({ ...lifecycle('prior'), type: 'notice', serverMessageId: 'prior' }), null,
+    'an inconsistent refresh may retain the cache but cannot authorize an absent websocket notice');
+  const delayed = deferred();
+  f.api.mateMessages = () => delayed.promise;
+  const refreshing = f.sync.refresh('received');
+  // Another window may restore a newly committed notice while HTTP is in flight.
+  f.values.set('user-a:notices', JSON.stringify([...f.sync.rows('received'),
+    { ...f.sync.rows('received')[0], id: 'mate-new', serverMessageId: 'new', messageId: 'new' }]));
+  delayed.resolve({ ok: true, items: [], nextCursor: '', revision: 'stable' });
+  await refreshing;
+  assert.deepEqual(Array.from(f.sync.rows('received'), row => row.serverMessageId), ['new']);
+  let conditional;
+  f.api.mateMessages = async (_folder, _limit, _before, revision) => {
+    conditional = revision;
+    return { ok: true, items: [], nextCursor: '', revision: 'stable' };
+  };
+  await f.sync.refresh('received');
+  assert.equal(conditional, '', 'a concurrent unverified row must not be frozen by notModified responses');
+  assert.equal(f.sync.rows('received').length, 0);
+});
+
+test('publication websocket bodies require the current authenticated inbox and use localized descriptors', async () => {
+  const item = message({ kind: 'plugin_lifecycle', taskId: '', text: 'Legacy publication text',
+    textMessage: { key: 'notification.plugin_unpublished', fallback: 'Legacy publication text', params: { name: 'Save {name}' } } });
+  const f = fixture({ received: [item] });
+  f.ctx.SoduWorkI18n = { t: (key, fallback, params) => key === 'notification.plugin_unpublished'
+    ? 'Removed: ' + params.name : fallback };
+  const event = { ...item, type: 'notice', serverMessageId: item.id, text: 'Untrusted socket copy' };
+  const presented = await f.sync.present(event);
+  assert.equal(presented.text, 'Removed: Save {name}');
+  assert.equal(await f.sync.present(event), null, 'replayed arrivals do not notify twice');
+  const rejected = fixture();
+  rejected.api.mateMessages = async () => ({ ok: true, items: [], nextCursor: '', revision: 'current-company' });
+  assert.equal(await rejected.sync.present(event), null);
+  assert.equal(rejected.sync.rows('received').length, 0);
+  rejected.api.mateMessages = async () => { throw Error('offline'); };
+  assert.equal(await rejected.sync.present(event), null);
+  assert.equal(rejected.sync.rows('received').length, 0);
+  assert.ok(!rejected.calls.some(call => call[0] === 'delivered'));
+});
 
 test('unchanged large histories do not rewrite storage, broadcast, or recreate receipts', async () => {
   const sent = Array.from({ length: 2000 }, (_, i) => message({ id: 's' + i, messageId: 'c' + i,

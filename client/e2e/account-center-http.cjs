@@ -13,6 +13,7 @@ if (typeof electron === 'string') {
   const { spawn } = require('node:child_process'), { pathToFileURL } = require('node:url'), assert = require('node:assert/strict');
   const sourceManifest = require('./fixtures/account-source-manifest.cjs');
   const client = path.resolve(__dirname, '..'), repo = path.dirname(client);
+  const python = process.env.SODUWORK_TEST_PYTHON || path.join(repo, 'hub-backend/.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-account-http-'));
   const profile = path.join(temp, 'profile'); fs.mkdirSync(profile); app.setPath('userData', profile); app.disableHardwareAcceleration();
   const out = path.join(repo, 'outputs/account-center-20261023/client-http-e2e'); fs.mkdirSync(out, { recursive: true });
@@ -37,9 +38,8 @@ if (typeof electron === 'string') {
     await click(selector);
     assert.equal(await js(`document.activeElement===document.querySelector(${JSON.stringify(selector)})`), true, 'Typing must target the selected input');
     if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
-    for (const type of ['keyDown', 'keyUp']) await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
-      type, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2,
-    });
+    // Use the native editing command so hidden fixtures select reliably on every platform.
+    win.webContents.selectAll();
     await win.webContents.debugger.sendCommand('Input.insertText', { text: value }); await delay(25);
     assert.equal(await js(`document.querySelector(${JSON.stringify(selector)}).value`), value, 'Typing must replace the selected input without corrupting Unicode');
   }
@@ -49,10 +49,10 @@ if (typeof electron === 'string') {
     return response.json();
   }
   async function initializeRenderer() {
-    await js(`(async()=>{window.errors=[];window.successes=[];window.gate=document.querySelector('#soduWorkClientAuthGate');window.lastChallenge=null;
+    await js(`(async()=>{window.errors=[];window.successes=[];window.gate=document.querySelector('#soduWorkClientAuthGate');window.lastChallenge=null;window.challengeRequests=[];
       addEventListener('error',e=>errors.push(e.message));addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
       window.policy=await SoduWorkAPI.clientAuthPolicy();window.ClientAuth={updateIdentity:()=>{},changePassword:()=>{},logout:()=>SoduWorkAPI.clientLogout()};
-      const realAction=SoduWorkAPI.clientAccountAction.bind(SoduWorkAPI);SoduWorkAPI.clientAccountAction=async(...args)=>{const result=await realAction(...args);if(args[0]==='emailChallenge'&&result.ok)lastChallenge=result.challengeId;return result;};
+      const realAction=SoduWorkAPI.clientAccountAction.bind(SoduWorkAPI);SoduWorkAPI.clientAccountAction=async(...args)=>{if(args[0]==='emailChallenge')challengeRequests.push({...args[1]});const result=await realAction(...args);if(args[0]==='emailChallenge'&&result.ok)lastChallenge=result.challengeId;return result;};
       document.documentElement.style.setProperty('--accent','#7955b8');})()`);
   }
   async function mount(mode) {
@@ -72,7 +72,7 @@ if (typeof electron === 'string') {
   app.whenReady().then(async () => {
     const ready = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(Error('Fixture startup timeout: ' + serverErrors)), 25000);
-      server = spawn(path.join(repo, 'hub-backend/.venv/Scripts/python.exe'), ['-B', path.join(__dirname, 'fixtures/account_hub_fixture.py'), '--root', temp], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' } });
+      server = spawn(python, ['-B', path.join(__dirname, 'fixtures/account_hub_fixture.py'), '--root', temp], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' } });
       let stdout = ''; server.stdout.on('data', chunk => { stdout += chunk; const match = stdout.match(/ACCOUNT_FIXTURE_READY (\{[^\n]+\})/); if (match) { clearTimeout(timeout); resolve(JSON.parse(match[1])); } });
       server.stderr.on('data', chunk => { serverErrors += chunk; });
       server.on('error', error => { clearTimeout(timeout); reject(error); });
@@ -98,13 +98,36 @@ if (typeof electron === 'string') {
     await win.loadFile(fixture);
     await initializeRenderer();
     assert.equal(await js('policy.mailReady'), true); record('live policy has actual configured local SMTP and legal documents');
-    await mount('password'); await fill('#soduWorkAuthAccount', 'legacy.email@example.test'); await fill('#soduWorkAuthPassword', 'Legacy-password-2026'); await click('[type="submit"]'); await until('successes.length===1');
-    const legacy = await js('SoduWorkAPI.clientAuthMe().then(r=>r.user)');
-    assert.equal(legacy.id, 'fixture-legacy-email-user'); assert.equal(legacy.emailVerified, false); record('email-shaped legacy username still logs in using its original password');
-    await js('SoduWorkAPI.clientLogout().then(()=>{})'); await mount('emailCode'); await fill('#soduWorkAuthAccount', 'legacy.email@example.test'); await click('[data-send-code]'); await fill('#acEmailCode', await codeForChallenge()); await click('[type="submit"]');
-    await until("document.querySelector('.soduwork-auth-status').textContent.includes('尚未注册')");
-    assert.equal(await js('successes.length'), 0); assert.equal(await js('SoduWorkAPI.clientAuthSnapshot().user'), null); record('mailbox code cannot take over an unverified legacy username account');
-    await mount('register'); await fill('#soduWorkAuthAccount', 'account-http@example.test'); await click('[data-send-code]');
+    await mount('emailCode');
+    const emptyMail = await fixtureRequest('GET', 'mail-counts');
+    await fill('#soduWorkAuthAccount', 'not-an-email'); await click('[data-send-code]');
+    assert.equal(await js('challengeRequests.length'), 0);
+    assert.match(await js("document.querySelector('.soduwork-auth-status').textContent"), /有效的邮箱/);
+    assert.equal(await js("document.querySelector('.ac-auth-tabs').hidden"), false);
+    assert.deepEqual(await fixtureRequest('GET', 'mail-counts'), emptyMail);
+    record('invalid email is rejected before requesting a code or changing the login mode');
+    await fill('#soduWorkAuthAccount', 'invalid..address@example.test'); await click('[data-send-code]');
+    await until("document.querySelector('.soduwork-auth-status').classList.contains('is-error') && !document.querySelector('[data-send-code]').disabled");
+    assert.equal(await js('challengeRequests.length'), 1);
+    assert.equal(await js("document.querySelector('.ac-auth-tabs').hidden"), false);
+    assert.deepEqual(await fixtureRequest('GET', 'mail-counts'), emptyMail);
+    record('server email validation rejects malformed local parts without a challenge or queued mail');
+    await fill('#soduWorkAuthAccount', 'account-http@example.test');
+    const unknownLoginRequestedAt = Date.now(); await click('[data-send-code]');
+    await until("document.querySelector('h1').textContent==='创建你的账号' && !document.querySelector('[data-send-code]').disabled");
+    assert.equal(await js("document.querySelector('#soduWorkAuthAccount').value"), 'account-http@example.test');
+    assert.equal(await js('lastChallenge'), null);
+    assert.equal(await js('challengeRequests.length'), 2, 'Navigation must not request a registration code automatically');
+    assert.equal(await js("document.querySelector('#acEmailCode').value"), '');
+    assert.equal(await js("document.querySelector('#acConsent').checked"), false);
+    assert.equal(await js("document.querySelector('[data-auth-consent]').hidden"), false);
+    assert.deepEqual(await fixtureRequest('GET', 'mail-counts'), emptyMail);
+    record('unknown login email opens explicit registration with the same email and no code, consent or mail side effects');
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    report.registrationScreenshot = path.join(out, 'unregistered-email-registration.png');
+    fs.writeFileSync(report.registrationScreenshot, (await win.webContents.capturePage()).toPNG());
+    await click('[data-send-code]');
+    assert.equal(await js('challengeRequests.at(-1).purpose'), 'register');
     await until("document.querySelector('.soduwork-auth-status').textContent.includes('邮件服务已发送验证码')");
     assert.doesNotMatch(await js("document.querySelector('.soduwork-auth-status').textContent"), /已送达|已入收件箱/);
     record('registration delivery feedback follows device-authenticated status after local SMTP sending');
@@ -113,8 +136,21 @@ if (typeof electron === 'string') {
     await until('successes.length===1');
     const registered = await js('SoduWorkAPI.clientAuthMe().then(r=>r.user)'); assert.equal(registered.isActive, true); assert.equal(registered.orgId, 'fixture-default-org'); assert.equal(registered.emailVerified, true); record('explicit registration immediately active in configured default organization');
     assert.equal(await js('typeof soduWorkAPI.deviceKey'), 'undefined'); record('renderer never receives long-lived device key');
+    await js('SoduWorkAPI.clientLogout().then(()=>{})'); await mount('password'); await fill('#soduWorkAuthAccount', 'legacy.email@example.test'); await fill('#soduWorkAuthPassword', 'Legacy-password-2026'); await click('[type="submit"]'); await until('successes.length===1');
+    const legacy = await js('SoduWorkAPI.clientAuthMe().then(r=>r.user)');
+    assert.equal(legacy.id, 'fixture-legacy-email-user'); assert.equal(legacy.emailVerified, false); record('email-shaped legacy username still logs in using its original password');
+    await js('SoduWorkAPI.clientLogout().then(()=>{})'); await mount('emailCode'); await fill('#soduWorkAuthAccount', 'legacy.email@example.test');
+    const mailBeforeLegacy = await fixtureRequest('GET', 'mail-counts'); await click('[data-send-code]');
+    await until("document.querySelector('.soduwork-auth-status').textContent.includes('原密码') && !document.querySelector('[data-send-code]').disabled");
+    assert.equal(await js('lastChallenge'), null);
+    assert.deepEqual(await fixtureRequest('GET', 'mail-counts'), mailBeforeLegacy);
+    assert.equal(await js('successes.length'), 0); assert.equal(await js('SoduWorkAPI.clientAuthSnapshot().user'), null);
+    assert.equal(await js("document.querySelector('.ac-auth-tabs').hidden"), false);
+    record('unverified legacy username cannot request a login code or enter registration in place of password authentication');
     await js('SoduWorkAPI.clientLogout().then(()=>{})'); await mount('password'); await fill('#soduWorkAuthAccount', 'account-http@example.test'); await fill('#soduWorkAuthPassword', password); await click('[type="submit"]'); await until('successes.length===1');
     assert.equal(await js('successes[0].user.id'), registered.id); record('password login returns the registered account');
+    // The registration lookup consumes the shared login request budget even without sending mail.
+    await delay(Math.max(0, unknownLoginRequestedAt + (await js('policy.codeRetryAfter')) * 1000 + 1000 - Date.now()));
     await js('SoduWorkAPI.clientLogout().then(()=>{})'); await mount('emailCode'); await fill('#soduWorkAuthAccount', 'account-http@example.test'); await click('[data-send-code]'); await fill('#acEmailCode', await codeForChallenge()); await click('[type="submit"]'); await until('successes.length===1');
     assert.equal(await js('successes[0].user.id'), registered.id); record('email-code login returns same account through actual mailbox delivery');
     await js('AccountCenter.open();void 0;'); await js('AccountCenter.openProfileEditor();void 0;');

@@ -42,11 +42,24 @@ async function main() {
         assert.equal(result.upgraded, !!previous); assert.equal(result.oldVersion, previous ? previous.version : '');
         if (!previous) assert.equal(result.reinstalled, true);
         assert.equal(result.nodeShimExecutable, true);
-        checks.push({ name, ok: true, upgraded: !!previous, reinstalled: !previous, oldVersion: previous ? previous.version : '' });
+        assert.equal(result.credentialProviderDependencyVerified, kind !== 'tgz');
+        assert.equal(result.upgradeDependencyResolutionVerified, false);
+        for (const phase of ['fresh', 'restart', ...(previous ? ['old'] : []), 'restored']) {
+          const smoke = await contract.read(path.join(output, phase + '.json'));
+          assert.equal(smoke.secureStorage?.backend, 'gnome_libsecret');
+          assert.equal(smoke.secureStorage?.roundTrip, true);
+        }
+        checks.push({ name, ok: true, upgraded: !!previous, reinstalled: !previous,
+          oldVersion: previous ? previous.version : '', secureStorageBackend: 'gnome_libsecret',
+          credentialProviderDependencyVerified: result.credentialProviderDependencyVerified,
+          upgradeDependencyResolutionVerified: false });
       } finally { if (created) await run('docker', ['rm', '-f', container]); }
     }
-    await contract.acceptance('linux', checks, ['Disposable Xvfb containers with GNOME Keyring; no desktop login, Wayland or polkit interaction.',
-      ...(checks.some(row => !row.upgraded) ? ['First SoduWork release: fresh install, restart and reinstall preserve data; SoduWork Global migration is not supported.'] : [])]);
+    await contract.acceptance('linux', checks, [
+      'Disposable Xvfb containers with a password-protected GNOME keyring; no desktop login, Wayland, KWallet or polkit interaction.',
+      'Upgrade checks reuse dependencies from initial candidate installation; newly added dependency resolution during upgrade is not certified.',
+      ...(checks.some(row => !row.upgraded) ? ['First SoduWork release: fresh install, restart and reinstall preserve data; SoduWork Global migration is not supported.'] : []),
+    ]);
   } finally { await fs.rm(packages, { recursive: true, force: true }); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

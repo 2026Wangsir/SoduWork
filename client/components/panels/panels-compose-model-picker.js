@@ -372,13 +372,18 @@
           ? await SoduWorkAPI.myModels() : null;
         if (!current()) return;
         if (!response || !Array.isArray(response.usable)) throw Error('模型目录暂时不可用');
-        enterpriseModels = response.usable;
+        const deviceLocal = model => model?.localOnly === true || String(model?.name || '').startsWith('local:');
+        // Device-owned connections are executable only by local Pi sessions.
+        // Cloud and other runtimes must never receive their private references.
+        enterpriseModels = response.usable.filter(model => !deviceLocal(model) || (!cloud() && row.id === 'pi'));
         enterpriseDefaults = response?.defaultModels || {};
         enterpriseDefaultErrors = response?.defaultModelErrors || {};
         // Older Hubs do not expose per-Agent defaults. Keep their runtime
         // resolution intact instead of assuming the first row is correct.
         enterpriseDefault = response?.defaultModel || '';
-        imageModels = Array.isArray(response?.mediaUsable?.image) ? response.mediaUsable.image : [];
+        // Image generation currently uses the Hub media proxy. Keep local
+        // definitions out of that route until a local transport is supported.
+        imageModels = Array.isArray(response?.mediaUsable?.image) ? response.mediaUsable.image.filter(model => !deviceLocal(model)) : [];
         clearStaleManagedSelection(row);
         enterpriseLoaded = true;
       } catch (error) {

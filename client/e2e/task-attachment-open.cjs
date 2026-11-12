@@ -22,9 +22,10 @@ const files=[
 ];
 const ticket='attachment-fixture-ticket-1234567890';
 const bundleRoot=path.join(profile,'bundle-input');fs.mkdirSync(bundleRoot);
-for(const file of files.slice(0,2))fs.writeFileSync(path.join(bundleRoot,file.filename),file.body);
+for(const file of files.slice(0,3))fs.writeFileSync(path.join(bundleRoot,file.filename),file.body);
 const bundleBytes=require('../main/conversation/zip-archive').createZip(bundleRoot).data;
 let server,win,base,saveCanceled=false,openError='',status=200,ticketExpired=false;
+let saveGate=null,dialogCalls=0,missingSource=false;
 const opened=[],saves=[],viewers=[],errors=[];
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const js=code=>win.webContents.executeJavaScript(code,true);
@@ -35,6 +36,8 @@ function fixtureHtml(){
   // Use the production generic error mapper, which originally hid the type failure.
   const human=fs.readFileSync(path.join(client,'components/pet/pet-ui.js'),'utf8').split('let bubbleTimer =')[0];
   return `<!doctype html><meta charset="utf-8"><title>Task attachments fixture</title>
+  <link rel="stylesheet" href="/theme/variables.css">
+  <link rel="stylesheet" href="/components/requirements/requirements-board.css">
   <link rel="stylesheet" href="/components/panels/conversation-attachments.css">
   <style>body{font:14px sans-serif;padding:24px}.rq-material{display:flex;gap:12px;padding:8px}.rq-material-actions{display:flex;gap:8px}.rq-material-actions svg{width:16px;height:16px}button{min-height:28px}</style>
   <div id="toast"></div>
@@ -62,8 +65,8 @@ app.whenReady().then(async()=>{
     const file=files.find(f=>url.pathname==='/api/v1/attachments/'+f.id);
     const access=files.find(f=>url.pathname==='/api/v1/attachments/'+f.id+'/access');
     if(access){const authorized=req.headers.authorization==='Device isolated-bundle-session'&&req.method==='POST';report.requests.push({refresh:access.id,authorized});res.writeHead(authorized?status:401,{'Content-Type':'application/json'});res.end(JSON.stringify({attachmentId:access.id,url:base+'/api/v1/attachments/'+access.id+'?ticket=renewed-'+ticket}));return}
-    if(file){const token=url.searchParams.get('ticket'),code=token==='renewed-'+ticket||(!ticketExpired&&token===ticket)?status:401;report.requests.push({id:file.id,mode:url.searchParams.get('mode')||'download',status:code});res.writeHead(code,{'Content-Type':file.contentType,'X-Content-Type-Options':'nosniff'});res.end(file.body);return}
-    const allowed=['/core/api-work-plugins.js','/api-library-local.js','/api.js','/components/panels/library-transfer.js','/components/panels/conversation-attachments.js','/components/panels/conversation-attachments.css','/core/requirements.js','/components/requirements/requirements-detail.js'];
+    if(file){const token=url.searchParams.get('ticket'),code=token==='renewed-'+ticket||(!ticketExpired&&token===ticket)?(missingSource?404:status):401;report.requests.push({id:file.id,mode:url.searchParams.get('mode')||'download',status:code});res.writeHead(code,{'Content-Type':missingSource?'application/json':file.contentType,'X-Content-Type-Options':'nosniff'});res.end(missingSource?JSON.stringify({detail:'附件文件已丢失'}):file.body);return}
+    const allowed=['/core/api-work-plugins.js','/api-library-local.js','/api.js','/components/panels/library-transfer.js','/components/panels/conversation-attachments.js','/components/panels/conversation-attachments.css','/core/requirements.js','/components/requirements/requirements-detail.js','/components/requirements/requirements-board.css','/theme/variables.css'];
     if(allowed.includes(url.pathname)){res.setHeader('Content-Type',url.pathname.endsWith('.js')?'text/javascript':'text/css');res.end(fs.readFileSync(path.join(client,url.pathname)));return}res.writeHead(404);res.end();
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));base='http://127.0.0.1:'+server.address().port;
@@ -73,7 +76,7 @@ app.whenReady().then(async()=>{
   require('../main/attachment-files').install({app,net,ipcMain,BrowserWindow:PreviewWindow,
     identityOf:()=>({hub:base,clientId:'fixture'}),
     authenticatedIdentityOf:async()=>({hub:base,clientId:'fixture',session:'isolated-bundle-session'}),
-    shell:{openPath:async target=>{opened.push(target);return openError}},dialog:{showSaveDialog:async(_parent,options)=>{if(saveCanceled)return{canceled:true};const target=path.join(profile,path.basename(options.defaultPath));saves.push(target);return{filePath:target}},showErrorBox:(title,reason)=>errors.push({title,reason})}});
+    shell:{openPath:async target=>{opened.push(target);return openError}},dialog:{showSaveDialog:async(_parent,options)=>{dialogCalls++;if(saveGate)await saveGate;if(saveCanceled)return{canceled:true};const target=path.join(profile,path.basename(options.defaultPath));saves.push(target);return{filePath:target}},showErrorBox:(title,reason)=>errors.push({title,reason})}});
   // Production preload only exposes the desktop bridge to the trusted workspace URL.
   const desk=pathToFileURL(path.join(client,'desk.html')).href;
   const isolated=session.fromPartition('task-attachments-'+Date.now());
@@ -92,7 +95,27 @@ app.whenReady().then(async()=>{
     assert.deepEqual(await js('toasts'),[]);
   }
   {
-    for(const f of files){const n=saves.length;await js('toasts.length=0');await click(`[data-rq-download="${f.id}"]`);await until(()=>saves.length===n+1&&fs.existsSync(saves.at(-1))&&fs.readFileSync(saves.at(-1)).equals(f.body),'save success');assert.equal(saves.length,n+1);assert.deepEqual(fs.readFileSync(saves.at(-1)),f.body);report.checks.push({filename:f.filename,downloadSaved:true})}
+    for(const f of files){const n=saves.length;await js('toasts.length=0');await click(`[data-rq-download="${f.id}"]`);await until(()=>saves.length===n+1&&fs.existsSync(saves.at(-1))&&fs.readFileSync(saves.at(-1)).equals(f.body),'save success');assert.equal(saves.length,n+1);assert.deepEqual(fs.readFileSync(saves.at(-1)),f.body);await until(()=>js(`document.querySelector('[data-rq-file-id="${f.id}"] [data-rq-download-status]').textContent.includes('文件已保存')`),'row save receipt');report.checks.push({filename:f.filename,downloadSaved:true})}
+    let releaseSave;saveGate=new Promise(resolve=>{releaseSave=resolve});const initialDialogs=dialogCalls;
+    await click('[data-rq-download="html0001"]');
+    assert.equal(await js("document.querySelector('[data-rq-download=html0001]').disabled"),true);
+    assert.match(await js("document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]').textContent"),/正在准备下载/);
+    await click('[data-rq-download="html0001"]');assert.equal(dialogCalls,initialDialogs+1);
+    releaseSave();saveGate=null;
+    await until(()=>js("document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]').textContent.includes('文件已保存')"),'pending save completed');
+    assert.deepEqual(fs.readFileSync(saves.at(-1)),files[0].body);
+    report.checks.push('Pending native saves expose row progress and reject repeated physical clicks');
+    fs.unlinkSync(saves.at(-1));missingSource=true;
+    await click('[data-rq-download="html0001"]');
+    await until(()=>js("document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]').textContent.includes('源文件已丢失')"),'row recovery message');
+    assert.equal(fs.existsSync(saves.at(-1)),false);
+    assert.equal(await js("document.querySelector('[data-rq-download=html0001]').disabled"),false);
+    assert.equal(await js("(()=>{const s=document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]'),r=s.getBoundingClientRect();return !s.hidden&&r.width>0&&r.top>=0&&r.bottom<=innerHeight})()"),true);
+    fs.writeFileSync(path.join(out,'missing-source-row.png'),(await win.webContents.capturePage()).toPNG());
+    missingSource=false;await click('[data-rq-download="html0001"]');
+    await until(()=>js("document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]').textContent.includes('文件已保存')"),'row retry receipt');
+    assert.deepEqual(fs.readFileSync(saves.at(-1)),files[0].body);
+    report.checks.push('A missing source creates no phantom download, reports recovery beside the file, and retries to exact bytes');
     ticketExpired=true;
     const oldOpened=opened.length,oldSaves=saves.length,oldRequests=report.requests.length;
     await click('[data-rq-file="html0001"]');await until(()=>opened.length===oldOpened+1,'renewed ticket preview');
@@ -101,14 +124,14 @@ app.whenReady().then(async()=>{
     assert.equal(report.requests.slice(oldRequests).filter(r=>r.refresh&&r.authorized).length,2);
     ticketExpired=false;report.checks.push('Expired ordinary attachments renew through account ACL for both open and exact-byte download');
     status=500;await js('toasts.length=0');await click('[data-rq-download="html0001"]');await until(()=>js("document.querySelector('[data-rq-error]').textContent.includes('HTTP 500')"),'failed download feedback');assert.deepEqual(await js('toasts'),[]);status=200;report.checks.push('Failed download reports HTTP status without a success toast');
-    saveCanceled=true;await js('toasts.length=0');await click('[data-rq-download="html0001"]');assert.deepEqual(await js('toasts'),[]);saveCanceled=false;report.checks.push('Cancel save is silent');
+    saveCanceled=true;await js('toasts.length=0');await click('[data-rq-download="html0001"]');assert.deepEqual(await js('toasts'),[]);assert.equal(await js("document.querySelector('[data-rq-file-id=html0001] [data-rq-download-status]').hidden"),true);saveCanceled=false;report.checks.push('Cancel save is silent and clears the preceding row status');
     for(const code of [401,403,404,500]){status=code;await js("toasts.length=0;document.querySelector('[data-rq-error]').textContent=''");await click('[data-rq-file="html0001"]');await until(()=>js("document.querySelector('[data-rq-error]').textContent.length>0"),'HTTP failure feedback');const toast=await js("document.querySelector('[data-rq-error]').textContent");assert.match(toast,code===401||code===403?/凭证.*失效/:code===404?/不存在|权限/:/HTTP 500/);report.checks.push({http:code,toast})}status=200;
     openError='No application is associated';await js("toasts.length=0;document.querySelector('[data-rq-error]').textContent=''");await click('[data-rq-file="html0001"]');await until(()=>js("document.querySelector('[data-rq-error]').textContent.length>0"),'system association failure');assert.match(await js("document.querySelector('[data-rq-error]').textContent"),/没有可打开.*应用/);openError='';report.checks.push('Missing system app produces a specific error');
     await js('toasts.length=0');await click('[data-rq-download="html0001"]');await until(()=>fs.readFileSync(saves.at(-1)).equals(files[0].body),'download after open failure');report.checks.push('Download still works after system app failure');
     assert.deepEqual(await js('fixtureErrors'),[]);assert.deepEqual(errors,[]);
   }
-  await js(`SoduWorkAPI.listAttachments=async()=>[{id:'html0001',filename:'index.html',role:'output'},{id:'mark0001',filename:'README.md',role:'output'}];
-    SoduWorkAPI.taskTrace=async()=>({delivery:{artifact:{id:'version-2'},manifest:{files:[{id:'html0001'},{id:'mark0001'}]}}});
+  await js(`SoduWorkAPI.listAttachments=async()=>[{id:'html0001',filename:'index.html',role:'output'},{id:'mark0001',filename:'README.md',role:'output'},{id:'text0001',filename:'说明.txt',role:'output'}];
+    SoduWorkAPI.taskTrace=async()=>({delivery:{artifact:{id:'version-2'},manifest:{files:[{id:'html0001'},{id:'mark0001'},{id:'text0001'}]}}});
     RequirementsDetail.close();RequirementsDetail.open('fixture-task')`);
   await until(()=>js("!!document.querySelector('[data-rq-bundle-download]')"),'automatic bundle card');
   const count=saves.length;
@@ -150,6 +173,16 @@ app.whenReady().then(async()=>{
   assert.equal(await js('librarySaves.length'),1);
   assert.deepEqual(await js('fixtureErrors'),[]);
   report.checks.push('ZIP library button uses shared transfer/API and authenticated bytes; repeat clicks keep one saved copy');
+  const storedBundle={id:'zip00001',filename:'完整产出-review.zip',contentType:'application/zip',body:bundleBytes};
+  files.push(storedBundle);
+  await js(`RequirementsDetail.close();SoduWorkAPI.listAttachments=async()=>[{id:'zip00001',filename:'完整产出-review.zip',role:'output',taskId:'fixture-task',artifactVersionId:'version-2',url:'/api/v1/attachments/zip00001?ticket=${ticket}'}];RequirementsDetail.open('fixture-task')`);
+  await until(()=>js("!!document.querySelector('[data-rq-download=zip00001]')"),'stored ZIP card');
+  assert.equal(await js("!!document.querySelector('[data-rq-bundle-download]')"),false);
+  await click('[data-rq-download=zip00001]');
+  await until(()=>js("document.querySelector('[data-rq-file-id=zip00001] [data-rq-download-status]').textContent.includes('文件已保存')"),'stored ZIP receipt');
+  assert.deepEqual(fs.readFileSync(saves.at(-1)),bundleBytes);
+  assert.equal(report.requests.at(-1).id,'zip00001');
+  report.checks.push('Stored Runner ZIP uses its exact attachment route and confirms byte-identical save beside its unchanged filename');
   const textFile=files.find(file=>file.id==='text0001');
   const serialized={id:textFile.id,taskId:'fixture-task',artifactVersionId:'version-1',filename:textFile.filename,
     role:'output',size:textFile.body.length,url:'/api/v1/attachments/'+textFile.id+'?ticket='+ticket};

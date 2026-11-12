@@ -10,12 +10,20 @@ const { connectionScope: scope } = require('../platform-connections/runtime.cjs'
 const attachmentContract = require('../pi-session/attachment-contract');
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');
 const MAX_BYTES = 96 * 1024 * 1024;
+function assertCloudModel(value) {
+  const model = String(value || '').trim();
+  const image = require('../../core/model-choice').imageChoice(model);
+  if (model.startsWith('local:') || image?.name.startsWith('local:')) {
+    throw Error('本地模型只能在本机使用，请选择云端可用模型');
+  }
+}
 
 function create({ app, root, read, save, identity, request, publicRecord }) {
   const pending = new Map();
   function options(input) {
     if (!/^[a-f0-9-]{36}$/i.test(input.requestId || '')) throw Error('云端请求标识无效');
     if (!/^[a-z][a-z0-9._-]{0,47}$/.test(input.agentId || '')) throw Error('请选择执行底座');
+    assertCloudModel(input.model);
     const text = String(input.text || '').trim();
     if ((!text && !input.attachments?.length) || text.length > 50000) throw Error('请输入消息或添加附件');
     if (input.skills?.length || input.plugins?.length || input.intent === 'goal') {
@@ -59,6 +67,7 @@ function create({ app, root, read, save, identity, request, publicRecord }) {
       item.path ? path.resolve(item.path) : '', item.path ? '' : digest(Buffer.from(item.data instanceof ArrayBuffer ? new Uint8Array(item.data) : item.data || []))]);
   }
   async function submit(record) {
+    assertCloudModel(record.cloudStart.options.model);
     const current = await identity(record), form = new FormData();
     form.append('options', JSON.stringify(record.cloudStart.options));
     for (const file of record.cloudStart.files) {

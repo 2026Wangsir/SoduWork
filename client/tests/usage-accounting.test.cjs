@@ -146,3 +146,54 @@ test('accounting receipts include tool-only answers and remain cached during tok
   assert.equal(accumulator.snapshot().usageReceipts, second.usageReceipts);
   assert.equal(accumulator.uiSnapshot({ messageLimit: 80 }).usageReceipts, undefined);
 });
+
+test('legacy Pi outbox scopes are quarantined before upload or managed high-water initialization', async t => {
+  const { app, file } = fixture(t), sent = [];
+  const identity = { hub: 'http://fixture', clientId: 'device', session: 'fixture' };
+  const scope = id => JSON.stringify([identity.hub, identity.clientId, '', id]);
+  const checkpoint = (id, total, agent, provider, extra = {}) => ({ hub: identity.hub, clientId: identity.clientId,
+    scope: scope(id), bucket: provider, ...extra,
+    payload: { idempotencyKey: id, sourceType: 'chat', sourceId: id, conversationId: id,
+      agent, provider, model: provider === 'soduwork' ? 'private-local-model' : 'managed-model',
+      ...(provider === 'managed' ? { quotaUsageToken: 'trusted-fixture-token' } : {}),
+      usage: { input: total, total }, occurredAt: '2026-10-22T00:00:00Z' } });
+  const rows = {
+    local: checkpoint('mixed', 1000, 'pi', 'soduwork'),
+    contaminatedManaged: checkpoint('mixed', 1100, 'pi', 'managed'),
+    external: checkpoint('external', 20, 'custom-fixture', 'external'),
+    current: checkpoint('current', 30, 'pi', 'managed', { ownershipVersion: 1 }),
+  };
+  fs.writeFileSync(file, JSON.stringify({ v: 1, generation: 1, rows }));
+  const options = { app, identityOf: async () => identity,
+    fetchImpl: async (_url, request) => { sent.push(JSON.parse(request.body)); return { ok: true, text: async () => '{"ok":true}' }; } };
+  const reporter = createUsageReporter(options);
+  reporter.observe({ sessionId: 'mixed', model: 'managed-model', usageAgentKey: 'pi', usageIdentity: identity }, {
+    usageReceipts: [{ localOnly: true, model: 'private-local-model', usage: { input: 1000 } },
+      { model: 'managed-model', provider: 'managed', quotaUsageToken: 'trusted-fixture-token', usage: { input: 10 } }],
+  });
+  await reporter.flush();
+  assert.deepEqual(sent.map(value => [value.idempotencyKey, value.usage.total]).sort(),
+    [['current', 30], ['external', 20], ['mixed', 10]]);
+  assert.doesNotMatch(JSON.stringify(sent), /private-local-model|ownershipVersion/);
+  assert.ok(sent.filter(value => value.provider === 'managed').every(value => value.quotaUsageToken === 'trusted-fixture-token'));
+  const saved = JSON.parse(fs.readFileSync(file));
+  assert.deepEqual(saved.quarantined, { local: rows.local, contaminatedManaged: rows.contaminatedManaged });
+  assert.deepEqual(saved.rows, {});
+  const restarted = createUsageReporter(options);
+  await restarted.flush(); assert.equal(sent.length, 3, 'quarantine remains excluded after restart');
+});
+
+test('outbox recovery preserves a quarantine staged before atomic replacement', async t => {
+  const { app, file } = fixture(t), sent = [];
+  const legacy = { hub: 'http://fixture', clientId: 'device', scope: 'legacy',
+    payload: { idempotencyKey: 'legacy', agent: 'pi', provider: 'soduwork', usage: { input: 1000 } } };
+  fs.writeFileSync(file, JSON.stringify({ v: 1, generation: 1, rows: { legacy } }));
+  fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, generation: 2, rows: {}, quarantined: { legacy } }));
+  const identity = { hub: 'http://fixture', clientId: 'device' };
+  const reporter = createUsageReporter({ app, identityOf: async () => identity,
+    fetchImpl: async (_url, request) => { sent.push(JSON.parse(request.body)); return { ok: true, text: async () => '{"ok":true}' }; } });
+  reporter.observe({ sessionId: 'current', model: 'managed', usageIdentity: identity }, { usage: { input: 10 } });
+  await reporter.flush();
+  assert.deepEqual(sent.map(value => value.usage.total), [10]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)).quarantined, { legacy });
+});

@@ -1,6 +1,7 @@
 /* Shared conversation entry for creating a personal plugin. */
 (function (global) {
   'use strict';
+  const uiText = value => global.SoduWorkI18n?.translateText?.(value) || value;
 
   /* The app creation dialog selects a type before opening this conversation.
      The composer adds the corresponding creation prefix so the user can complete the description. */
@@ -10,9 +11,11 @@
     lite: '创建即用：',
   };
   function appKindPrompt(kind, storageLocation) {
-    const prompt = APP_KIND_PROMPTS[String(kind || '')] || '开发即用：';
+    const prompt = uiText(APP_KIND_PROMPTS[String(kind || '')] || '开发即用：');
     const storageLabel = storageLocation === 'local' ? '数据本地化' : storageLocation === 'cloud' ? '数据云端化' : '';
-    return storageLabel ? prompt.replace(/：$/, '（' + storageLabel + '）：') : prompt;
+    const western = ['en-US', 'ko-KR'].includes(global.SoduWorkI18n?.getLocale?.());
+    return storageLabel ? prompt.replace(/([:：]\s*)$/, (_, ending) =>
+      (western ? ' (' + uiText(storageLabel) + ')' : '（' + uiText(storageLabel) + '）') + ending) : prompt;
   }
 
   function buildPayload(seed, context, application, appKind) {

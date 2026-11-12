@@ -55,6 +55,56 @@ test('quota rejection and missing host authorization never dispatch inference', 
   const g = fixture({ authenticatedIdentityOf: async () => null });
   assert.equal((await g.generate(g.item, defaults)).code, 'APP_AI_UNAVAILABLE'); assert.deepEqual(g.calls, []);
 });
+test('local no-key models bypass Hub admission and omit the Authorization header', async () => {
+  const localRef = 'local:model-' + 'a'.repeat(32);
+  const f = fixture({
+    configuredModel: () => localRef,
+    authorizeAI: async () => { throw Object.assign(Error('quota'), { code: 'TOKEN_QUOTA_EXCEEDED' }); },
+    resolveModel: async () => ({ ok: true, localOnly: true,
+      model: { id: localRef, wireModelId: 'qwen3', baseUrl: 'http://127.0.0.1:8686/v1', key: '', maxOutputTokens: 1024, localOnly: true } }),
+  });
+  const result = await f.generate(f.item, defaults);
+  assert.equal(result.ok, true);
+  assert.equal(f.calls.some(row => row[0] === 'quota'), false);
+  const request = f.calls.find(row => row[0] === 'post')[2];
+  assert.equal('Authorization' in request.headers, false);
+  assert.equal(JSON.parse(request.body).model, 'qwen3', 'the private endpoint receives its actual model name');
+  assert.equal(result.model, localRef, 'the app result retains only the opaque model identity');
+});
+test('local one-shot inference retains the client login requirement', async () => {
+  const f = fixture({
+    authenticatedIdentityOf: async () => null,
+    configuredModel: () => 'local:custom-local:qwen3',
+    resolveModel: async () => ({ ok: true, localOnly: true,
+      model: { id: 'local:model-' + 'a'.repeat(32), wireModelId: 'qwen3',
+        baseUrl: 'http://127.0.0.1:8686/v1', key: '', localOnly: true } }),
+  });
+  const result = await f.generate(f.item, defaults);
+  assert.equal(result.code, 'APP_AI_UNAVAILABLE');
+  assert.deepEqual(f.calls, []);
+});
+test('local one-shot calls keep account fences and never send an opaque ID as a fallback wire name', async () => {
+  const localRef = 'local:model-' + 'a'.repeat(32);
+  const localModel = { id: localRef, wireModelId: 'private-wire-model',
+    baseUrl: 'http://127.0.0.1:8686/v1', key: 'synthetic-provider-key', localOnly: true };
+  const missing = fixture({ configuredModel: () => localRef,
+    resolveModel: async () => ({ ok: true, model: { ...localModel, wireModelId: undefined } }) });
+  assert.equal((await missing.generate(missing.item, defaults)).code, 'APP_AI_NOT_SENT');
+  assert.deepEqual(missing.calls, []);
+  let release, request;
+  const active = fixture({ configuredModel: () => localRef,
+    resolveModel: async () => ({ ok: true, model: localModel }),
+    fetchImpl: (_url, options) => { request = options; return new Promise(resolve => { release = resolve; }); } });
+  const pending = active.generate(active.item, defaults);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(JSON.parse(request.body).model, localModel.wireModelId);
+  assert.equal(request.headers.Authorization, 'Bearer synthetic-provider-key');
+  active.switchAccount();
+  release(Response.json({ choices: [{ message: { content: 'Earlier account private response' } }] }));
+  const result = await pending;
+  assert.equal(result.code, 'APP_AI_CONTEXT_CHANGED');
+  assert.equal(result.text, undefined);
+});
 test('account and installation changes discard in-flight model results and cached receipts', async () => {
   let release; const f = fixture({ fetchImpl: () => new Promise(resolve => { release = resolve; }) });
   const pending = f.generate(f.item, defaults);

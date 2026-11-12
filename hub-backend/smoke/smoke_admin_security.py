@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import inspect
 import json
 import os
 from pathlib import Path
 import tempfile
+import textwrap
+from types import SimpleNamespace
 
 
 _tmp = tempfile.TemporaryDirectory(prefix="soduwork-smoke-admin-security-")
@@ -88,6 +91,69 @@ def permission_contract() -> None:
           not missing, missing)
 
 
+def transactional_audit(source: str) -> bool:
+    """Recognize a direct audit write followed by a commit on the same session.
+
+    Keep this conservative: comments, nested helpers and conditional writes do
+    not establish that a route persists an audit event. Runtime lifecycle tests
+    separately verify that state, notices and audit rows roll back together.
+    """
+    for endpoint in ast.parse(textwrap.dedent(source)).body:
+        if not isinstance(endpoint, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for write, commit in zip(endpoint.body, endpoint.body[1:]):
+            if not (isinstance(write, ast.Expr) and isinstance(write.value, ast.Call)
+                    and isinstance(commit, ast.Expr) and isinstance(commit.value, ast.Await)
+                    and isinstance(commit.value.value, ast.Call)):
+                continue
+            call, flush = write.value, commit.value.value
+            if (isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id == "audit" and call.func.attr == "add"
+                    and len(call.args) >= 2 and isinstance(call.args[0], ast.Name)
+                    and isinstance(flush.func, ast.Attribute)
+                    and isinstance(flush.func.value, ast.Name)
+                    and flush.func.value.id == call.args[0].id
+                    and flush.func.attr == "commit"):
+                return True
+    return False
+
+
+def transactional_audit_contract() -> None:
+    cases = [
+        ("accepts a staged audit followed by its commit",
+         'audit.add(\n    session, user, "change", "plugin", "id")\nawait session.commit()', True),
+        ("rejects a missing audit write", "await session.commit()", False),
+        ("rejects an uncommitted audit", 'audit.add(session, user, "change")', False),
+        ("rejects a commit before the audit",
+         'await session.commit()\naudit.add(session, user, "change")', False),
+        ("rejects a different session commit",
+         'audit.add(session, user, "change")\nawait other.commit()', False),
+        ("ignores audit text in comments and strings",
+         '# audit.add(session, user, "change")\n"audit.add(session, user)"\nawait session.commit()', False),
+        ("rejects a conditional audit",
+         'if user.is_super:\n    audit.add(session, user, "change")\nawait session.commit()', False),
+        ("ignores uncalled nested helpers",
+         'async def unused():\n    audit.add(session, user, "change")\n    await session.commit()', False),
+    ]
+    for name, body, expected in cases:
+        source = "async def route(session, user):\n" + textwrap.indent(body, "    ")
+        check("transactional audit inventory " + name,
+              transactional_audit(source) == expected)
+
+    from app.services import audit
+    rows = []
+    actor = SimpleNamespace(id="audit-actor", display_name="Audit actor", org_id="audit-org")
+    row = audit.add(SimpleNamespace(add=rows.append), actor, "plugin.change",
+                    "plugin", "audit-plugin", "Audit plugin", {"changed": True})
+    check("transactional audit helper stages the actor, target and change without committing",
+          rows == [row] and isinstance(row, models.AuditLog)
+          and row.actor_id == actor.id and row.actor_name == actor.display_name
+          and row.actor_org_id == actor.org_id and row.action == "plugin.change"
+          and row.target_type == "plugin" and row.target_id == "audit-plugin"
+          and row.detail == {"changed": True})
+
+
 def audit_contract() -> None:
     missing = []
     seen_exemptions = set()
@@ -144,7 +210,8 @@ def audit_contract() -> None:
             legal_audit = (0 <= service_at < commit_at and call in body
                            and "session.add(AuditLog(" in writer and "actor_id=actor.id" in writer
                            and "action=action" in writer and "target_id=target" in writer)
-        if "audit.log(" in source or cloud_audit or quota_audit or legal_audit:
+        if ("audit.log(" in source or transactional_audit(source)
+                or cloud_audit or quota_audit or legal_audit):
             continue
         for method in methods:
             key = (method, route.path)
@@ -163,6 +230,7 @@ def audit_contract() -> None:
 
 async def main() -> None:
     permission_contract()
+    transactional_audit_contract()
     audit_contract()
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

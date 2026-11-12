@@ -101,6 +101,8 @@ async function open(opts) {
   const openStarted = performance.now();
   _openTiming('open-start', openStarted);
   const { app, identity, cwd } = opts || {};
+  try { await require('../local-model-privacy.cjs').prepare(app); }
+  catch (_) { return { ok: false, reason: '本地模型隐私保护初始化失败，请检查本机安全存储后重试' }; }
   const loaded = await loadSdk(app);
   _openTiming('sdk-loaded', openStarted);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
@@ -133,7 +135,9 @@ async function open(opts) {
   const savedModel = resumedManager && [...resumedManager.getEntries()].reverse().find(entry =>
     entry.type === 'custom' && entry.customType === 'soduwork.model.selection');
   const explicitModel = typeof opts.modelName === 'string';
-  let modelName = explicitModel ? opts.modelName : (savedModel && savedModel.data && savedModel.data.name) || '';
+  const storedLocalModel = modelConfig.configuredModel(app);
+  let modelName = explicitModel ? opts.modelName : (savedModel && savedModel.data && savedModel.data.name) ||
+    (storedLocalModel.startsWith('local:') ? storedLocalModel : '');
   if (require('./image-model').imageChoice(modelName) && ((goal.intent === 'goal' && restoredMode.visible) || opts.taskRef)) {
     return { ok: false, reason: '直接生图请使用普通对话；目标和需求可通过图片插件生成图片' };
   }
@@ -152,12 +156,12 @@ async function open(opts) {
   // recovery path is used instead of letting the SDK fail later with a vague
   // "model unavailable" error.
   const returnedModel = String(prep?.model?.id || '').trim();
-  const returnedDifferentModel = Boolean(prep.ok && modelName && returnedModel && returnedModel !== modelName);
+  const returnedDifferentModel = Boolean(prep.ok && !prep.model?.localOnly && modelName && returnedModel && returnedModel !== modelName);
   // A historical archive may predate the durable model-selection entry. In
   // that case `modelName` is empty, but the Hub can still reject its own stale
   // Agent preference. Only a resumed conversation may bypass that preference;
   // new chats keep the strict explicit/default selection behavior.
-  if (canRecoverStaleModel && (!prep.ok || returnedDifferentModel)) {
+  if (canRecoverStaleModel && !String(modelName).startsWith('local:') && (!prep.ok || returnedDifferentModel)) {
     const fallback = await modelConfig.prepare(app, identity, '', {
       ignoreAgentPreference: true, allowHistorical: allowHistoricalModel,
     });
@@ -168,6 +172,7 @@ async function open(opts) {
     }
   }
   if (!prep.ok) return prep;
+  if (prep.model.localOnly) modelName = require('./local-model-runtime-privacy.cjs').reference(prep.model);
   const MODEL_TICKET_REFRESH_SKEW_MS = 2 * 60 * 1000;
   const MODEL_TICKET_FALLBACK_MS = 10 * 60 * 1000;
   const contextPrompts = Array.isArray(opts.contextPrompts)
@@ -212,6 +217,12 @@ async function open(opts) {
   let runtime;
   let model;
   let created;
+  const configureLocalTransport = (target, next) => {
+    if (!target) return target;
+    if (next?.localOnly) return require('./local-model-runtime-privacy.cjs').configure(runtime, target, next);
+    if (target.headers && Object.hasOwn(target.headers, 'Authorization')) delete target.headers.Authorization;
+    return target;
+  };
   try {
     const prepared = await Promise.all([
       require('./background-process').run(() => sdk.ModelRuntime.create()),
@@ -219,7 +230,9 @@ async function open(opts) {
     ]);
     _openTiming('runtime-prepared', openStarted);
     runtime = prepared[0];
-    model = runtime.getModel(prep.provider, prep.model.id);
+    if (prep.model.localOnly) runtime.registerProvider(prep.provider,
+      require('../conversation/model-selection').piProvider(prep.model));
+    model = configureLocalTransport(runtime.getModel(prep.provider, prep.model.id), prep.model);
     if (!model) {
       return { ok: false, reason: '模型配置没被认出来（' + prep.provider + '/' + prep.model.id + '）' };
     }
@@ -473,9 +486,22 @@ async function open(opts) {
     const expiry = Number(next && next.proxyExpiresAt);
     modelTicketExpiresAt = expiry > Date.now() ? expiry : Date.now() + MODEL_TICKET_FALLBACK_MS;
     if (next && next.key) process.env[modelConfig.ENV_KEY] = String(next.key);
+    else delete process.env[modelConfig.ENV_KEY];
     if (next && next.mcpKey) {
       process.env[modelConfig.ENV_MCP_KEY] = String(next.mcpKey);
-      try { modelConfig.writeMcpServers(prep.agentDir, identity, next.mcpKey); } catch (_) {}
+      try {
+        const file = modelConfig.writeMcpServers(prep.agentDir, identity, next.mcpKey);
+        if (file) process.env.SODUWORK_MCP_SERVERS = file;
+        else delete process.env.SODUWORK_MCP_SERVERS;
+      } catch (_) { delete process.env.SODUWORK_MCP_SERVERS; }
+    } else {
+      delete process.env[modelConfig.ENV_MCP_KEY];
+      delete process.env.SODUWORK_MCP_SERVERS;
+    }
+    if (next?.localOnly) {
+      delete process.env.SODUWORK_HUB_ORIGIN;
+    } else {
+      try { process.env.SODUWORK_HUB_ORIGIN = new URL(identity?.hub || '').origin; } catch (_) {}
     }
   }
   const modelSelection = require('../conversation/model-selection').create({
@@ -485,11 +511,13 @@ async function open(opts) {
       // Keep strict Hub deployments usable after the 30-minute device session
       // expires.  The fallback request still handles older compatibility
       // deployments, but renewing here avoids sending a stale session at all.
-      try {
-        const fresh = await deviceAuth.ensureSession(app, identity);
-        if (fresh) identity.session = fresh;
-      } catch (_) { /* fetchSelection will perform the bounded secret fallback */ }
-      return modelConfig.fetchSelection(identity, name);
+      if (!String(name).startsWith('local:')) {
+        try {
+          const fresh = await deviceAuth.ensureSession(app, identity);
+          if (fresh) identity.session = fresh;
+        } catch (_) { /* fetchSelection will perform the bounded secret fallback */ }
+      }
+      return modelConfig.fetchSelection(identity, name, 8000, global.fetch, false, 'pi', { app });
     },
     persist: name => piSession.sessionManager.appendCustomEntry('soduwork.model.selection', { name }),
     changed: () => _emit({ kind: 'model-selection' }),
@@ -498,9 +526,10 @@ async function open(opts) {
         acc.push({ type: 'context_reset' }); prep.model = next; handle.model = next; return;
       }
       runtime.registerProvider('soduwork', require('../conversation/model-selection').piProvider(next));
-      const target = runtime.getModel('soduwork', next.id);
+      const target = configureLocalTransport(runtime.getModel('soduwork', next.id), next);
       if (!target) throw new Error('Model unavailable');
       await piSession.setModel(target);
+      model = target;
       require('./context-recovery').configure(resources.settingsManager, target.contextWindow);
       acc.push({ type: 'context_reset' });
       prep.model = next; handle.model = next;
@@ -509,24 +538,33 @@ async function open(opts) {
   });
   async function refreshModelTicketIfNeeded(force = false) {
     if (prep.model.modality === 'image') return { ok: true };
+    // Device-local models have no expiring Hub proxy ticket. A forced retry
+    // may reload local credentials, but must retain the local reference.
+    if (prep.model.localOnly && !force) return { ok: true };
     if (!force && modelTicketExpiresAt > Date.now() + MODEL_TICKET_REFRESH_SKEW_MS) return { ok: true };
     if (modelTicketRefresh) return modelTicketRefresh;
     modelTicketRefresh = (async () => {
       // A queued task may use a different model from the composer's future
       // selection. Renew the model already applied to this turn, never swap it.
-      const name = prep.model.id || modelSelection.view().activeName || '';
-      try {
-        const fresh = await deviceAuth.ensureSession(app, identity);
-        if (fresh) identity.session = fresh;
-      } catch (_) { /* the request helper can still use the compatibility bridge */ }
-      const next = await modelConfig.fetchSelection(identity, name, 8000, global.fetch, true);
+      const name = prep.model.localOnly ? prep.model.modelRef || modelSelection.view().activeName || ''
+        : prep.model.id || modelSelection.view().activeName || '';
+      if (prep.model.localOnly && !String(name).startsWith('local:')) {
+        return { ok: false, reason: 'Local model reference is unavailable; select the local model again.' };
+      }
+      if (!String(name).startsWith('local:')) {
+        try {
+          const fresh = await deviceAuth.ensureSession(app, identity);
+          if (fresh) identity.session = fresh;
+        } catch (_) { /* the request helper can still use the compatibility bridge */ }
+      }
+      const next = await modelConfig.fetchSelection(identity, name, 8000, global.fetch, true, 'pi', { app });
       if (!next || !next.ok || !next.model) {
         return { ok: false, reason: (next && next.reason) || '模型对话凭据刷新失败，请重试',
           ...require('../../core/token-quota').fields(next) };
       }
       if (next.model.modality === 'image') return { ok: true };
       runtime.registerProvider('soduwork', require('../conversation/model-selection').piProvider(next.model));
-      const target = runtime.getModel('soduwork', next.model.id);
+      const target = configureLocalTransport(runtime.getModel('soduwork', next.model.id), next.model);
       if (!target) return { ok: false, reason: '模型对话凭据刷新后模型不可用，请重试' };
       await piSession.setModel(target);
       require('./context-recovery').configure(resources.settingsManager, target.contextWindow);

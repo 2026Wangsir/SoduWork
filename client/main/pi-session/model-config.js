@@ -5,9 +5,10 @@
    model-service key. All production conversations obtain model configuration here, and credentials
    are never exposed to the renderer.
 
-   Keep plaintext credentials off disk: models.json contains only the $SODUWORK_PROXY_KEY variable
-   reference; its value is supplied through process.env. Pi supports this $ENV interpolation,
-   as also used by the backend _write_pi_models helper.
+   Keep plaintext credentials off disk: managed models.json contains only the
+   $SODUWORK_PROXY_KEY variable reference; local no-key models use a non-secret
+   marker and suppress the Authorization header after model resolution. Values
+   are supplied through process.env or the host-side encrypted store.
 
    Point PI_CODING_AGENT_DIR to a separate directory under this application's userData.
    Do not share ~/.pi/agent/ with backend-dispatched sessions, which manage their own configuration. */
@@ -16,6 +17,9 @@ const path = require('path');
 const { fetchWithDeviceAuthRetry, accountScopeKey } = require('../device-auth-request');
 const contextWindow = require('../conversation/context-window');
 const thinkingCapabilities = require('../conversation/thinking-capabilities');
+const localModels = require('../local-model-store.cjs');
+const runtimeContext = require('../agent-runtime/process-context');
+const localPrivacy = require('./local-model-runtime-privacy.cjs');
 
 const ENV_KEY = 'SODUWORK_PROXY_KEY';          // Environment variable referenced by models.json.
 const ENV_MCP_KEY = 'SODUWORK_MCP_KEY';
@@ -43,6 +47,16 @@ function configuredModel(app) {
     for (const provider of Object.values(value && value.providers || {})) {
       for (const model of Array.isArray(provider?.models) ? provider.models : []) {
         if (String(model?.modality || '').toLowerCase() === 'image') continue;
+        const localRef = String(model?.localRef || provider?.localRef || '').trim();
+        if (provider?.localOnly === true && localRef.startsWith('local:')) {
+          // The isolated runtime cannot read Electron safeStorage directly;
+          // its host RPC is the authority for whether the local reference exists.
+          try {
+            if (typeof runtimeContext.current?.()?.localModel === 'function') return localRef;
+          } catch (_) {}
+          try { if (localModels.resolve(localRef)) return localRef; } catch (_) {}
+          continue;
+        }
         const id = String(model?.id || '').trim();
         if (id) return id;
       }
@@ -86,14 +100,40 @@ function historicalModel(app, identity, modelName = '') {
  */
 async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl = global.fetch, force = false,
   agentId = 'pi', options = {}) {
-  if (!identity || !identity.hub || !identity.clientId || (!identity.session && !identity.secret)) {
-    return { ok: false, reason: '这台电脑还没连上 SoduWork 后台（先打开桌宠登录一次）' };
-  }
+  modelName = String(modelName || '').trim();
+  const requestedAgent = String(agentId || 'pi').trim().toLowerCase().replace(/^local:/, '');
   if (require('./image-model').imageChoice(modelName)) {
     return { ok: false, reason: '图片模型不能作为对话推理模型；请使用 Pi 直接生图，或在对话中使用图片插件' };
   }
+  if (String(modelName || '').startsWith('local:')) {
+    if (requestedAgent !== 'pi') {
+      return { ok: false, reason: '本地模型仅支持本机 Pi 对话，请选择托管模型' };
+    }
+    let local = null;
+    try {
+      const runtime = runtimeContext.current?.();
+      local = typeof runtime?.localModel === 'function'
+        ? await runtime.localModel(modelName)
+        : localModels.resolve(modelName);
+    } catch (_) { local = null; }
+    if (!local) return { ok: false, reason: '本地模型不存在或凭据未配置，请在「我的模型」中刷新' };
+    const thinking = thinkingCapabilities.profile({ ...local, id: local.name });
+    return { ok: true, localOnly: true, model: {
+      baseUrl: local.baseUrl, key: local.key, id: local.runtimeId || local.modelRef,
+      wireModelId: local.name, label: local.label || local.name,
+      provider: local.provider, providerName: local.providerName, keyFrom: 'local', modelRef: local.modelRef,
+      configRevision: local.configRevision,
+      input: ['text'], modality: local.modality || 'chat', maxOutputTokens: local.config?.maxOutputTokens,
+      ...contextWindow.resolveContextWindow({ contextWindow: local.ctxWindow, modelName: local.name, provider: local.provider }),
+      ...thinking,
+      ...(thinking.format ? { thinkingFormat: thinking.format } : {}),
+      localOnly: true, proxyExpiresAt: 0,
+    } };
+  }
+  if (!identity || !identity.hub || !identity.clientId || (!identity.session && !identity.secret)) {
+    return { ok: false, reason: '这台电脑还没连上 SoduWork 后台（先打开桌宠登录一次）' };
+  }
   const hub = String(identity.hub).replace(/\/+$/, '');
-  const requestedAgent = String(agentId || 'pi').trim().toLowerCase().replace(/^local:/, '');
   const ignoreAgentPreference = options && options.ignoreAgentPreference === true;
   const custom = requestedAgent.startsWith('custom-') &&
     require('../agent-runtime/runtime-catalog').runtime(requestedAgent)?.modelMode === 'managed';
@@ -151,6 +191,11 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
     if (!d || !d.ok) return { ok: false, reason: custom && d?.reason === '此底座不使用企业模型配置，请检查执行底座'
       ? '后台尚不支持新底座的模型配置，请更新后台后重试' : (d && d.reason) || '后台没给出可用的模型' };
     if (!d.key || !d.model) return { ok: false, reason: '后台回的配置不完整（缺 key 或 model）' };
+    if (d.quotaScope === 'personal' && (agent !== 'pi' || d.quotaVersion !== 2 ||
+        d.personalQuotaSupported !== true || typeof d.quotaUsageToken !== 'string' || !d.quotaUsageToken ||
+        !String(d.providerKey || d.provider || '').trim())) {
+      return { ok: false, reason: '服务端需要升级后才能校验个人 Token 额度' };
+    }
     const issuedAt = Date.now();
     const expiresIn = Math.max(0, Number(d.expiresIn) || 0);
     const value = {
@@ -161,6 +206,10 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
         mcpKey: d.mcpKey || '',
         id: d.model,
         quotaProvider: d.providerKey || d.provider || '',
+        ...(d.quotaVersion === 2 && ['personal', 'platform'].includes(d.quotaScope) ? {
+          quotaVersion: 2, quotaScope: d.quotaScope,
+          ...(typeof d.quotaUsageToken === 'string' ? { quotaUsageToken: d.quotaUsageToken } : {}),
+        } : {}),
         label: d.label || d.model,
         maxOutputTokens: d.maxOutputTokens,
         capabilityProfile: d.capabilityProfile,
@@ -223,14 +272,23 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
 
 /* Write models.json only when content changes to avoid unnecessary concurrent file replacement. */
 function writeModels(dir, model) {
+  const localRef = model.localOnly ? localPrivacy.reference(model) : '';
+  // Local runtime capabilities are registered in memory after SDK construction.
+  // The bootstrap file must not reveal even a private model-family hint.
+  if (localRef) model = { id: localRef, label: localPrivacy.LOCAL_LABEL,
+    baseUrl: localPrivacy.LOCAL_ENDPOINT, localOnly: true, modelRef: localRef,
+    reasoning: false, contextWindow: DEFAULT_CTX, input: ['text'] };
   const thinking = thinkingCapabilities.profile(model);
   const want = {
     providers: {
       soduwork: {
         name: 'SoduWork 模型服务',
-        baseUrl: model.baseUrl,
+        baseUrl: model.localOnly ? localPrivacy.LOCAL_ENDPOINT : model.baseUrl,
         api: 'openai-completions',
-        apiKey: '$' + ENV_KEY,
+        ...(model.localOnly ? { localOnly: true } : {}),
+        ...(localRef ? { localRef } : {}),
+        ...(model.key ? { apiKey: '$' + ENV_KEY } :
+          (model.localOnly ? { apiKey: 'soduwork-local-no-key' } : {})),
         // OpenAI-compatible services may not support these two optional capabilities; disable them by default.
         compat: {
           supportsDeveloperRole: false,
@@ -238,7 +296,8 @@ function writeModels(dir, model) {
           ...(thinking.format ? { thinkingFormat: thinking.format } : {}),
         },
         models: [{
-          id: model.id, name: model.label,
+          id: localRef || model.id, name: model.localOnly ? localPrivacy.LOCAL_LABEL : model.label,
+          ...(localRef ? { localRef } : {}),
           input: model.input || ['text'],
           reasoning: Boolean(thinking.reasoning),
           ...(thinking.reasoning && thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
@@ -253,7 +312,8 @@ function writeModels(dir, model) {
   try {
     if (fs.readFileSync(file, 'utf8') === blob) return file;
   } catch (e) { /* Write the configuration when the existing file is absent or unreadable. */ }
-  fs.writeFileSync(file, blob, 'utf8');
+  fs.writeFileSync(file, blob, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return file;
 }
 
@@ -264,7 +324,7 @@ function writeModels(dir, model) {
  */
 function writeMcpServers(dir, identity, mcpKey = '') {
   const hub = String((identity && identity.hub) || '').replace(/\/+$/, '');
-  if (!hub || !identity.clientId || !mcpKey) return '';
+  if (!hub || !identity?.clientId || !mcpKey) return '';
   const want = {
     servers: {
       soduwork: {
@@ -328,16 +388,24 @@ async function fetchSelection(identity, name = '', timeoutMs = 8000, fetchImpl =
 }
 
 async function prepare(app, identity, modelName = '', options = {}) {
+  try { await require('../local-model-privacy.cjs').prepare(app); }
+  catch (_) { return { ok: false, reason: '本地模型隐私保护初始化失败，请检查本机安全存储后重试' }; }
   const got = await fetchSelection(identity, modelName, 8000, global.fetch, false, 'pi', { ...options, app });
   if (!got.ok) return got;
   const dir = agentDir(app);
   writeModels(dir, got.model);
   if (got.model.mcpKey) process.env[ENV_MCP_KEY] = got.model.mcpKey;
-  try { process.env.SODUWORK_HUB_ORIGIN = new URL(identity.hub).origin; } catch (_) {}
+  else delete process.env[ENV_MCP_KEY];
+  if (got.model.localOnly) delete process.env.SODUWORK_HUB_ORIGIN;
+  else {
+    try { process.env.SODUWORK_HUB_ORIGIN = new URL(identity.hub).origin; } catch (_) {}
+  }
   const mcp = writeMcpServers(dir, identity, got.model.mcpKey);
-  process.env[ENV_KEY] = got.model.key;
+  if (got.model.key) process.env[ENV_KEY] = got.model.key;
+  else delete process.env[ENV_KEY];
   process.env[ENV_AGENT_DIR] = dir;
   if (mcp) process.env.SODUWORK_MCP_SERVERS = mcp;    // Expose the servers.json location to the bridge.
+  else delete process.env.SODUWORK_MCP_SERVERS;
   noProxyFor(got.model.baseUrl);
   // Configuration reads must not submit inference requests or consume model quota.
   // Actual model calls start when the user sends a message or runs a task.

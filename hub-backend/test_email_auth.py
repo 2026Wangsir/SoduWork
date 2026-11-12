@@ -137,6 +137,107 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
         response = await self.post("/email-challenges", {"email": "person@example.test", "purpose": "login"})
         self.assertEqual(response.status_code, 503)
 
+    async def test_login_challenge_rejects_unknown_email_before_creating_mail_or_account(self):
+        response = await self.post("/email-challenges", {"email": "New.Person@Example.Test", "purpose": "login"})
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "ACCOUNT_NOT_REGISTERED")
+        async with SessionLocal() as session:
+            for table in (EmailChallenge, MailOutbox, models.User):
+                self.assertEqual(await session.scalar(select(func.count()).select_from(table)), 0)
+            device = await session.get(models.Client, "email-device-1")
+            self.assertEqual(device.auth_state, "pending")
+            self.assertIsNone(device.user_ref)
+        # The login check does not consume the separate registration cooldown.
+        await self.register("new.person@example.test")
+
+    async def test_login_challenge_validates_email_before_lookup_or_mail(self):
+        for address in ("not-an-email", "name@example", "name..part@example.test", "name@-example.test"):
+            with self.subTest(address=address):
+                response = await self.post("/email-challenges", {"email": address, "purpose": "login"})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(response.json()["detail"]["code"], "EMAIL_INVALID")
+        async with SessionLocal() as session:
+            for table in (EmailChallenge, MailOutbox, EmailRateLimit):
+                self.assertEqual(await session.scalar(select(func.count()).select_from(table)), 0)
+
+    async def test_login_challenge_lookup_requires_device_credentials(self):
+        for headers, expected, code in (({}, 422, "DEVICE_AUTH_FAILED"),
+                                        ({"X-Device-Key": "9" * 48}, 401, "DEVICE_KEY_INVALID")):
+            response = await self.http.post("/api/v1/client-auth/email-challenges", headers=headers,
+                json={"device": "email-device-1", "email": "unknown@example.test", "purpose": "login"})
+            self.assertEqual(response.status_code, expected, response.text)
+            self.assertEqual(response.json()["detail"]["code"], code)
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(EmailRateLimit)), 0)
+
+    async def test_unknown_login_checks_share_durable_email_device_and_ip_limits(self):
+        first = await self.post("/email-challenges", {"email": "new@example.test", "purpose": "login"})
+        self.assertEqual(first.status_code, 404, first.text)
+        second = await self.post("/email-challenges", {"email": "NEW@example.test", "purpose": "login"}, 2)
+        self.assertEqual(second.status_code, 429, second.text)
+        self.assertEqual(second.json()["detail"]["code"], "AUTH_RATE_LIMITED")
+        async with SessionLocal() as session:
+            for identity in ("send-cooldown:login:new@example.test", "send-email:new@example.test",
+                             "send-device:email-device-1", "send-ip:127.0.0.1"):
+                budget = await session.get(EmailRateLimit, email_auth._digest("account-rate\0" + identity))
+                self.assertIsNotNone(budget, identity)
+                self.assertEqual(budget.count, 1)
+            # A fresh address must not bypass the device-wide budget.
+            await session.execute(update(EmailRateLimit).where(
+                EmailRateLimit.key == email_auth._digest("account-rate\0send-device:email-device-1")
+            ).values(count=30))
+            await session.commit()
+        limited = await self.post("/email-challenges", {"email": "different@example.test", "purpose": "login"})
+        self.assertEqual(limited.status_code, 429, limited.text)
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(MailOutbox)), 0)
+
+    async def test_login_challenge_normalizes_registered_email_and_preserves_otp_login(self):
+        registered, _ = await self.register("person@example.test")
+        proof = await self.proof(" PERSON@EXAMPLE.TEST ", "login", 2)
+        async with SessionLocal() as session:
+            challenge = await session.get(EmailChallenge, proof["challengeId"])
+            self.assertEqual(challenge.email_normalized, "person@example.test")
+            self.assertEqual(challenge.purpose, "login")
+        result = await self.post("/login/email-code", proof, 2)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()["user"]["id"], registered["user"]["id"])
+
+    async def test_unknown_login_with_registration_disabled_does_not_offer_registration(self):
+        registered, _ = await self.register()
+        async with SessionLocal() as session:
+            await client_access.update_policy(session, {"allowSelfRegistration": False})
+        response = await self.post("/email-challenges", {"email": "new@example.test", "purpose": "login"}, 2)
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "SELF_REGISTRATION_DISABLED")
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(MailOutbox)), 1)
+        proof = await self.proof(purpose="login", device=2)
+        result = await self.post("/login/email-code", proof, 2)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()["user"]["id"], registered["user"]["id"])
+
+    async def test_login_challenge_routes_legacy_or_unverified_accounts_without_issuing_proof(self):
+        async with SessionLocal() as session:
+            session.add(models.User(id="legacy-name", username="Legacy@Example.Test",
+                                    password_hash=hash_password("Original-password-123"), is_active=True))
+            session.add(models.User(id="unverified-email", username="unverified.employee",
+                                    email="reserved@example.test", email_normalized="reserved@example.test",
+                                    password_hash=hash_password("Original-password-123"), is_active=True))
+            session.add(models.User(id="retired-alias", username="old@example.test",
+                                    email="current@example.test", email_normalized="current@example.test",
+                                    email_verified_at=email_auth.now(),
+                                    password_hash=hash_password("Original-password-123"), is_active=True))
+            await session.commit()
+        for address in ("legacy@example.test", "RESERVED@EXAMPLE.TEST", "old@example.test"):
+            response = await self.post("/email-challenges", {"email": address, "purpose": "login"})
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"]["code"], "LEGACY_EMAIL_BINDING_REQUIRED")
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(MailOutbox)), 0)
+            self.assertEqual(await session.scalar(select(func.count()).select_from(EmailChallenge)), 0)
+            self.assertEqual(await session.scalar(select(func.count()).select_from(models.User)), 3)
+
     async def test_challenge_acknowledges_queue_and_reports_only_confirmed_send(self):
         response = await self.post("/email-challenges", {"email": "person@example.test", "purpose": "register"})
         self.assertEqual(response.status_code, 200, response.text)
@@ -228,11 +329,26 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code.status_code, 200, code.text)
         unknown = await self.post("/login/password", {"email": "unknown@example.test", "password": "Original-password-123"})
         self.assertEqual(unknown.status_code, 401)
-        unknown_proof = await self.proof("unknown@example.test", "login")
-        unknown_code = await self.post("/login/email-code", unknown_proof)
+        unknown_code = await self.post("/email-challenges", {"email": "unknown@example.test", "purpose": "login"})
         self.assertEqual(unknown_code.status_code, 404)
+        self.assertEqual(unknown_code.json()["detail"]["code"], "ACCOUNT_NOT_REGISTERED")
         async with SessionLocal() as session:
             self.assertEqual(await session.scalar(select(func.count()).select_from(models.User)), 1)
+
+    async def test_email_code_login_rechecks_registration_after_issuing_proof(self):
+        registered, _ = await self.register()
+        proof = await self.proof(purpose="login", device=2)
+        async with SessionLocal() as session:
+            await session.execute(update(models.User).where(models.User.id == registered["user"]["id"])
+                                  .values(email="replacement@example.test", email_normalized="replacement@example.test"))
+            await session.commit()
+        result = await self.post("/login/email-code", proof, 2)
+        self.assertEqual(result.status_code, 404, result.text)
+        self.assertEqual(result.json()["detail"]["code"], "ACCOUNT_NOT_REGISTERED")
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(models.User)), 1)
+            self.assertIsNotNone((await session.get(EmailChallenge, proof["challengeId"])).consumed_at)
+            self.assertIsNone((await session.get(models.Client, "email-device-2")).user_ref)
 
     async def test_legacy_username_login_retained_without_silent_creation(self):
         async with SessionLocal() as session:
@@ -260,8 +376,17 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(signed_in.json()["user"]["emailVerified"])
         self.assertFalse(signed_in.json()["created"])
 
-        # Email ownership alone must neither log into nor reset this old identity.
+        # A previously issued proof must not survive removal of the verified
+        # binding or promote the remaining legacy username into email ownership.
+        async with SessionLocal() as session:
+            await session.execute(update(models.User).where(models.User.id == "legacy-email-name")
+                                  .values(email=address, email_normalized=address, email_verified_at=email_auth.now()))
+            await session.commit()
         login_proof = await self.proof(address, "login", 2)
+        async with SessionLocal() as session:
+            await session.execute(update(models.User).where(models.User.id == "legacy-email-name")
+                                  .values(email=None, email_normalized=None, email_verified_at=None))
+            await session.commit()
         code_login = await self.post("/login/email-code", login_proof, 2)
         self.assertEqual(code_login.status_code, 404, code_login.text)
         reset_proof = await self.proof(address, "reset_password", 2)
@@ -293,6 +418,10 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
                 current = await self.post(route, {key: "person@example.test", "password": "Original-password-123"})
                 self.assertEqual(current.status_code, 200, current.text)
                 self.assertEqual(current.json()["user"]["id"], uid)
+        proof = await self.proof("PERSON@EXAMPLE.TEST", "login", 2)
+        code_login = await self.post("/login/email-code", proof, 2)
+        self.assertEqual(code_login.status_code, 200, code_login.text)
+        self.assertEqual(code_login.json()["user"]["id"], uid)
         async with SessionLocal() as session:
             await session.execute(update(models.User).where(models.User.id == uid).values(is_active=False))
             await session.commit()

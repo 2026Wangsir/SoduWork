@@ -50,6 +50,63 @@ test('Word conversion selects the new document in both local cards and requireme
   assert.deepEqual(names(snapshot), ['中学生课表.docx', '中学生课表.md']);
 });
 
+test('exclusive final-format requests exclude old manifest roots from cards and transport', async t => {
+  const f = fixture(t);
+  f.write('report.txt', 'Original report', true);
+  f.write('report.html', '<!doctype html><html><body>Final report</body></html>');
+  f.manifest({deliverables:[{path:'report.txt'}, {path:'report.html'}]});
+  for (const request of [
+    '请把交付格式改成 HTML，只保留最终网页',
+    '改成 HTML，仅保留 HTML 文件',
+    'Convert to HTML and keep only the final HTML file.',
+    'Convert to HTML; only keep the final HTML.',
+  ]) {
+    f.messages(request, 'Final result: [report.html](report.html)');
+    assert.deepEqual(names(runtime.snapshot(f.handle)), ['report.html'], request);
+    assert.deepEqual((await taskDelivery.capture(f.handle, 'completed')).files.map(item => item.name),
+      ['report.html'], request);
+  }
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'report.txt'), 'utf8'), 'Original report',
+    'selection must not delete historical workspace files');
+});
+
+test('explicit retention of both formats or original versions survives exclusive-format wording', async t => {
+  const f = fixture(t);
+  f.write('report.txt', 'Original report', true);
+  f.write('report.html', '<!doctype html><html><body>Final report</body></html>');
+  f.manifest({deliverables:[{path:'report.txt'}, {path:'report.html'}]});
+  for (const request of [
+    '改成 HTML，同时保留原来的 TXT',
+    '改成 HTML，保留旧版',
+    '改成 HTML，只保留最终网页，同时保留旧版 TXT 以供审核',
+    '改成 HTML，不只保留最终网页',
+    '改成 HTML，只保留旧版 HTML',
+    'Convert to HTML and keep both formats.',
+    'Convert to HTML, keep the original TXT.',
+    'Convert to HTML; keep only the final HTML; keep the original TXT for audit.',
+    'Convert to HTML; keep only the final HTML; retain the original TXT for audit.',
+    'Convert to HTML; keep only the final HTML; preserve the original TXT for audit.',
+    'Convert to HTML; keep only the final HTML; do not discard the original TXT.',
+    'Convert to HTML; retain the original TXT for audit; keep only the final HTML.',
+    '改成 HTML，只保留最终网页，原 TXT 也留着以供审核',
+    '改成 HTML，只保留最终网页，原 TXT 不要删除',
+    '改成 HTML，原 TXT 也留着以供审核，只保留最终网页',
+    '改成 HTML，原 TXT 不要删除，只保留最终网页',
+    'Convert to HTML; do not keep only the final HTML.',
+    '不要这么做：改成 HTML，只保留最终网页',
+    'Do not do this: convert to HTML and keep only the final HTML.',
+    'Convert to HTML; the original TXT must remain available; keep only the final HTML.',
+    'Convert to HTML while the original TXT remains available and keep only the final HTML.',
+    '改成 HTML，原 TXT 别删，只保留最终网页',
+    'Convert to HTML and keep only the final HTML and the original TXT.',
+  ]) {
+    f.messages(request, 'Final result: [report.html](report.html)');
+    assert.deepEqual(names(runtime.snapshot(f.handle)), ['report.html', 'report.txt'], request);
+    assert.deepEqual((await taskDelivery.capture(f.handle, 'completed')).files.map(item => item.name).sort(),
+      ['report.html', 'report.txt'], request);
+  }
+});
+
 test('explicit final links disambiguate drafts without losing referenced website resources', async t => {
   const f = fixture(t);
   f.write('课表.md', '# draft'); f.write('中学生课表.md', '# final');

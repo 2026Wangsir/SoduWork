@@ -1,6 +1,10 @@
 if (require('./main/app-preflight-entry.cjs').dispatch()) return;
 
+require('./main/terminal-output.cjs').initialize();
+
 const { app, BrowserWindow, WebContentsView, webContents, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, Notification, shell, safeStorage, dialog, net, powerMonitor } = require('electron');
+const _linuxStartup = require('./main/linux-startup.cjs');
+_linuxStartup.configure({ app });
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -11,6 +15,7 @@ const _distribution = require('./main/distribution.cjs');
  * Set it before any userData path consumers.
  */
 require('./main/userdata-path.cjs').initializeUserData(app);
+if (require('./main/keychain-startup.cjs').dispatch({ app, BrowserWindow, shell, nativeImage })) return;
 const _hubEndpoint = require('./main/hub-endpoint.cjs');
 _hubEndpoint.initialize(app);
 const _lifecycleDiagnostics = require('./main/lifecycle-diagnostics').install({ app });
@@ -137,14 +142,20 @@ const _remoteScreenSource = require('./main/remote-screen-source.cjs').create({
 });
 app.on('will-quit', () => _remoteScreenSource.dispose());
 const _onQuotaExceeded = (detail) => {
-    _deviceAuth.clearSession(app, detail || {});
+    // Quota admission is not an authentication failure. Retain the signed
+    // account identity so existing conversations keep their owner and events.
     BrowserWindow.getAllWindows().forEach((win) => {
       if (!win || win.isDestroyed()) return;
       try { win.webContents.send('device-auth-quota-exceeded', detail || {}); } catch (_) {}
     });
   };
 const _authorizeAI = require('./main/conversation/quota-admission.cjs').create({
-  app, identityOf: _deviceAuth.authenticatedIdentity, onQuotaExceeded: _onQuotaExceeded });
+  app, identityOf: _deviceAuth.authenticatedIdentity, onQuotaExceeded: _onQuotaExceeded,
+  onQuotaChanged: detail => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try { if (!win.isDestroyed()) win.webContents.send('device-auth-quota-changed', detail); } catch (_) {}
+    }
+  } });
 const _ordinaryConversations = _piSessionIpc.install({ app, ipcMain, BrowserWindow, identityOf: _sessionIdentity,
   sendIdentityOf: _deviceAuth.authenticatedIdentity,
   capabilityGrantsOf: _runnerRuntime.capabilityGrants,
@@ -162,8 +173,11 @@ _workPreview.install({ ipcMain, BrowserWindow, WebContentsView, screen, shell, a
 require('./main/app-settings-ipc.cjs').install({ app, ipcMain, safeStorage,
   identityOf: _deviceAuth.authenticatedIdentity,
   ownerOf: () => { const id = _deviceAuth.identity(app), owner = _deviceAuth.localOwner(app); return id && owner ? id.hub + ':' + owner : ''; } });
+require('./main/local-model-ipc.cjs').install({ app, ipcMain, safeStorage });
 _attachmentFiles.install({ app, ipcMain, BrowserWindow, dialog, net, shell, identityOf: _deviceAuth.identity,
   authenticatedIdentityOf: _deviceAuth.authenticatedIdentity });
+require('./main/acceptance-summary-export.cjs').install({ app, ipcMain, BrowserWindow, dialog,
+  identityOf: _deviceAuth.identity, authenticatedIdentityOf: _deviceAuth.authenticatedIdentity });
 _libraryExternal.install({ app, ipcMain, BrowserWindow, shell });
 require('./main/library-local.cjs').install({ app, ipcMain, BrowserWindow, shell, dialog, nativeImage });
 require('./main/pi-session/attachment-materialize').install({ app, ipcMain,
@@ -603,6 +617,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
+    if (_linuxStartup.focusRecovery(app)) return;
     if (_fileOpen.enqueue(_fileOpenModule.instanceFiles(
       argv, workingDirectory, app.isPackaged, additionalData))) return;
     // Reveal the existing instance even when minimized or hidden.
@@ -623,6 +638,7 @@ if (!gotTheLock) {
 
   _fileOpen.fromCommand(process.argv, process.cwd());
   app.whenReady().then(() => {
+    if (_linuxStartup.showRecovery({ app, BrowserWindow, safeStorage })) return;
     /*
      * Adopt the Runner-managed office engine so client probes and child processes use the same
      * installation. Missing engines must not block startup.

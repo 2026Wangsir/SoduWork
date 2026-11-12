@@ -2,13 +2,24 @@
 (function (global) {
   'use strict';
   const R = global.Requirements;
-  const pendingSchedules = new Map();
+  const downloadStates = new Map();
   let identityEpoch = 0;
   let loadController = null, loadTiming = null;
   let root = null, task = null, seq = 0, returnFocus = null, busy = false, editing = false, files = [], pendingUploads = [];
   let pendingConfirmation = null, evidenceReturnFocus = null, evidenceRequest = 0, editBaseline = null, saving = false;
   let refreshRequest = 0, refreshFlight = null, editVersion = null, mountedTrace = null, refreshPending = false;
   let approvalState = '';
+  let summaryExport = null;
+  let projectPicker = null;
+  let conflictReload = null;
+  let taskRequest = 0, taskAcceptedRequest = 0;
+  function canApplyTaskReply(value, request) {
+    const incoming = Number(value?.requirementVersion || 0), current = Number(task?.requirementVersion || 0);
+    return incoming > current || incoming === current && request >= taskAcceptedRequest;
+  }
+  function acceptTaskReply(value, request) {
+    task = value; taskAcceptedRequest = Math.max(taskAcceptedRequest, request);
+  }
   function approvalSignature() {
     const context = global.RequirementsBoard?.context?.(), item = task && R.approval(task, context);
     return JSON.stringify([task?.id, item?.id, item?.status, item?.myDecision, task && R.waitingOn(task, context)]);
@@ -32,6 +43,16 @@
     const node = root?.querySelector('[data-rq-bundle-status]');
     if (node) { node.textContent = text; node.hidden = !text; }
   }
+  function downloadFeedback(id, text, pending = false) {
+    downloadStates.set(id, {text, pending});
+    root?.querySelectorAll('.rq-material').forEach(row => {
+      if (row.dataset.rqFileId !== id) return;
+      const status = row.querySelector('[data-rq-download-status]'), button = row.querySelector('[data-rq-download]');
+      if (status) { status.textContent = text; status.hidden = !text; }
+      if (button) { button.disabled = pending; button.setAttribute('aria-busy', String(pending)); }
+    });
+    feedback(text);
+  }
   function editValues() {
     const fields = root?.querySelector('#rqEditForm')?.elements;
     if (!fields) return null;
@@ -40,6 +61,7 @@
       assigneeUserId: fields.assigneeUserId?.value || '', acceptanceCriteria: fields.acceptance.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
       ...(fields.triageStage ? {triageStage: fields.triageStage.value} : {}),
       ...(fields.visibility ? {visibility: fields.visibility.value} : {}),
+      ...(fields.projectId ? {projectId: fields.projectId.value || null} : {}),
       ...(fields.due ? {due: fields.due.value} : {})};
   }
   function editChanges() {
@@ -144,6 +166,8 @@
     if (isComments) void loadComments(); else void loadExtensions();
   }
   function finalizeClose() {
+    projectPicker?.dispose(); projectPicker = null;
+    conflictReload = null;
     loadController?.abort(); loadController = null;
     loadTiming?.mark('cancelled'); loadTiming = null;
     global.ForwardSelect?.destroy(root);
@@ -154,7 +178,7 @@
     const journey = root?.querySelector('[data-rq-trace]');
     if (journey) global.TaskExecutionJourney?.unmount(journey);
     mountedTrace = null; refreshPending = false; refreshFlight = null;
-    seq++; task = null; busy = false; saving = false; editing = false; editBaseline = null; editVersion = null; files = []; pendingUploads = [];
+    seq++; downloadStates.clear(); task = null; busy = false; saving = false; editing = false; editBaseline = null; editVersion = null; files = []; pendingUploads = [];
     if (root) { root.remove(); root = null; }
     const origin = returnFocus?.isConnected ? returnFocus : [...document.querySelectorAll('[data-rq-open]')]
       .find(node => node.dataset.rqOpen === returnFocus?.dataset.rqOpen);
@@ -184,6 +208,7 @@
       '<div class="rq-detail-modal-card rq-confirm-card"><div class="rq-confirm-icon" aria-hidden="true">!</div><div class="rq-confirm-copy"><h3 id="rqConfirmTitle">放弃未保存的修改？</h3><p id="rqConfirmDescription">已保存的需求内容会保留。</p></div><div class="rq-confirm-actions"><button type="button" data-rq-confirm-cancel>继续编辑</button><button type="button" class="rq-primary" data-rq-confirm-discard>放弃修改</button></div></div></div>';
     document.body.appendChild(node);
     global.RequirementFields?.bindTags(node);
+    global.RequirementFields?.bindVisibility?.(node);
     node.addEventListener('click', event => {
       if (busy) return;
       const more = node.querySelector('.rq-detail-more');
@@ -201,7 +226,7 @@
       if (event.target === node || event.target.closest('[data-rq-dismiss]')) { if (!busy) void close(); return; }
       if (event.target.closest('[data-rq-edit]') && task && R.canEdit(task)) { void setEditing(true); return; }
       if (event.target.closest('[data-rq-edit-cancel]')) { void setEditing(false); return; }
-      if (event.target.closest('[data-rq-reload]')) { if (task) void open(task.id); return; }
+      if (event.target.closest('[data-rq-reload]')) { void reloadEdits(); return; }
       const maintenance = event.target.closest('[data-rq-archive],[data-rq-delete]');
       if (maintenance && task) {
         const action = maintenance.hasAttribute('data-rq-delete') ? 'delete' : R.stage(task) === 'closed' ? 'restore' : 'archive';
@@ -223,14 +248,19 @@
       const submitReview = event.target.closest('[data-rq-submit-review]');
       if (submitReview && task && !busy && R.canSubmitReview(task) && global.SoduWorkAPI?.submitTaskReview) {
         busy = true; submitReview.disabled = true; feedback('');
-        const request = seq;
-        Promise.resolve(global.SoduWorkAPI.submitTaskReview(task.id, ''))
+        const request = seq, id = task.id;
+        Promise.resolve().then(() => {
+          if (request === seq) return global.SoduWorkAPI.submitTaskReview(id, '');
+        })
           .then(async result => {
             if (request !== seq) return;
-            await global.RequirementsBoard?.refresh?.();
-            await open(task.id);
+            if (result?.ok !== true) throw new Error(result?.reason || result?.error || result?.message || '操作没有完成，请重试');
+            // The accepted receipt completes this drawer. List refreshes must
+            // not reopen it or leave its submit action available for retries.
+            close(true);
             if (result?.already) global.petSay?.('这条需求已经在待验收，请直接查看验收卡');
             else global.petSay?.('已提交验收，等待验收人确认');
+            await global.RequirementsBoard?.refresh?.();
           })
           .catch(error => { if (request === seq) feedback(errorText(error)); })
           .finally(() => { if (request === seq) { busy = false; if (submitReview.isConnected) submitReview.disabled = false; } });
@@ -276,6 +306,7 @@
       const remove = event.target.closest('[data-rq-remove-file]');
       if (remove) void removeAttachment(remove.dataset.rqRemoveFile);
       if (event.target.closest('[data-rq-artifact]')) global.soduWorkAPI?.openExternal?.(task.artifactUrl);
+      if (event.target.closest('[data-rq-export-summary]')) void exportAcceptanceSummary();
       if (event.target.closest('[data-rq-add-files]')) root.querySelector('#rqFileInput')?.click();
       if (event.target.closest('[data-rq-retry-files]')) void uploadPending();
       if (event.target.closest('[data-rq-automation]')) void createAutomation();
@@ -399,10 +430,11 @@
     timing?.mark('shell');
     root.querySelector('[data-rq-dismiss]').focus();
     try {
+      const taskRead = ++taskRequest;
       const value = await global.SoduWorkAPI.getTask(id, { signal: controller?.signal });
       if (request !== seq || !root) return;
       if (!value?.id) throw new Error('需求已移除或当前账号无权访问');
-      task = value; render();
+      acceptTaskReply(value, taskRead); render();
       timing?.mark('data');
       root.querySelector('.rq-detail-content').dataset.taskId = id;
       const attachments = await global.SoduWorkAPI.listAttachments(id);
@@ -438,14 +470,16 @@
           flight.queued = false;
           const refreshId = refreshRequest;
           try {
+            const taskRead = ++taskRequest;
             const latest = await global.SoduWorkAPI.getTask(id);
             if (!current()) return false;
             if (refreshId !== refreshRequest) continue;
             if (!latest?.id) throw new Error('需求已移除或当前账号无权访问');
-            if (Number(latest.requirementVersion || 0) < Number(task.requirementVersion || 0)) continue;
-            task = latest; applied = true;
+            if (!canApplyTaskReply(latest, taskRead)) continue;
+            acceptTaskReply(latest, taskRead); applied = true;
             if (editing) {
               updateHeader();
+              projectPicker?.paint();
               // Keep the draft visible, but prevent stale forms from changing executed work.
               if (lockExecutedDraft()) {
                 feedback(task.requirementEditBlockReason || '需求已开始执行，不能再编辑。未保存内容已保留，取消编辑可查看最新状态。');
@@ -467,6 +501,7 @@
     return flight.promise;
   }
   function render() {
+    conflictReload = null;
     global.ForwardSelect?.destroy(root);
     if (task.canViewExecution === false) {
       closeEvidencePanel();
@@ -480,11 +515,23 @@
       global.TaskExecutionJourney?.unmount(previousTrace); mountedTrace = null;
     }
     const canEdit = R.canEdit(task), phase = R.stage(task);
+    const sourceScope = task.repositoryIssue?.visibilityScope;
+    const fixedVisibility = ['repository', 'organization'].includes(sourceScope) ? sourceScope : '';
+    const visibilityLabel = fixedVisibility === 'repository' ? '仓库成员可见' :
+      fixedVisibility === 'organization' || task.visibility === 'organization' ? '同公司可见' : '仅相关人可见';
+    const visibilityOptions = fixedVisibility ? [[task.visibility || 'related', visibilityLabel]] :
+      [['organization', '同公司可见'], ['related', '仅相关人可见']];
     const metadataLocked = task.readOnly === true && task.status !== 'todo';
     const content = R.content(task);
     const priorities = global.TaskPriority?.labels || { normal: '普通' };
     const criteria = task.acceptanceCriteria || [];
     const ctx = global.RequirementsBoard?.context?.(), step = R.nextStep(task, ctx);
+    projectPicker?.dispose();
+    const projectRequest = seq, projectRoot = root;
+    projectPicker = global.RequirementFields?.projectPicker?.({value:task.projectId,
+      name:ctx?.projects?.get(String(task.projectId || '')) || '',
+      current:()=>projectRequest === seq && projectRoot === root,
+      editable:()=>editing && !busy && R.canEditProject(task)});
     const approvalItem = R.approval(task, ctx);
     approvalState = approvalSignature();
     const created = R.timeInfo({createdAt: task.createdAt, created: task.created}), changed = R.timeInfo(task);
@@ -499,11 +546,13 @@
     const overview = '<section class="rq-detail-overview rq-detail-section-card">' +
       '<div class="rq-detail-section-heading"><h3>' + sectionIcon('content') + '需求信息</h3></div>' +
       '<dl class="rq-detail-properties"><div><dt>类型</dt><dd>' + esc(R.kinds[task.kind] || R.kinds.requirement) + '</dd></div>' +
+      (projectPicker ? '<div><dt>关联项目</dt><dd><span data-rq-project-name>' + esc(projectPicker.label()) + '</span>' + projectPicker.statusHtml() + '</dd></div>' : '') +
       '<div><dt>优先级</dt><dd>' + esc(priorities[task.priority] || priorities.normal) + '</dd></div>' +
       '<div><dt>截止日期</dt><dd>' + esc(R.day(task.due) || '未设置') + '</dd></div>' +
-      '<div><dt>可见范围</dt><dd>' + (task.visibility === 'organization' ? '团队可见' : '仅相关人可见') + '</dd></div>' +
+      '<div><dt>可见范围</dt><dd>' + visibilityLabel + '</dd></div>' +
       '<div><dt>创建时间</dt><dd>' + timeProperty(created) + '</dd></div>' +
       '<div><dt>最近更新</dt><dd>' + timeProperty(changed) + '</dd></div></dl>' +
+      (global.RequirementFields?.visibilityHint?.(task.visibility, 'rqVisibilityReadHint', fixedVisibility) || '') +
       '<section class="rq-detail-block rq-detail-tag-block"><h4>' + sectionIcon('tags') + '标签</h4><div class="rq-detail-tags" data-rq-detail-tags>' +
       (tags.length ? tags.map(tag => '<span data-user-content>' + esc(tag) + '</span>').join('') : '<p class="rq-field-hint">暂无标签</p>') + '</div></section>' +
       '<section class="rq-detail-block"><h4>' + sectionIcon('content') + '背景与说明</h4><div class="rq-description"' + (content.note ? ' data-user-content' : '') + '>' + esc(R.displayNote(task) || '暂无补充说明') + '</div></section>' +
@@ -515,13 +564,16 @@
       '<label>背景与说明<textarea name="note" rows="5"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '>' + esc(content.note) + '</textarea></label>' +
       '<label>完成标准<span class="rq-field-hint">' + (task.status === 'todo' ? '每行一条' : '已进入执行，保留原完成标准') + '</span><textarea name="acceptance" rows="3"' + (task.status !== 'todo' ? ' readonly' : '') + '>' + esc(criteria.join('\n')) + '</textarea></label></section>' +
       '<section class="rq-edit-section"><h3>' + sectionIcon('settings') + '基本信息</h3>' +
+      (projectPicker ? '<label>关联项目' + projectPicker.html({id:'rqEditProject',name:'projectId',
+        hint:task.repoId ? '项目由已关联仓库确定，本次不迁移仓库' : ''}) + '</label>' : '') +
       '<div class="rq-field-pair"><label>类型<select name="kind"' + (task.status !== 'todo' ? ' disabled data-rq-locked' : '') + '>' + options(Object.entries(R.kinds), task.kind || 'requirement') + '</select></label>' +
       '<label>优先级<select name="priority"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '>' + options(Object.entries(priorities), task.priority || 'normal') + '</select></label></div>' +
       '<div class="rq-field-pair">' + (task.canViewExecution !== false ? '<label>截止日期<input type="date" name="due" value="' + esc(R.day(task.due)) + '"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '></label>' : '') +
       (!task.readOnly ? '<label>负责人<select name="assigneeUserId" data-search-placeholder="输入部分姓名搜索…"><option value="">未指派</option><option value="' + esc(task.assigneeUserId || '') + '" selected>' + esc(task.assigneeName || (task.assigneeUserId ? '当前负责人' : '未指派')) + '</option></select></label>' : '') + '</div>' +
       '<div class="rq-tag-field"><label for="rqTagsInput">标签</label>' + (global.RequirementFields?.tagHtml(task.tags, {id: 'rqTags', name: 'tags'}) || '') + '</div><div class="rq-field-pair">' +
-      ((!task.readOnly || R.roles(task).includes('creator')) ? '<label>可见范围<select name="visibility">' +
-        options([['organization', '团队可见'], ['related', '仅相关人可见']], task.visibility || 'related') + '</select></label>' : '') +
+      ((!task.readOnly || R.roles(task).includes('creator')) ? '<label>可见范围<select name="visibility" data-rq-visibility aria-describedby="rqVisibilityHint"' +
+        (fixedVisibility ? ' disabled data-rq-locked' : '') + '>' + options(visibilityOptions, task.visibility || 'related') + '</select>' +
+        (global.RequirementFields?.visibilityHint?.(task.visibility, 'rqVisibilityHint', fixedVisibility) || '') + '</label>' : '') +
       (R.canTriage(task) ? '<label>准备阶段<select name="triageStage">' + options(R.lanes.slice(0, 3), task.triageStage || 'ready') + '</select></label>' : '') +
       '</div></section></form>' : overview;
     const migrated = (task.migratedRequirements || []).map(item => '<details class="rq-source"><summary>' + esc(item.title || '历史需求') +
@@ -537,7 +589,7 @@
         '<button type="button" data-rq-extensions-open aria-haspopup="dialog">插件扩展</button>' : '') +
       (R.canSubmitReview(task) ? '<button type="button" data-rq-submit-review>提交验收</button>' : '') +
       (R.canManageAutomation(task) ? '<button type="button" data-rq-automation>' + (task.automationScheduleId ? '查看自动化' :
-        pendingSchedules.has(task.id) ? '重试关联自动化' : '设为自动化') + '</button>' : '') +
+        '设为自动化') + '</button>' : '') +
       (archive.visible ? '<button type="button" data-rq-archive' + locked(archive) + '>' + (phase === 'closed' ? '恢复需求' : '归档需求') + '</button>' : '') +
       (removal.visible ? '<button type="button" class="rq-danger" data-rq-delete' + locked(removal) + '>删除需求</button>' : '') +
       (maintenanceReason ? '<p class="rq-maintenance-reason" role="status">' + esc(maintenanceReason) + '</p>' : '');
@@ -546,7 +598,7 @@
      * canOpenConversation and label their local-device scope.
      */
     const actions = editing ? '<div class="rq-edit-actions"><button type="submit" form="rqEditForm" class="rq-primary" data-rq-save aria-live="polite">保存修改</button>' +
-      '<button type="button" data-rq-edit-cancel>取消</button><button type="button" data-rq-reload>重新加载</button></div>' : '<div class="rq-detail-actions rq-detail-toolbar">' +
+      '<button type="button" data-rq-edit-cancel>取消</button></div>' : '<div class="rq-detail-actions rq-detail-toolbar">' +
       (R.canTriage(task) && ['intake', 'clarifying'].includes(phase) ? '<button type="button" class="rq-primary" data-rq-ready>移至待开始</button>' : '') +
       (canArrange ? '<button type="button" class="rq-primary" data-rq-assign>安排执行</button>' : '') +
       (R.canOpenConversation(task, global.SoduWorkAPI?.clientId) && !reworkPending ? '<button type="button" data-rq-chat>打开执行会话（仅本机）</button>' : '') +
@@ -567,6 +619,7 @@
     if (footer) { footer.innerHTML = actions; footer.hidden = !actions; }
     const assignee = editing && root.querySelector('[name="assigneeUserId"]');
     if (assignee) global.ForwardSelect?.enhance(assignee);
+    projectPicker?.bind(root);
     const evidence = root.querySelector('[data-rq-execution]');
     if (evidenceOpen && !editing && task.canViewExecution !== false && evidence) {
       evidence.open = true;
@@ -702,8 +755,10 @@
       '<span class="rq-delivery-state ' + deliveryStateClass + '">' + deliveryState + '</span></div></div>' +
       reworkCard +
       (approvalCard ? '<div data-rq-approval-card>' + approvalCard + '</div>' : waitingOthers) +
-      (artifact ? '<div class="rq-delivery-actions">' +
-        '<button type="button" data-rq-artifact>查看交付链接 <span aria-hidden="true">↗</span></button></div>' : '') +
+      '<div class="rq-delivery-actions">' +
+      (artifact ? '<button type="button" data-rq-artifact>查看交付链接 <span aria-hidden="true">↗</span></button>' : '') +
+      '<button type="button" data-rq-export-summary' + (summaryExport?.request === seq ? ' disabled aria-busy="true"' : '') + '>导出验收摘要</button>' +
+      '<span data-rq-export-status role="status" aria-live="polite">' + (summaryExport?.request === seq ? '正在导出验收摘要…' : '') + '</span></div>' +
       '<div class="rq-delivery-sections"><details class="rq-evidence" data-rq-execution><summary><span><b>执行记录与交付证据</b><small>查看执行过程和可验证成果</small></span><i aria-hidden="true"></i></summary><div data-rq-trace></div></details>' +
       (progress.length ? '<details class="rq-evidence rq-history-panel"><summary><span><b>历史进展</b><small>' + progress.length + ' 条记录</small></span><i aria-hidden="true"></i></summary><ol class="rq-history">' +
         progress.map(row => '<li><div data-user-content>' + esc(row.text || row.content || '') + '</div><time>' +
@@ -750,6 +805,7 @@
       const validation = String(file.evidenceMeta?.verification?.state || file.validation?.state || '').toLowerCase();
       const validationLabel = validation === 'failed' ? '校验未通过' : validation && validation !== 'passed' ? '待校验' : '';
       const autoBundle = file.autoBundle === true;
+      const downloadState = downloadStates.get(String(file.id)) || {};
       const bundleIds = autoBundle ? ' data-rq-bundle-ids="' + esc(JSON.stringify(file.attachmentIds || [])) + '"' : '';
       const meta = [autoBundle ? '自动打包' : extension, file.size ? formatBytes(file.size) : '', round > 0 ? 'v' + round : '', version ? version.slice(0, 12) : '', validationLabel].filter(Boolean).join(' · ');
       const open = autoBundle
@@ -757,9 +813,11 @@
         : '<button type="button" class="rq-attachment" data-rq-file="' + esc(file.id) + '">' + esc(name) + '</button>';
       const download = autoBundle
         ? '<button type="button" class="rq-material-icon rq-material-download" title="下载" aria-label="下载" data-rq-bundle-download' + bundleIds + '>↓</button>'
-        : '<button type="button" class="rq-material-icon rq-material-download" title="下载" aria-label="下载" data-rq-download="' + esc(file.id) + '">↓</button>';
+        : '<button type="button" class="rq-material-icon rq-material-download" title="下载" aria-label="下载" data-rq-download="' + esc(file.id) + '" aria-busy="' + Boolean(downloadState.pending) + '"' + (downloadState.pending ? ' disabled' : '') + '>↓</button>';
+      const status = autoBundle ? '' : '<span class="rq-material-meta rq-material-status" data-rq-download-status role="status" aria-live="polite"' +
+        (downloadState.text ? '' : ' hidden') + '>' + esc(downloadState.text || '') + '</span>';
       return '<div class="rq-material" role="listitem" data-rq-file-id="' + esc(file.id || '') + '"><div class="rq-material-info"><span class="rq-material-type" aria-hidden="true">' + esc(autoBundle ? 'ZIP' : extension.slice(0, 4)) + '</span><div>' +
-        open + (meta ? '<span class="rq-material-meta">' + esc(meta) + '</span>' : '') + '</div></div><div class="rq-material-actions">' +
+        open + (meta ? '<span class="rq-material-meta">' + esc(meta) + '</span>' : '') + status + '</div></div><div class="rq-material-actions">' +
         download + (global.LibraryTransfer?.button ? (autoBundle
           ? LibraryTransfer.button({deliveryBundle: true, taskId: task.id, attachmentIds: file.attachmentIds, name}, '', 'data-rq-bundle-library')
             .replace('data-rq-bundle-library=', bundleIds + ' data-rq-bundle-library=')
@@ -858,16 +916,46 @@
       });
     } catch (error) { if (request === seq && panelRequest === evidenceRequest) node.textContent = errorText(error); }
   }
+  async function exportAcceptanceSummary() {
+    if (!task || task.canViewExecution === false || summaryExport?.request === seq) return;
+    const subject = () => {
+      const approval = task && R.approval(task, global.RequirementsBoard?.context?.());
+      return { requirementVersion: task?.requirementVersion,
+        artifactVersionId: String(approval?.artifactVersionId || approval?.artifact?.id || '') };
+    };
+    const operation = { request: seq, id: task.id, ...subject() };
+    summaryExport = operation;
+    const update = text => {
+      if (operation.request !== seq || task?.id !== operation.id) return;
+      const status = root?.querySelector('[data-rq-export-status]');
+      const current = subject();
+      if (status) status.textContent = current.requirementVersion === operation.requirementVersion &&
+        current.artifactVersionId === operation.artifactVersionId ? text : '';
+      const button = root?.querySelector('[data-rq-export-summary]');
+      if (button) { button.disabled = summaryExport === operation; button.setAttribute('aria-busy', String(button.disabled)); }
+    };
+    update('正在导出验收摘要…');
+    let message = '';
+    try {
+      if (!global.soduWorkAPI?.exportAcceptanceSummary) throw Error('当前客户端不支持验收摘要导出');
+      const result = await global.soduWorkAPI.exportAcceptanceSummary({ taskId: operation.id,
+        ...(Number.isSafeInteger(operation.requirementVersion) ? { requirementVersion: operation.requirementVersion } : {}),
+        ...(operation.artifactVersionId ? { artifactVersionId: operation.artifactVersionId } : {}) });
+      if (!result?.ok && !result?.canceled && !result?.cancelled) throw Error(result?.reason || '验收摘要导出失败，请重试');
+      if (result.ok) message = '验收摘要已保存';
+    } catch (error) { message = errorText(error); }
+    finally { if (summaryExport === operation) summaryExport = null; update(message); }
+  }
   async function downloadAttachment(id) {
     const file = files.find(row => String(row.id) === id), request = seq;
-    if (!file) return;
-    feedback('正在准备下载…');
+    if (!file || downloadStates.get(id)?.pending) return;
+    downloadFeedback(id, '正在准备下载…', true);
     try {
       if (!global.soduWorkAPI?.downloadAttachment) throw new Error('当前客户端不支持附件下载');
       const result = await global.soduWorkAPI.downloadAttachment({...file, url: global.SoduWorkAPI.attachmentUrl(file)});
-      if (result?.ok === false && !result.cancelled && !result.canceled) throw new Error(result.reason || '下载未完成');
-      if (request === seq) feedback(result?.ok ? '文件已保存到所选位置' : '');
-    } catch (error) { if (request === seq) feedback(errorText(error)); }
+      if (!result?.ok && !result?.cancelled && !result?.canceled) throw new Error(result?.reason || '下载未完成');
+      if (request === seq) downloadFeedback(id, result?.ok ? '文件已保存到所选位置' : '');
+    } catch (error) { if (request === seq) downloadFeedback(id, errorText(error)); }
   }
   async function downloadBundle(button, saveToLibrary = false) {
     if (!button || button.disabled) return;
@@ -955,26 +1043,6 @@
       }
     }
   }
-  async function linkSchedule(id, schedule, epoch) {
-    if (epoch !== identityEpoch) return;
-    pendingSchedules.set(id, schedule);
-    try {
-      const latest = await global.SoduWorkAPI.getTask(id);
-      if (epoch !== identityEpoch) return;
-      if (latest.automationScheduleId && latest.automationScheduleId !== schedule.id) {
-        throw new Error('此需求已关联另一条自动化，请重新加载后查看。');
-      }
-      await global.SoduWorkAPI.patchTask(id, { automationScheduleId: schedule.id, requirementVersion: latest.requirementVersion });
-      if (epoch !== identityEpoch) return;
-      pendingSchedules.delete(id);
-      await global.RequirementsBoard.refresh();
-      if (task?.id === id) await open(id);
-    } catch (error) {
-      if (epoch !== identityEpoch) return;
-      global.petSay?.('自动化已创建，但关联需求未成功。可在需求详情中重试关联。');
-      if (task?.id === id) { render(); renderAttachments(files); feedback(errorText(error)); }
-    }
-  }
   async function createAutomation() {
     if (busy || !task || !R.canManageAutomation(task)) return;
     const id = task.id, epoch = identityEpoch, request = seq;
@@ -986,17 +1054,20 @@
       if (item.automationScheduleId) {
         const closed = close();
         if (closed === false || (closed && typeof closed.then === 'function' && !(await closed))) return;
+        if (epoch !== identityEpoch) return;
         if (typeof global.openSchedulesEntry === 'function') global.openSchedulesEntry({scheduleId: item.automationScheduleId});
         else global.openSchedulePanel?.({scheduleId: item.automationScheduleId});
         return;
       }
-      if (pendingSchedules.has(item.id)) { await linkSchedule(item.id, pendingSchedules.get(item.id), epoch); return; }
       if (!global.WorkAutomationSheet) throw new Error('自动化表单暂时不可用，请重新打开窗口');
       const closed = close();
       if (closed === false || (closed && typeof closed.then === 'function' && !(await closed))) return;
-      await WorkAutomationSheet.open({ proposal: { ...R.content(item),
-        acceptance: [...(item.acceptanceCriteria || [])], repoId: item.repoId || '' },
-        onCreated: schedule => { if (schedule?.id) void linkSchedule(item.id, schedule, epoch); } });
+      if (epoch !== identityEpoch) return;
+      await WorkAutomationSheet.open({
+        sourceRequirement: { id: item.id, title: R.content(item).title, requirementVersion: item.requirementVersion },
+        proposal: { ...R.content(item), acceptance: [...(item.acceptanceCriteria || [])],
+          repoId: item.repoId || '', enabled: false },
+      });
     } catch (error) {
       if (epoch === identityEpoch) {
         if (request === seq && root) feedback(errorText(error));
@@ -1018,10 +1089,72 @@
       if (request === seq) feedback('');
     } catch (error) { if (request === seq) feedback(errorText(error)); }
   }
+  function offerConflictReload() {
+    if (!editing || conflictReload || !root) return;
+    conflictReload = document.createElement('button');
+    conflictReload.type = 'button'; conflictReload.textContent = '重新加载';
+    conflictReload.setAttribute('data-rq-reload', '');
+    root.querySelector('.rq-edit-actions')?.append(conflictReload);
+  }
+  async function reloadEdits() {
+    if (!editing || !task || busy || !conflictReload) return;
+    const before = editValues(), baseline = editBaseline, request = seq, id = task.id;
+    if (!before || !baseline) return;
+    busy = true;
+    root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = true; });
+    try {
+      const taskRead = ++taskRequest;
+      const latest = await global.SoduWorkAPI.getTask(id);
+      if (request !== seq || !root || !editing) return;
+      if (!latest?.id || latest.id !== id) throw Error('需求已移除或当前账号无权访问');
+      // Preserve later authoritative reads, including execution changes without a definition-version bump.
+      if (canApplyTaskReply(latest, taskRead)) acceptTaskReply(latest, taskRead);
+      updateHeader();
+      if (!R.canEdit(task)) {
+        feedback(task.requirementEditBlockReason || '需求已开始执行，未保存内容已保留。');
+      } else {
+        const fields = root.querySelector('#rqEditForm').elements, content = R.content(task);
+        const values = {title:content.title || '',note:content.note || '',kind:task.kind || 'requirement',
+          priority:task.priority || 'normal',tags:global.RequirementFields?.normalizeTags(task.tags) || [],
+          assigneeUserId:task.assigneeUserId || '',acceptanceCriteria:task.acceptanceCriteria || [],
+          triageStage:task.triageStage || 'ready',visibility:task.visibility || 'related',due:R.day(task.due),projectId:task.projectId || null};
+        const nextBaseline = {...baseline};
+        for (const key of Object.keys(baseline)) {
+          const field = fields[key === 'acceptanceCriteria' ? 'acceptance' : key];
+          if (!field) continue;
+          nextBaseline[key] = values[key];
+          // Only untouched fields receive remote changes; retain every unsaved user edit.
+          if (JSON.stringify(before[key]) !== JSON.stringify(baseline[key])) continue;
+          if (key === 'assigneeUserId' && values[key] && !Array.from(field.options || []).some(option => option.value === values[key])) {
+            const option = document.createElement('option'); option.value = values[key];
+            option.textContent = task.assigneeName || '当前负责人'; option.setAttribute('data-user-content', '');
+            field.append(option);
+          }
+          field.value = key === 'acceptanceCriteria' ? values[key].join('\n') : key === 'tags' ? JSON.stringify(values[key]) : values[key] || '';
+          if (key === 'tags') global.RequirementFields?.setTags(field, values[key]);
+          if (key === 'projectId') projectPicker?.setValue(values[key]);
+        }
+        editBaseline = nextBaseline; editVersion = task.requirementVersion;
+        feedback('已加载最新需求，未保存的修改已保留。请核对后再保存。');
+      }
+      conflictReload?.remove(); conflictReload = null;
+    } catch (error) { if (request === seq && root) feedback(errorText(error)); }
+    finally {
+      if (request === seq && root) {
+        busy = false;
+        root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = node.hasAttribute('data-rq-locked'); });
+        lockExecutedDraft();
+        const visibility = root.querySelector('#rqEditForm')?.elements?.visibility;
+        if (visibility && !visibility.disabled) visibility.dispatchEvent?.(new Event('change', {bubbles:true}));
+        projectPicker?.paint(); resumePendingRefresh();
+      }
+    }
+  }
   async function save(patch) {
     if (busy || !task) return;
     if (!R.canEdit(task)) { feedback(task.requirementEditBlockReason || '只有尚未执行的需求可以编辑，请重新加载查看最新状态。'); return; }
     busy = true; saving = true; feedback('');
+    conflictReload?.remove(); conflictReload = null;
     const id = task.id, request = seq;
     const saveButton = root.querySelector('[data-rq-save]');
     if (saveButton) saveButton.textContent = '正在保存…';
@@ -1029,7 +1162,7 @@
     root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = true; });
     try {
       const version = Number((editing ? editVersion : task.requirementVersion) || 0);
-      let result;
+      let result, replyRequest = ++taskRequest;
       try {
         result = await global.SoduWorkAPI.patchTask(id, { ...patch,
           requirementVersion: editing ? editVersion : task.requirementVersion });
@@ -1038,20 +1171,22 @@
         if (error?.code === 'STALE_TASK_SCOPE' || (Number(error?.status) && ![502, 503, 504].includes(Number(error.status)))) throw error;
         if (saveButton) saveButton.textContent = '正在确认保存结果…';
         let confirmed;
+        const confirmRequest = ++taskRequest;
         try { confirmed = await global.SoduWorkAPI.getTask(id); } catch (_) { /* Keep the original request error. */ }
         if (request !== seq || !root) return;
         const matches = confirmed?.id === id && Number(confirmed.requirementVersion || 0) > version &&
           Object.entries(patch).every(([key, value]) => JSON.stringify(key === 'due' ? R.day(confirmed[key]) : confirmed[key]) === JSON.stringify(value));
         if (!matches) throw error;
-        result = confirmed;
+        result = confirmed; replyRequest = confirmRequest;
       }
       if (request !== seq) return;
       // The PATCH response is authoritative. Avoid full-board refresh/reopening
       // an unsaved form, and don't wait for unrelated projects or approvals.
-      const saved = result?.id === id ? result : await global.SoduWorkAPI.getTask(id);
+      let saved = result;
+      if (result?.id !== id) { replyRequest = ++taskRequest; saved = await global.SoduWorkAPI.getTask(id); }
       if (request !== seq || !root) return;
       if (!saved?.id) throw new Error('保存响应不完整，请重新加载确认');
-      const newerTask = Number(task.requirementVersion || 0) > Number(saved.requirementVersion || 0);
+      const newerTask = !canApplyTaskReply(saved, replyRequest);
       let canonical = newerTask ? task : global.TaskSync?.mergeSaveReceipt(task, saved) || saved;
       if (typeof Store !== 'undefined') {
         const visible = typeof tasks === 'undefined' ? null : tasks.find(row => String(row.id) === String(id));
@@ -1062,7 +1197,7 @@
       }
       // Reads begun before this receipt cannot replace it, including partial projections.
       if (refreshFlight) { refreshRequest++; refreshFlight.queued = true; }
-      task = canonical; editing = false; editBaseline = null; editVersion = null;
+      acceptTaskReply(canonical, replyRequest); editing = false; editBaseline = null; editVersion = null;
       render(); renderAttachments(files);
       global.RequirementsBoard?.render?.();
       // The hub can accept the patch yet refuse a status change (delivery truth
@@ -1077,6 +1212,7 @@
     } catch (error) {
       if (request === seq && root) {
         feedback(errorText(error));
+        if (error.status === 409) offerConflictReload();
       }
     } finally {
       if (request === seq && root) {
@@ -1085,6 +1221,7 @@
         if (editing && saveButton) saveButton.textContent = '保存修改';
         root.querySelector('#rqEditForm')?.setAttribute('aria-busy', 'false');
         lockExecutedDraft();
+        projectPicker?.paint();
         resumePendingRefresh();
       }
     }
@@ -1109,6 +1246,6 @@
     if (task && dialog && !dialog.hidden && dialog.dataset.panel === 'comments') void loadComments();
   });
   global.addEventListener('soduwork-data-scope-changed', () => {
-    identityEpoch++; pendingSchedules.clear(); close(true);
+    identityEpoch++; close(true);
   });
 })(window);

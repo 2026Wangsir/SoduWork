@@ -209,7 +209,8 @@ async function _ensureOnce(chatId, epoch) {
       ctx._boundFromServer = expectedTaskId ? serverTaskIds.has(expectedTaskId) : serverTaskIds.size > 0;
       ctx._model = got.model;
       ctx._snap = openedSnapshot;
-      global.SoduWorkQuotaNotice?.modelChanged?.(openedSnapshot.modelSelection?.model || got.model);
+      global.SoduWorkQuotaNotice?.modelChanged?.(openedSnapshot.modelSelection?.model || got.model,
+        got.adapterId || openedSnapshot.adapterId || ctx._sessionOptions.adapterId || 'pi', ctx._mount?.());
       ctx._rememberConversationSnapshot(ctx._sessionId || chatId, ctx._snap);
       if (chatId && String(chatId) !== String(ctx._sessionId || '')) ctx._rememberConversationSnapshot(chatId, ctx._snap);
       if (got.goal) ctx._sessionOptions = { ...ctx._sessionOptions, ...got.goal };

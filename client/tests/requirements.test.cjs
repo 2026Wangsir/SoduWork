@@ -3,6 +3,17 @@ const assert = require('node:assert/strict');
 const R = require('../core/requirements.js');
 const Sync = require('../core/task-sync.js');
 
+test('only an unexecuted execution owner without a repository can change the business project', () => {
+  const owner = {status:'todo',triageStage:'ready',canEditRequirement:true,readOnly:false,projectId:'business-a'};
+  assert.deepEqual(R.editPatch(owner,{projectId:'business-b'}),{projectId:'business-b'});
+  assert.deepEqual(R.editPatch(owner,{projectId:null}),{projectId:null});
+  assert.deepEqual(R.editPatch({...owner,projectId:null},{projectId:''}),{});
+  for (const extra of [{readOnly:true},{readOnly:undefined},{repoId:'repository-a'},
+    {hasExecutionHistory:true},{requirementEditBlocked:true},{canEditRequirement:false}]) {
+    assert.deepEqual(R.editPatch({...owner,...extra},{projectId:'business-b',repoId:''}),{},JSON.stringify(extra));
+  }
+});
+
 test('unclaimed repository issues appear in related and actionable scopes without execution rights', () => {
   const task = {id: 'issue', status: 'todo', triageStage: 'ready', myRoles: ['repository_member'],
     canClaim: true, readOnly: true, canViewExecution: false};
@@ -193,6 +204,61 @@ test('human attention distinguishes assigned work, running agents, returned resu
   assert.equal(R.actionable({...task,status:'done',myRoles:['executor','assignee']},ctx),false,'completed work waits for the creator review');
   assert.equal(R.actionable({...task,archivedAt:1},ctx),false);
   assert.equal(R.actionable({...task,canViewExecution:false}),false,'shared source roles do not grant execution access');
+});
+
+test('active execution projections stay related without creating a personal action', () => {
+  const task = {id:'active',status:'doing',requirementStage:'delivering',myRoles:['assignee','executor'],
+    canViewExecution:true,canSubmitReview:true,canContinueExecution:true};
+  const projections = [
+    ...['queued','starting','dispatching','running','working','streaming'].flatMap(state => [
+      {ai:{state}}, {ai:{state:'done',executionState:state}},
+    ]),
+    ...['queued','starting','running','waiting'].map(state => ({workRouting:{conversationTurn:{state}}})),
+  ];
+  for (const projection of projections) {
+    const row = {...task,...projection}, before = JSON.stringify(row);
+    assert.equal(R.actionable(row),false,JSON.stringify(projection));
+    assert.equal(R.inScope(row,'related'),true,JSON.stringify(projection));
+    assert.equal(R.canSubmitReview(row),false,JSON.stringify(projection));
+    assert.equal(R.actionable({...row,canSubmitReview:false,workRouting:{...row.workRouting,reworkPending:{feedback:'Revise'}}}),false);
+    assert.equal(JSON.stringify(row),before);
+  }
+});
+
+test('active work still exposes explicit personal decisions and attention requests', () => {
+  const task = {id:'active',status:'doing',requirementStage:'delivering',myRoles:['assignee'],
+    canViewExecution:true,ai:{state:'streaming'}};
+  const approval = {approvals:new Map([['active',{id:'gate',action:'baseline'}]])};
+  assert.equal(R.actionable(task,approval),true);
+  assert.equal(R.actionable({...task,ai:{...task.ai,attentionRaised:true}}),true);
+  assert.equal(R.actionable({...task,needsMe:true}),true);
+  assert.equal(R.actionable({...task,status:'paused',ai:{state:'stopped'}}),true);
+  assert.equal(R.actionable({...task,ai:{state:'done'},canSubmitReview:true}),true);
+  assert.equal(R.actionable({...task,myRoles:[],ai:{state:'streaming',attentionRaised:true}}),false);
+});
+
+test('submitted delivery leaves executor actions for both manual and agent projections', () => {
+  const base = {id:'submitted',status:'doing',requirementStage:'reviewing',myRoles:['assignee','executor'],
+    canViewExecution:true,canReview:false,canSubmitReview:false};
+  const staleInbox = {approvals:new Map([['submitted',{id:'review',action:'review'}]])};
+  const phases = [['doing','reviewing'],['done','reviewing'],['done','delivering'],['done','ready'],['done',undefined]];
+  for (const [status,requirementStage] of phases) for (const ai of [undefined,{state:'done'},{state:'stopped'}]) {
+    const task = {...base,status,requirementStage,ai}, before = JSON.stringify(task);
+    assert.equal(R.stage(task),'reviewing','completion takes precedence over a stale preparation or delivery stage');
+    assert.equal(R.actionable(task),false,JSON.stringify(task));
+    assert.equal(R.actionable(task,staleInbox),false,'another reviewer owns the pending decision');
+    assert.equal(R.inScope(task,'related'),true);
+    assert.equal(R.nextStep(task).text,'已提交验收，等待验收人处理');
+    assert.equal(R.canSubmitReview({...task,canSubmitReview:true}),false,'a stale capability cannot resubmit');
+    assert.equal(JSON.stringify(task),before);
+    assert.equal(R.actionable({...task,canReview:true}),true,'personal review remains actionable');
+    assert.equal(R.actionable({...task,needsMe:true}),true,'an explicit personal request remains actionable');
+    assert.equal(R.actionable({...task,ai:{state:'done',attentionRaised:true}}),true,'explicit executor attention remains actionable');
+    assert.equal(R.actionable({...task,myRoles:[],ai:{attentionRaised:true}}),false);
+    assert.equal(R.actionable({...task,canViewExecution:false,needsMe:true}),false);
+    assert.equal(R.actionable({...task,archivedAt:1,needsMe:true}),false);
+  }
+  assert.equal(R.actionable({...base,requirementStage:'delivering',canSubmitReview:true}),true,'unfinished submission stays with its executor');
 });
 
 test('personal review capability keeps a pending delivery actionable before the inbox refreshes', () => {

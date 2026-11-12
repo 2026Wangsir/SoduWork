@@ -82,7 +82,7 @@
         if (unchanged) enabled = new Set(saved);
         (data.skills || []).forEach(x => { x.enabled = saved.has(x.name); });
       },
-      refreshCatalog: function () { return SoduWorkAPI.refreshMySkills(); },
+      refreshCatalog: function (meta) { return SoduWorkAPI.refreshMySkills({ notify: !meta?.silent }); },
       onRefreshed: function (catalog) {
         data = catalog || data;
         enabled = new Set((data.skills || []).filter(x => x.enabled).map(x => x.name));

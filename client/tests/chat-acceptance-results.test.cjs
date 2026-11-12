@@ -229,10 +229,10 @@ test('supplemental analysis preserves the draft and uses a text node without sub
     },
   });
   const button = { closest: () => card, getAttribute: () => 'analyze' };
-  const list = { dataset: {}, addEventListener(_name, callback) { listener = callback; bindings++; } };
+  const list = { dataset: {}, addEventListener(name, callback) { if (name === 'click') listener = callback; bindings++; } };
   const helper = f.create(); helper.bind(list); helper.bind(list);
   listener({ target: { closest: () => button }, preventDefault() {} });
-  assert.equal(bindings, 1);
+  assert.equal(bindings, 2);
   assert.equal(input.value, '已有草稿\n\n请补充验收分析：\n' + prompt);
   assert.equal(inputEvent.type, 'input'); assert.equal(inputEvent.bubbles, true);
   assert.equal(focused, true); assert.equal(sends, 0);
@@ -364,7 +364,7 @@ for (const decision of ['approve','reject']) test(`analysis ${decision} becomes 
     querySelector:s=>s==='[data-acceptance-result-note]'?{value:'Review note'}:null,
     querySelectorAll:()=>controls,replaceChildren(...nodes){this.children=nodes;}};
   const button={closest:()=>card,getAttribute:()=>decision};
-  helper.bind({dataset:{},addEventListener(_type,fn){listener=fn;}});
+  helper.bind({dataset:{},addEventListener(type,fn){if(type==='click')listener=fn;}});
   const click=()=>listener({target:{closest:()=>button},preventDefault(){}});
   click(); click(); assert.equal(calls,1,'in-flight operations cannot submit twice');
   resolveDecision({ok:true,request:{status:decision==='approve'?'approved':'rejected'}});

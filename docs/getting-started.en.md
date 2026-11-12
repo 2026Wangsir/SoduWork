@@ -23,6 +23,8 @@ Your first run has four steps: install the prerequisites, extract the source, st
 
 You do not need to create a database, install Docker or Git, prepare an `.env` file, or install each project separately. First-time setup needs internet access; later starts reuse completed work.
 
+The launcher installs both Hub and Runner dependencies in its private `venv/`, checks the Runner's Python imports, and gives the desktop that exact interpreter. You do not need a separate `hub-backend/.venv` for this entry point. If Agent management reports an incomplete source Runner environment, quit the source session and rerun the same launcher; keep the data directory intact.
+
 On Windows, desktop startup also prepares and verifies a private PortableGit command runtime in this instance's application copy so Agents can use Bash, Git, and common tools. No separate Git installation or WSL configuration is needed. Later starts preserve the runtime and download cache and check the tools again. If preparation fails, inspect `startup.log`, fix network access, and rerun the same launcher.
 
 ## Know when startup is complete
@@ -65,6 +67,16 @@ Have your provider's **API base URL, API key, and model ID** ready. These come f
 5. Send “Hello, briefly explain what you can help me do.” A real reply confirms that the AI request path works.
 
 If the model is missing, refresh the catalog or reopen the desktop model selector, then check that both interfaces connect to the same service address. For `401/403`, check the model key and access permissions; for `404`, check the API URL, model ID, and protocol. You can explore the management UI before connecting a model service.
+
+### Device-only model services
+
+Local services added in the desktop's **My models** panel are encrypted in that desktop profile. Their endpoints, keys, model references, and local usage are not uploaded to Hub. Select them in a local Pi conversation; cloud execution, handoff, scheduled tasks, and Hub model defaults require a Hub-managed model. Local image/video definitions remain stored but are not offered through the Hub media proxy.
+
+Signing in to the desktop is still required, and existing conversation and task permissions still apply. After sign-in, Hub model administration and model quotas do not control a local Pi model. The desktop connects directly to its provider. Ordinary conversation directory synchronization continues without model configuration, references, or local usage.
+
+Local choices and runtime transcripts use random model references. The mapping to the real model ID, label, endpoint, and credential stays in the encrypted local catalog; runtime files use placeholders. Existing structured local references migrate without changing message text or acknowledged Hub usage. Removing and re-adding a model does not silently reconnect an old conversation to the new model. This does not encrypt conversation text or files you create, and does not remove copies in external backups.
+
+If secure storage cannot be read, the client preserves the saved configuration and asks you to resolve the storage problem. Invalid edits are rejected without replacing the previous configuration. Switching from a local model to a managed model keeps each call's usage separate.
 
 ## Start again and stop
 
@@ -154,7 +166,25 @@ Existing mirror and proxy settings are passed to the installer, which verifies d
 
 Check `desktop.log` in the same data directory. Resolve Electron download problems and retry. Linux desktop mode requires a graphical session and Electron's native libraries, such as NSS, GTK, and X11/Wayland. The launcher does not disable the sandbox or install operating system packages.
 
+### Linux installation and secure sign-in
+
+Install `.deb` or `.rpm` packages through your distribution's software installer, or use `apt install ./package.deb` / `dnf install ./package.rpm`, so the package manager resolves dependencies. Packages declare D-Bus, libsecret, and alternative GNOME Keyring / KWallet service dependencies. An existing matching service satisfies the dependency without replacing the user's keyring. The `tar.gz` and source modes do not manage system dependencies; launch them from a graphical desktop session with these services configured.
+
+Start the application as the ordinary user logged into that desktop. First access may show the system's keyring creation or unlock dialog; use a protected keyring. Do not choose an empty password or disable the sandbox to bypass startup errors. If the keyring is locked or its service is temporarily unavailable, preserve the existing device credentials, restore the system service, then fully quit and reopen the application. Do not delete `device-auth.json`, remove keyring items, or convert credentials to plaintext.
+
+Linux installation acceptance first checks that a fresh `.deb` / `.rpm` installation supplies its credential-service dependencies, then uses an isolated real GNOME keyring to check ciphertext after first launch, restart, and upgrade. The current upgrade scenario reuses dependencies from the initial installation and does not certify that upgrading an older environment resolves newly added dependencies. Container acceptance also does not replace interactive GNOME/KDE and Wayland/X11 sign-in and unlock verification.
+
 To use management while resolving desktop setup, double-click `start.cmd` on Windows or `start.command` on macOS, or run `sh start.sh` on Linux. The browser management UI is for configuration; it is not the desktop AI conversation workspace.
+
+### macOS Keychain and desktop identity
+
+If Git reports an unfinished rebase or merge, finish or safely abort that operation before starting. An intermediate checkout can temporarily restore an older launcher, including its former Keychain and Electron branding behavior. Run `git status` and confirm your intended branch is checked out. Stop the previous source session, then rerun `sh start.sh --desktop`; a running client continues using its previous application copy until restarted.
+
+Source desktop startup prepares a separate cached `SoduWork.app` with the product name and icon. It keeps the development profile separate and does not modify the installed client or the downloaded Electron bundle. This local development bundle uses ad-hoc signing; it is not a signed and notarized release installer.
+
+The macOS desktop retains your operating-system home so it can access the default Keychain. Its application data and workspace remain separate from the installed client, and the local Hub still uses an isolated home and database.
+
+If the default macOS Keychain is missing, startup shows a recovery page before opening the normal workspace. Use **Open Keychain Access** to inspect the login/default Keychain, then quit and restart SoduWork after correcting the system settings. If access is denied or cancelled, the login page reports the secure-storage failure and preserves existing credentials. SoduWork does not reset Keychains or fall back to plaintext storage. Only reset a Keychain when advised by [Apple Support](https://support.apple.com/guide/keychain-access/kyca2429/mac).
 
 ### Page stops working after closing the terminal
 
@@ -205,5 +235,7 @@ python3 tools/dev/verify_local_start.py
 The second command installs dependencies in a new temporary instance and verifies real HTTP login, persistence, uploads, source downloads, and process shutdown. It does not use a production database or call a paid model. Native macOS/Linux desktop behavior must be checked on those systems; Windows-only validation is not evidence of a complete three-platform release.
 
 On a machine with a graphical desktop, add `--desktop` to also verify native Electron readiness, the isolated local connection, and desktop cleanup after Ctrl+C and a forcibly closed launcher.
+
+On macOS, run `TMPDIR=/private/tmp python3 tools/dev/verify_source_runner.py` with Node.js 22 on `PATH` and a test Python 3.12+ containing `websockets`. It creates a temporary Hub, desktop profile, and real Runner, signs in with a synthetic account, and checks Agent discovery without creating tasks or calling models. Chromium uses a mock Keychain for this fixture; it does not verify native Keychain access.
 
 For desktop connection and sign-in regression checks, run `node e2e/hub-connection.cjs` from `client`. It uses an isolated Electron profile, OS-encrypted storage, and two temporary HTTP fixtures to check offline address editing, sign-in, identity isolation on switching, returning to the original service, and reopening. Screenshots and reports are written to `outputs/hub-connection/`. It does not connect to an existing service or call a model. This check is also included in `npm run test:e2e:local`.

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import io
-from contextlib import closing, redirect_stdout
+from contextlib import closing, nullcontext, redirect_stdout
 import os
 from pathlib import Path
 import socket
@@ -16,9 +16,79 @@ from unittest.mock import patch
 from tools.dev import local_environment as build
 from tools.dev import start_local as start
 from tools.dev import verify_local_start as verify
+from tools.dev import verify_desktop_fixture as desktop_fixture
 
 
 class LocalStartupTests(unittest.TestCase):
+    def test_headless_desktop_fails_before_initialization_password_or_downloads(self):
+        for options in ([], ['--prepare-only'], ['--check']):
+            with self.subTest(options=options), patch.object(sys, 'platform', 'linux'), \
+                    patch.dict(os.environ, {'DISPLAY': '', 'WAYLAND_DISPLAY': ''}), \
+                    patch.object(start, 'check_dependencies'), \
+                    patch.object(start, 'initialize') as initialize, \
+                    patch.object(start, 'exclusive', return_value=nullcontext()), \
+                    patch.object(start, 'prepare') as prepare, \
+                    patch.object(start, 'prepare_desktop') as desktop, \
+                    patch.object(start, 'serve') as serve, \
+                    patch.object(start, 'password_for_start') as password, \
+                    patch.object(start, 'dependency_report'), \
+                    redirect_stdout(io.StringIO()), patch('sys.stderr', io.StringIO()) as errors:
+                self.assertEqual(start.main(['--desktop', '--data-dir', str(self.state), *options]), 1)
+                self.assertIn('Desktop startup requires a graphical Linux session', errors.getvalue())
+                for operation in (initialize, prepare, desktop, serve, password):
+                    operation.assert_not_called()
+                self.assertFalse(self.state.exists())
+
+    def test_unfinished_git_operations_block_before_touching_runtime_data(self):
+        checkout = Path(self.temp.name) / 'checkout'
+        metadata = checkout / '.git'
+        metadata.mkdir(parents=True)
+        for marker in ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']:
+            with self.subTest(marker=marker):
+                (metadata / marker).touch()
+                with patch.object(start, 'ROOT', checkout), patch.object(start, 'initialize') as initialize, \
+                        patch.object(start, 'prepare') as prepare, patch.object(start, 'check_dependencies') as dependencies, \
+                        redirect_stdout(io.StringIO()), patch('sys.stderr', io.StringIO()) as errors:
+                    self.assertEqual(start.main(['--prepare-only', '--desktop', '--data-dir', str(self.state)]), 1)
+                self.assertIn('unfinished Git', errors.getvalue())
+                initialize.assert_not_called()
+                prepare.assert_not_called()
+                dependencies.assert_not_called()
+                self.assertFalse(self.state.exists())
+                (metadata / marker).unlink()
+
+    def test_source_checkout_guard_supports_worktrees_and_archives_without_git(self):
+        checkout = Path(self.temp.name) / 'checkout'
+        checkout.mkdir()
+        metadata = Path(self.temp.name) / 'metadata'
+        metadata.mkdir()
+        (checkout / '.git').write_text('gitdir: ../metadata\n', encoding='utf-8')
+        start.check_source_checkout(checkout)
+        (metadata / 'rebase-merge').mkdir()
+        with self.assertRaisesRegex(start.StartupError, 'unfinished Git rebase'):
+            start.check_source_checkout(checkout)
+        (checkout / '.git').unlink()
+        start.check_source_checkout(checkout)
+
+    def test_desktop_verifier_mocks_only_its_owned_electron_child(self):
+        self.state.mkdir(parents=True)
+        client = self.state / 'application/client'
+        with patch.object(sys, 'platform', 'darwin'), patch.object(start.subprocess, 'Popen') as popen:
+            desktop_fixture.launch_desktop_fixture(start.launch_desktop, self.state, client, {},
+                                                   'http://127.0.0.1:18989', io.BytesIO())
+            fixture_command = popen.call_args.args[0]
+            self.assertEqual(fixture_command[1:], [str(client / 'scripts/start-client.cjs'), '--use-mock-keychain'])
+            self.assertEqual(Path(popen.call_args.kwargs['env']['SODUWORK_USER_DATA']), self.state / 'desktop-profile')
+            start.launch_desktop(self.state, client, {}, 'http://127.0.0.1:18989', io.BytesIO())
+            self.assertEqual(popen.call_args.args[0][1:], [str(client / 'scripts/start-client.cjs')])
+
+    def test_desktop_fixture_refuses_an_ordinary_profile(self):
+        self.state.mkdir(parents=True)
+        with patch.object(sys, 'platform', 'darwin'), patch.object(start, 'main') as main, \
+                self.assertRaises(SystemExit):
+            desktop_fixture.main(['--data-dir', str(self.state), '--desktop'])
+        main.assert_not_called()
+
     def test_desktop_restart_ignores_live_historical_ready_events(self):
         journal = self.state / 'desktop-profile/diagnostics/lifecycle.jsonl'
         journal.parent.mkdir(parents=True)
@@ -218,14 +288,16 @@ class LocalStartupTests(unittest.TestCase):
         start.assert_available("127.0.0.1", port)
 
     def test_check_is_read_only_even_for_a_new_data_directory(self):
-        with patch.object(start, 'dependency_report') as report, patch.object(start, 'initialize') as initialize:
+        with patch.dict(os.environ, {'DISPLAY': ':fixture'}), \
+                patch.object(start, 'dependency_report') as report, patch.object(start, 'initialize') as initialize:
             self.assertEqual(start.main(['--check', '--desktop', '--data-dir', str(self.state)]), 0)
         report.assert_called_once_with(desktop=True)
         initialize.assert_not_called()
         self.assertFalse(self.state.exists())
 
     def test_prepare_only_never_requests_password_or_starts_a_server(self):
-        with patch.object(start, 'check_dependencies'), patch.object(start, 'prepare') as prepare, \
+        with patch.dict(os.environ, {'DISPLAY': ':fixture'}), \
+                patch.object(start, 'check_dependencies'), patch.object(start, 'prepare') as prepare, \
                 patch.object(start, 'prepare_desktop') as desktop, patch.object(start, 'serve') as serve, \
                 patch.object(start, 'password_for_start') as password:
             self.assertEqual(start.main(['--prepare-only', '--desktop', '--data-dir', str(self.state)]), 0)
@@ -247,6 +319,8 @@ class LocalStartupTests(unittest.TestCase):
         self.assertNotIn('SODUWORK_TEST_HUB_URL', child_env)
         self.assertEqual(child_env['SODUWORK_SOURCE_SESSION'], '1')
         self.assertEqual(child_env['VIRTUAL_ENV'], str(self.state / 'venv'))
+        self.assertEqual(child_env['SODUWORK_SOURCE_RUNNER_PYTHON'], str(self.state / 'venv' /
+                         ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')))
         for name in ('ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL'):
             self.assertNotIn(name, child_env)
         for name in ('SYSTEMDRIVE', 'PROGRAMDATA'):
@@ -257,6 +331,109 @@ class LocalStartupTests(unittest.TestCase):
                          {'hub': 'http://127.0.0.1:18990'})
         self.assertEqual(json.loads((self.state / 'desktop-profile/chat-config.json').read_text()),
                          {'workDir': str(self.state / 'workspaces')})
+
+    def test_macos_desktop_preserves_native_home_without_inheriting_service_secrets(self):
+        native_home = Path(self.temp.name) / 'native-home'
+        config = start.initialize(self.state, 'owner')
+        with patch.dict(os.environ, {'HOME': str(native_home), 'OPENAI_API_KEY': 'fixture-only-key'}):
+            service_env = start.runtime_environment(self.state, config, 'fixture-only-password',
+                                                    '127.0.0.1', 18990)
+            with patch.object(start.sys, 'platform', 'darwin'), \
+                    patch.object(Path, 'home', return_value=native_home), \
+                    patch.object(start.subprocess, 'Popen') as popen:
+                start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                     'http://127.0.0.1:18990', io.BytesIO())
+        desktop_env = popen.call_args.kwargs['env']
+        self.assertEqual(desktop_env['HOME'], str(native_home))
+        self.assertEqual(service_env['HOME'], str(self.state / 'home'))
+        self.assertEqual(desktop_env['SODUWORK_USER_DATA'], str(self.state / 'desktop-profile'))
+        for key in ('ADMIN_USER', 'ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL', 'OPENAI_API_KEY'):
+            self.assertNotIn(key, desktop_env)
+
+    def test_linux_desktop_retains_login_session_and_native_keyring_paths(self):
+        native_home = Path(self.temp.name) / 'native-home'
+        sessions = [
+            {'XDG_CURRENT_DESKTOP': 'ubuntu:GNOME', 'DESKTOP_SESSION': 'ubuntu',
+             'XDG_SESSION_TYPE': 'wayland', 'XDG_SESSION_DESKTOP': 'ubuntu',
+             'WAYLAND_DISPLAY': 'wayland-fixture', 'DISPLAY': ':fixture'},
+            {'XDG_CURRENT_DESKTOP': 'KDE', 'DESKTOP_SESSION': 'plasma',
+             'XDG_SESSION_TYPE': 'x11', 'KDE_SESSION_VERSION': '6',
+             'KDE_FULL_SESSION': 'true', 'DISPLAY': ':fixture'},
+        ]
+        for session in sessions:
+            with self.subTest(session=session['XDG_CURRENT_DESKTOP']):
+                inherited = {**session, 'HOME': str(native_home),
+                             'XDG_CONFIG_HOME': str(native_home / 'custom-config'),
+                             'XDG_DATA_HOME': str(native_home / 'custom-data'),
+                             'XDG_CACHE_HOME': str(native_home / 'custom-cache'),
+                             'XDG_RUNTIME_DIR': '/run/user/fixture',
+                             'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/fixture/bus',
+                             'XAUTHORITY': str(native_home / '.Xauthority'),
+                             'OPENAI_API_KEY': 'fixture-only-key',
+                             'SODUWORK_ALLOW_INSECURE_KEYSTORE': '1',
+                             'ELECTRON_DISABLE_SANDBOX': '1'}
+                with patch.dict(os.environ, inherited, clear=True), \
+                        patch.object(start.sys, 'platform', 'linux'), \
+                        patch.object(Path, 'home', return_value=native_home), \
+                        patch.object(start.subprocess, 'Popen') as popen:
+                    service_env = start.runtime_environment(
+                        self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                        'fixture-password', '127.0.0.1', 18990)
+                    before = dict(service_env)
+                    start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                         'http://127.0.0.1:18990', io.BytesIO())
+                desktop_env = popen.call_args.kwargs['env']
+                for key, value in inherited.items():
+                    if key in {'OPENAI_API_KEY', 'SODUWORK_ALLOW_INSECURE_KEYSTORE',
+                               'ELECTRON_DISABLE_SANDBOX'}:
+                        self.assertNotIn(key, desktop_env)
+                    else:
+                        self.assertEqual(desktop_env[key], value)
+                self.assertEqual(service_env, before, 'desktop setup must not weaken service isolation')
+                self.assertEqual(service_env['HOME'], str(self.state / 'home'))
+                self.assertNotIn('XDG_CURRENT_DESKTOP', service_env)
+                self.assertEqual(desktop_env['SODUWORK_USER_DATA'], str(self.state / 'desktop-profile'))
+                for key in ('ADMIN_USER', 'ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL'):
+                    self.assertNotIn(key, desktop_env)
+
+    def test_linux_desktop_uses_native_xdg_defaults_without_inventing_a_session(self):
+        native_home = Path(self.temp.name) / 'native-home'
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(start.sys, 'platform', 'linux'), \
+                patch.object(Path, 'home', return_value=native_home), \
+                patch.object(start.subprocess, 'Popen') as popen:
+            service_env = start.runtime_environment(
+                self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                'fixture-password', '127.0.0.1', 18990)
+            start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                 'http://127.0.0.1:18990', io.BytesIO())
+        desktop_env = popen.call_args.kwargs['env']
+        self.assertEqual(desktop_env['HOME'], str(native_home))
+        for key in ('XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_DIRS',
+                    'XDG_DATA_DIRS', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'WAYLAND_DISPLAY'):
+            self.assertNotIn(key, desktop_env)
+
+    def test_linux_desktop_environment_changes_do_not_apply_to_other_platforms(self):
+        # sys.platform is shared with shutil; keep executable discovery host-independent.
+        for platform in ('win32', 'darwin'):
+            with self.subTest(platform=platform), \
+                    patch.dict(os.environ, {'XDG_CURRENT_DESKTOP': 'GNOME',
+                                           'XDG_SESSION_TYPE': 'wayland',
+                                           'XDG_DATA_HOME': '/native-data'}, clear=True), \
+                    patch.object(start.sys, 'platform', platform), \
+                    patch('shutil.which', return_value='fixture-node'), \
+                    patch.object(Path, 'home', return_value=Path(self.temp.name) / 'native-home'), \
+                    patch.object(start.subprocess, 'Popen') as popen:
+                service_env = start.runtime_environment(
+                    self.state, {'adminUser': 'owner', 'authSecret': 'fixture-secret'},
+                    'fixture-password', '127.0.0.1', 18990)
+                start.launch_desktop(self.state, self.state / 'application/client', service_env,
+                                     'http://127.0.0.1:18990', io.BytesIO())
+                desktop_env = popen.call_args.kwargs['env']
+                self.assertEqual(desktop_env['XDG_DATA_HOME'], service_env['XDG_DATA_HOME'])
+                self.assertEqual(desktop_env['XDG_CONFIG_HOME'], service_env['XDG_CONFIG_HOME'])
+                self.assertNotIn('XDG_CURRENT_DESKTOP', desktop_env)
+                self.assertNotIn('XDG_SESSION_TYPE', desktop_env)
 
     def test_source_refresh_preserves_desktop_dependencies_but_removes_stale_code(self):
         source = Path(self.temp.name) / 'source'
@@ -409,9 +586,13 @@ class LocalStartupTests(unittest.TestCase):
                      "hub-frontend/src/index.jsx", "hub-frontend/package.json", "hub-frontend/package-lock.json",
                      "hub-frontend/index.html", "hub-frontend/vite.config.js"):
             put(name)
-        calls = []
+        calls, commands, fault = [], [], {'probe_failures': 0}
         def run(_command, *, label, **_kwargs):
             calls.append(label)
+            commands.append(_command)
+            if label.startswith('[Runner]') and fault['probe_failures']:
+                fault['probe_failures'] -= 1
+                raise build.StartupError('fixture Runner dependency import failure')
             if "private Python" in label:
                 python = self.state / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
                 python.parent.mkdir(parents=True); python.write_text("fixture")
@@ -424,6 +605,9 @@ class LocalStartupTests(unittest.TestCase):
         with patch.object(build, "ROOT", source), patch.object(build, "check_dependencies", return_value=("node", "npm")), \
                 patch.object(build, "run", side_effect=run):
             build.prepare(self.state, self.state / "startup.log")
+            install = next(command for command in commands if 'pip' in command)
+            for manifest in ('requirements.txt', 'requirements-runner.txt'):
+                self.assertIn(str(source / 'hub-backend' / manifest), install)
             for name in ("LICENSE", "third-party/manifest.json"):
                 self.assertEqual((self.state / "application" / name).read_bytes(), (source / name).read_bytes())
             generated = [self.state / 'application/client' / relative for relative in (
@@ -434,10 +618,28 @@ class LocalStartupTests(unittest.TestCase):
             calls.clear()
             put("client/assets/connector-brands/fixture.svg", "updated artwork")
             build.prepare(self.state, self.state / "startup.log")
-            self.assertEqual(calls, ["[4/4] 构建管理页面 / Building the management UI"])
+            self.assertEqual(calls, ["[Runner] 检查本地运行环境 / Checking the local Runner environment",
+                                     "[4/4] 构建管理页面 / Building the management UI"])
             self.assertEqual((self.state / "application/client/assets/connector-brands/fixture.svg").read_text(), "updated artwork")
             for file in generated:
                 self.assertEqual(file.read_bytes(), b'generated runtime fixture')
+            before = (self.state / 'python-dependencies.sha256').read_text()
+            put('hub-backend/requirements-runner.txt', 'updated Runner dependencies')
+            commands.clear()
+            build.prepare(self.state, self.state / 'startup.log')
+            self.assertTrue(any('pip' in command for command in commands))
+            self.assertNotEqual((self.state / 'python-dependencies.sha256').read_text(), before)
+            commands.clear()
+            fault['probe_failures'] = 1
+            build.prepare(self.state, self.state / 'startup.log')
+            self.assertTrue(any('pip' in command for command in commands), 'A broken cached environment is repaired')
+            before = (self.state / 'python-dependencies.sha256').read_text()
+            put('hub-backend/requirements-runner.txt', 'unverified Runner dependencies')
+            fault['probe_failures'] = 1
+            with self.assertRaisesRegex(build.StartupError, 'dependency import failure'):
+                build.prepare(self.state, self.state / 'startup.log')
+            self.assertEqual((self.state / 'python-dependencies.sha256').read_text(), before,
+                             'Failed readiness checks cannot stamp an unusable environment as installed')
 
     def test_interactive_password_recovers_without_restarting_or_printing_secrets(self):
         config = start.initialize(self.state, 'admin')

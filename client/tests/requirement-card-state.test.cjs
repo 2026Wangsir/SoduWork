@@ -14,7 +14,11 @@ function fixture() {
       html = value; fields.clear(); checks.length = 0;
       for (const hit of value.matchAll(/<input\b([^>]*)>|<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/g)) {
         const attrs = hit[1] ?? hit[2], id = /\bid="([^"]+)"/.exec(attrs)?.[1];
-        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]), disabled: false };
+        const node = { value: decode(hit[2] === undefined ? /\bvalue="([^"]*)"/.exec(attrs)?.[1] : hit[3]),
+          disabled: false, attributes: new Map(),
+          setAttribute(name, next) { this.attributes.set(name, String(next)); },
+          getAttribute(name) { return this.attributes.get(name) ?? null; },
+          removeAttribute(name) { this.attributes.delete(name); }, focus() { this.focused = true; } };
         if (id) fields.set(id, node); if (/class="cp-ck-t"/.test(attrs)) checks.push(node);
       }
       if (value.includes('id="cpCheck"')) fields.set('cpCheck', {});
@@ -237,10 +241,13 @@ test('提交阶段在会话恢复后保留，材料未上传完成时不能重�
   uploaded.resolve();await tick();assert.equal(f.draft.capture().phase,'succeeded');
 });
 
-test('创建回执保留服务端时间，冷恢复展示同一时间且不再次创建', async () => {
+for (const createdField of ['createdAt', 'created']) test('创建回执保留服务端时间，冷恢复展示同一时间且不再次创建: ' + createdField, async () => {
   const f=fixture(), created=1792700000000, updated=1792700123000;
   f.ctx.Requirements=require('../core/requirements.js');
-  f.ctx.Store.persistTask=async id=>{Object.assign(f.ctx.tasks.find(task=>task.id===id),{createdAt:created,updatedAt:updated,assigneeName:'张负责人',assigneeUserId:'owner',priority:'high',kind:'bug'});return true;};
+  f.ctx.Store.persistTask=async id=>{
+    const task=f.ctx.tasks.find(task=>task.id===id);delete task.createdAt;
+    Object.assign(task,{[createdField]:created,updatedAt:updated,assigneeName:'张负责人',assigneeUserId:'owner',priority:'high',kind:'bug'});return true;
+  };
   await f.open();f.create();await tick();
   const saved=f.draft.capture();assert.equal(saved.receipt.updatedAt,updated);assert.equal(saved.receipt.createdAt,created);
   assert.match(f.box.innerHTML,/cp-receipt-time/);assert.ok(f.box.innerHTML.includes(new Date(created).toISOString()));
@@ -252,4 +259,16 @@ test('创建回执保留服务端时间，冷恢复展示同一时间且不再�
   assert.ok(g.box.innerHTML.includes(new Date(created).toISOString()));assert.equal(g.calls.creates.length,0);
   assert.match(g.box.innerHTML,/张负责人/);assert.match(g.box.innerHTML,/is-high/);
   assert.match(g.box.innerHTML,/cp-receipt-kind\">Bug/);
+});
+
+test('direct assignment keeps the Hub creation time in the receipt without a local task', async () => {
+  const f=fixture(), created=1792700000000, updated=1792700123000;
+  f.ctx.SoduWorkAPI.createAssignedTask=async () => ({task:{id:'assigned-task',created,updatedAt:updated}});
+  const card={cardId:'assigned-card',ownerScope:'account-a',files:[]};
+  await f.ctx.ComposeDraftSubmit.createRequirement({
+    card, state:{}, options:{}, draft:{title:'Assigned requirement',check:[],who:{kind:'mate',id:'colleague'}},
+    box:f.box, btn:{}, current:()=>false, done(){}, note:'Keep the confirmed creation time.',
+  });
+  assert.equal(card.phase,'succeeded');assert.equal(card.receipt.createdAt,created);
+  assert.equal(card.receipt.updatedAt,updated);assert.equal(f.ctx.tasks.length,0);
 });

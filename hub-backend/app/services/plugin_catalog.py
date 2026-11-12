@@ -478,22 +478,29 @@ async def client_catalog(session: AsyncSession, org_id: str | None,
             models.AuditLog.action.in_([
                 "plugin.approve", "plugin.reject", "plugin.revoke",
             ]),
-        ).order_by(models.AuditLog.at.desc()))).scalars().all())
-        latest_review = {}
+        ).order_by(models.AuditLog.at.desc(), models.AuditLog.id.desc()))).scalars().all())
+        # Project immutable audit events without exposing package, evaluation or
+        # actor IDs. Event IDs only stabilize ordering when times tie.
+        review_history = {}
         for row in review_rows:
-            latest_review.setdefault(str(row.target_id or ""), row)
-        seen = set()
+            detail = dict(row.detail or {})
+            review_history.setdefault(str(row.target_id or ""), []).append({
+                "id": row.id,
+                "decision": row.action.split(".", 1)[1],
+                "note": str(detail.get("note") or "")[:1200],
+                "reviewedAt": _ms(row.at),
+                "reviewedBy": str(row.actor_name or ""),
+            })
         for version in own_versions:
             plugin = own_plugins.get(version.plugin_id)
-            if not plugin or plugin.id in seen or plugin.org_id != org_id:
+            if not plugin or plugin.org_id != org_id:
                 continue
-            seen.add(plugin.id)
             manifest = product_brand.manifest_display(version)
             report = dict(version.capability_report or {})
             provenance = _provenance(version)
             market_policy = plugin_marketplace.public_policy(own_policies.get(plugin.id))
-            review = latest_review.get(version.id)
-            review_detail = dict(review.detail or {}) if review else {}
+            history = review_history.get(version.id, [])
+            review = history[0] if history else {}
             submissions.append({
                 "pluginId": plugin.id, "versionId": version.id,
                 **({'template': 'app'} if manifest.get('template') == 'app' else {}),
@@ -516,11 +523,11 @@ async def client_catalog(session: AsyncSession, org_id: str | None,
                 "visibility": plugin_audience.normalize(version.visibility),
                 "audienceCount": own_audience_counts.get(version.id, 0),
                 "createdAt": _ms(version.created_at),
-                "reviewDecision": str(review_detail.get("decision") or
-                                      (review.action.split(".", 1)[1] if review else "")),
-                "reviewNote": str(review_detail.get("note") or "")[:1200],
-                "reviewedAt": _ms(review.at) if review else 0,
-                "reviewedBy": str(review.actor_name or "") if review else "",
+                "reviewDecision": review.get("decision", ""),
+                "reviewNote": review.get("note", ""),
+                "reviewedAt": review.get("reviewedAt", 0),
+                "reviewedBy": review.get("reviewedBy", ""),
+                "reviewHistory": history,
                 "qualitySummary": dict(report.get("qualitySummary") or {}),
                 "bindingCount": int(version.id in bound_version_ids),
                 "catalogReady": bool(

@@ -15,6 +15,27 @@ test('cloud handoff keeps a structured website service address for the result ca
   assert.equal(_serviceUrlFromPage([{ text: 'localhost:4173' }]), '');
 });
 
+test('local model ownership blocks cloud handoff before target discovery or workspace inspection', async t => {
+  const f = await fixture(t);
+  const cloud = f.controller({ request: () => assert.fail('local model metadata must not reach Hub'),
+    workspace: { scan: () => assert.fail('local workspace must not be inspected for an ineligible handoff') } });
+  for (const selection of [
+    { name: 'local:private:model' }, { name: 'private-model', model: { localOnly: true } },
+    { name: 'image::private::local:private:model' },
+  ]) {
+    f.snapshot.modelSelection = selection;
+    await assert.rejects(cloud.preview(f.handle), /本地模型只能在本机使用/);
+    assert.equal(cloud.guard(f.handle), null);
+  }
+  f.snapshot.modelSelection = {};
+  f.handle.model = { localOnly: true };
+  await assert.rejects(cloud.preview(f.handle), /本地模型只能在本机使用/);
+  f.snapshot.modelSelection = { name: 'managed-model', model: { id: 'managed-model' },
+    activeName: 'local:private:model', activeModel: { localOnly: true }, pending: true };
+  assert.doesNotThrow(() => assertPortable(f.handle));
+  assert.equal(source(f.handle).modelName, 'managed-model');
+});
+
 function account(uid = 'alice') {
   const now = Math.floor(Date.now() / 1000);
   return { hub: 'http://127.0.0.1:18989', clientId: 'desktop', session: Buffer.from(JSON.stringify({

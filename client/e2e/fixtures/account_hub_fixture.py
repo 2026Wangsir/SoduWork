@@ -31,7 +31,7 @@ from app.config import Settings
 Settings.model_config["env_file"] = None
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app import models
 from app.api import client_auth, client_email_auth, clients, account_profile
 from app.db import Base, SessionLocal, engine
@@ -111,6 +111,16 @@ async def delivered_mail(challenge_id: str, x_fixture_key: str = Header(default=
     if code:
         return {"ready": True, "code": code, "smtpDelivered": True}
     return {"ready": False}
+
+
+@app.get("/__fixture__/mail-counts")
+async def mail_counts(x_fixture_key: str = Header(default="")):
+    """Expose only fixture row counts to prove rejected requests have no mail side effects."""
+    if x_fixture_key != control_key:
+        raise HTTPException(403)
+    async with SessionLocal() as session:
+        return {"challenges": await session.scalar(select(func.count()).select_from(EmailChallenge)),
+                "outbox": await session.scalar(select(func.count()).select_from(MailOutbox))}
 
 
 @app.get("/__fixture__/account/{user_id}")

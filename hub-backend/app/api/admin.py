@@ -54,6 +54,18 @@ log = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 settings = get_settings()
 
+# Local model services are owned by the desktop client and must never be exposed
+# through administrative device APIs or changed by an administrator.
+_CLIENT_LOCAL_MODEL_KEYS = frozenset(("modelProviders",))
+
+
+def _admin_client_config(value) -> dict:
+    """Return the administrative configuration view without client-local model data."""
+    config = dict(value or {}) if isinstance(value, dict) else {}
+    for key in _CLIENT_LOCAL_MODEL_KEYS:
+        config.pop(key, None)
+    return config
+
 
 # Authentication and current user.
 
@@ -2016,7 +2028,7 @@ async def client_detail(
         select(func.count()).select_from(Task).where(Task.owner_client_id == cid, Task.status.in_(["todo", "doing"]))
     )
     d = client_to_api(c, settings.offline_after_seconds)
-    d["config"] = c.config or {}
+    d["config"] = _admin_client_config(c.config)
     d["taskTotal"] = int(total or 0)
     d["taskOpen"] = int(open_ or 0)
     d["connected"] = hub.is_online(cid)
@@ -2042,13 +2054,19 @@ async def client_push(
     if typ == "command" and body.get("action") == "apply-update" and "client.update" not in getattr(user, "_perms", set()):
         raise HTTPException(status_code=403, detail="无推送热更新权限")
     if typ == "config.patch":
-        patch = body.get("patch") or {}
+        patch = body.get("patch")
+        if patch is None:
+            patch = {}
+        if not isinstance(patch, dict):
+            raise HTTPException(status_code=400, detail="config.patch 必须是对象")
+        forbidden = sorted(_CLIENT_LOCAL_MODEL_KEYS.intersection(patch))
+        if forbidden:
+            raise HTTPException(status_code=403,
+                                detail="本地模型配置由客户端管理，后台不能读取或修改")
         c.config = {**(c.config or {}), **patch}
         await session.commit()
         from ..services.client_domain_events import device_changed
         await device_changed(c, "config")
-        if "modelProviders" in patch:
-            await device_changed(c, "models")
         await hub.publish(cid, {"type": "config.patch", "patch": patch})
     elif typ == "notice":
         await hub.publish(cid, {"type": "notice", "text": body.get("text") or ""})

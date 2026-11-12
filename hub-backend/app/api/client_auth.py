@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password, verify_password
 from ..db import get_session
-from ..deps import authenticated_client, current_ai_client, has_perm, require_perm
+from ..deps import authenticated_client, current_ai_client, enforce_client_quota, has_perm, quota_prefetch, require_perm
 from ..models import AuditLog, Client, User
 from ..schemas import client_to_api
 from ..services import (
@@ -338,10 +338,26 @@ async def me(
 
 
 @router.get("/client-auth/authorize-ai")
-async def authorize_ai(response: Response, client: Client = Depends(current_ai_client)):
+@quota_prefetch
+async def authorize_ai(response: Response, model: str = "", agent: str = "",
+                       client: Client = Depends(authenticated_client),
+                       session: AsyncSession = Depends(get_session)):
     """A fresh admission check for cached personal models and queued desktop turns."""
     response.headers["Cache-Control"] = "private, no-store"
-    return {"ok": True, "quota": client._token_quota_status}
+    from ..services import model_catalog, model_quota
+    conf = {}
+    if agent.strip().lower().removeprefix("local:") == "pi":
+        want = model.strip() or model_catalog.agent_model(client, "pi")
+        conf = await model_catalog.resolve(session, client, want)
+        if not conf:
+            raise HTTPException(400, "所选模型不可用，请刷新模型列表后重试")
+        conf["quotaScope"] = conf.get("fundingScope", "platform")
+    status = await enforce_client_quota(session, client, conf=conf)
+    platform = status.pop("platformQuota", status.copy())
+    return {"ok": True, "quota": status, "platformQuota": platform,
+            "quotaScope": conf.get("quotaScope", "platform"), "quotaVersion": model_quota.VERSION,
+            "personalQuotaSupported": agent.strip().lower().removeprefix("local:") == "pi",
+            "resolvedModel": conf.get("model", ""), "providerId": conf.get("provider", "")}
 
 
 @router.get("/admin/client-auth-policy")

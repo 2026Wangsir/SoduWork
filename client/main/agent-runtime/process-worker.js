@@ -89,6 +89,11 @@ const peer = createRpcPeer({
       context.install({ resourcesPath: data.resourcesPath,
         deviceAuth: { ensureSession: (_, identity) => peer.call('ensureSession', [identities.get(identity)]) },
         ensureSession: (_, identity) => peer.call('ensureSession', [identities.get(identity)]),
+        // Resolve desktop-owned model credentials through the trusted host. The
+        // renderer never receives this value and the runtime does not read the
+        // encrypted store directly because safeStorage is host-only.
+        localModel: modelRef => peer.call('localModel', [String(modelRef || '')]),
+        prepareLocalModels: () => peer.call('prepareLocalModels', []),
         async authFetch(identity, url, options = {}) {
           const id = identities.get(identity); if (!id) throw Error('执行请求没有可信的会话身份');
           const { signal, headers, body, ...rest } = options;

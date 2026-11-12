@@ -12,7 +12,7 @@ function create({ app, profile, launchPath, shell, root = path.join(__dirname, '
     if (cachedIcon) return cachedIcon;
     const ico = path.join(root, 'icon.ico');
     const png = path.join(root, 'icon.png');
-    if (platform !== 'win32') return fs.existsSync(ico) ? ico : fs.existsSync(png) ? png : undefined;
+    if (platform !== 'win32') return fs.existsSync(png) ? png : fs.existsSync(ico) ? ico : undefined;
     try {
       const bytes = fs.readFileSync(ico);
       const digest = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -55,6 +55,13 @@ function create({ app, profile, launchPath, shell, root = path.join(__dirname, '
     }
   }
   function install() {
+    if (platform === 'darwin') {
+      app.whenReady().then(() => {
+        const file = icon();
+        if (file) app.dock?.setIcon(file);
+      }).catch(error => warn('[shell] Dock icon setup:', error.message));
+      return;
+    }
     if (platform !== 'win32') return;
     const development = !app.isPackaged;
     const suffix = crypto.createHash('sha256').update(path.resolve(app.getPath('userData')).toLowerCase()).digest('hex').slice(0, 20);

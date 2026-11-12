@@ -197,6 +197,19 @@ test('收集箱与待补充需求不能误入执行会话', () => {
   }
 });
 
+test('the collection inbox explains the clarification flag without splitting or changing its issues', () => {
+  const rows = ['intake','clarifying'].map(triageStage=>({...mine,id:triageStage,triageStage}));
+  const before = JSON.stringify(rows);
+  const html = views().board(rows,{archive:'active',group:'stage',limits:{}},{});
+  assert.match(html,/<p class="rq-lane-hint">待整理的需求；“待补充”表示仍需完善背景或完成标准<\/p>/);
+  assert.match(html,/<span>收集箱<\/span><em>2<\/em>/);
+  assert.match(html,/data-hbid="clarifying"[^>]*>[\s\S]*?class="rq-flag">待补充<\/span>/);
+  assert.doesNotMatch(html,/data-rq-lane="clarifying"/);
+  assert.equal(R.stage(rows[0]),'intake');assert.equal(R.stage(rows[1]),'clarifying');
+  assert.deepEqual(rows.map(R.column),['intake','intake']);
+  assert.equal(JSON.stringify(rows),before);
+});
+
 test('卡片时间优先修改时间并精确到分钟，缺失或无效时回退创建时间', () => {
   const view = views();
   const createdAt = new Date(2026, 9, 23, 9, 10, 11).getTime();

@@ -54,7 +54,8 @@ def free_port():
 def start(state, port, password=None, *, desktop=False):
     log = (state.parent / (state.name + ".launcher-" + secrets.token_hex(4) + ".log")).open("wb")
     # Launch the base interpreter, not an existing venv or Windows venv redirector.
-    command = [getattr(sys, "_base_executable", sys.executable), str(ROOT / "start.py"), "--data-dir", str(state),
+    launcher = ROOT / 'tools/dev/verify_desktop_fixture.py' if desktop and sys.platform == 'darwin' else ROOT / 'start.py'
+    command = [getattr(sys, "_base_executable", sys.executable), str(launcher), "--data-dir", str(state),
                "--port", str(port), "--no-browser"]
     if password:
         command += ["--password-stdin"]
@@ -169,6 +170,8 @@ def verify(*, desktop=False):
     checks = []
     child = output = None
     print(f"Isolated verification directory: {state}\nURL: {base}", flush=True)
+    if desktop and sys.platform == 'darwin':
+        print('Desktop fixture uses a mock native Keychain; real Keychain access is not verified.', flush=True)
     try:
         # The launcher must survive incomplete first setup without a default account.
         failed, failed_log = start(state, port, "short")
@@ -280,7 +283,8 @@ def verify(*, desktop=False):
             stop(child, base)
         if output is not None:
             output.close()
-        report = {"ok": len(checks) == (14 if desktop else 12), "checks": checks, "dataDir": str(state), "url": base}
+        report = {"ok": len(checks) == (14 if desktop else 12), "checks": checks, "dataDir": str(state), "url": base,
+                  "nativeKeychain": "mocked" if desktop and sys.platform == 'darwin' else "not-verified"}
         (state / "verification.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report, indent=2), flush=True)
     assert len(checks) == (14 if desktop else 12)

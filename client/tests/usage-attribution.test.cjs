@@ -50,3 +50,76 @@ test('missing or mismatched provider metadata remains unknown and never borrows 
   reporter.observe({sessionId:'legacy',model:'model-a',usageProvider:'newest-provider',usageIdentity:identity},restored.snapshot());await reporter.flush();
   assert.equal(sent[0].provider,'');
 });
+
+test('local calls remain device-only across pending model changes, archival replay and managed billing', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-local-usage-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const f = fixture(), managed = message();
+  f.onEvent({ type: 'message_start', message: managed });
+  f.onEvent({ type: 'message_end', message: managed });
+  f.ctx.prep.model = { id: 'local-private-model', localOnly: true, modelRef: 'local:device/private-model' };
+  const local = message('local-private-model');
+  f.onEvent({ type: 'message_start', message: local });
+  f.ctx.prep.model = { id: 'model-b', quotaProvider: 'provider-b' };
+  f.onEvent({ type: 'message_end', message: local });
+  assert.equal(local.usageLocalOnly, true, 'ownership belongs to the executing call');
+  const next = message('model-b');
+  f.onEvent({ type: 'message_start', message: next });
+  f.onEvent({ type: 'message_end', message: next });
+  const restored = stream.create();
+  require('../main/pi-session/history-seed').seed(restored,
+    { state: { messages: JSON.parse(JSON.stringify([managed, local, next])) } }, { nativeAgentId: 'pi', maxMessages: 1 });
+  for (const snapshot of [f.acc.snapshot(), restored.snapshot()]) {
+    assert.deepEqual(snapshot.usageReceipts.map(row => row.localOnly === true), [false, true, false]);
+    const sent = [], identity = { hub: 'http://fixture', clientId: 'fixture', session: 'fixture-session' };
+    const appRoot = fs.mkdtempSync(path.join(root, 'case-'));
+    const reporter = createUsageReporter({ app: { getPath: () => appRoot }, identityOf: async () => identity,
+      fetchImpl: async (_url, options) => {
+        sent.push(JSON.parse(options.body)); return { ok: true, text: async () => '{"ok":true}' };
+      } });
+    reporter.observe({ sessionId: 'mixed-models', model: { id: 'local-private-model', localOnly: true }, usageIdentity: identity }, snapshot);
+    await reporter.flush();
+    assert.deepEqual(sent.map(row => [row.model, row.usage.total]), [['model-a', 12], ['model-b', 24]]);
+    assert.doesNotMatch(JSON.stringify(sent), /local-private-model|private-model/);
+  }
+});
+
+test('local usage without receipts is not uploaded by adapter fallback', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-local-usage-fallback-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sent = [], identity = { hub: 'http://fixture', clientId: 'fixture', session: 'fixture-session' };
+  const reporter = createUsageReporter({ app: { getPath: () => root }, identityOf: async () => identity,
+    fetchImpl: async (_url, options) => { sent.push(options.body); return { ok: true, text: async () => '{"ok":true}' }; } });
+  const publicModel = require('../main/conversation/model-selection').publicModel({ id: 'private-model', localOnly: true, key: 'secret' });
+  assert.equal(publicModel.localOnly, true); assert.equal(publicModel.key, undefined);
+  for (const model of [publicModel, 'local:device/private-model']) {
+    reporter.observe({ sessionId: 'local-only', model, usageIdentity: identity }, { usage: { input: 100, output: 20 } });
+  }
+  await reporter.flush();
+  assert.deepEqual(sent, []);
+  reporter.observe({ sessionId: 'managed-history', model: publicModel, usageIdentity: identity },
+    { usageReceipts: [{ provider: 'managed-provider', usage: { input: 10 } }] });
+  await reporter.flush();
+  assert.equal(JSON.parse(sent[0]).model, '', 'unknown managed history cannot borrow the current local model name');
+});
+
+test('legacy local archives cannot become Hub usage after their local configuration is removed', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-legacy-local-usage-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const legacyLocal = message('same-runtime-id', 'soduwork');
+  const legacyManaged = { ...message('same-runtime-id', 'soduwork'), usageProvider: 'trusted-managed-provider' };
+  const newManaged = { ...message('managed-without-catalog-provider', 'soduwork'), usageLocalOnly: false };
+  const restored = stream.create();
+  require('../main/pi-session/history-seed').seed(restored,
+    { state: { messages: [legacyLocal, legacyManaged, newManaged] } }, { nativeAgentId: 'pi' });
+  const receipts = restored.snapshot().usageReceipts;
+  assert.deepEqual(receipts.map(row => row.reportable === false), [true, false, false]);
+  assert.equal(receipts[0].localOnly, undefined, 'unknown historical ownership is not labeled as proven local');
+  const sent = [], identity = { hub: 'http://fixture', clientId: 'fixture', session: 'fixture-session' };
+  const reporter = createUsageReporter({ app: { getPath: () => root }, identityOf: async () => identity,
+    fetchImpl: async (_url, options) => { sent.push(JSON.parse(options.body)); return { ok: true, text: async () => '{"ok":true}' }; } });
+  reporter.observe({ sessionId: 'legacy-local', model: 'managed', usageIdentity: identity }, restored.snapshot());
+  await reporter.flush();
+  assert.deepEqual(sent.map(row => [row.model, row.usage.total]), [['same-runtime-id', 12], ['managed-without-catalog-provider', 24]]);
+  assert.equal(sent[0].provider, 'trusted-managed-provider');
+});

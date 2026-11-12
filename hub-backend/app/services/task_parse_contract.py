@@ -55,6 +55,19 @@ _PARSE_SYSTEM = """你是 SoduWork 的需求录入助手。结合用户本次要
 {{"title":"写周报","due":"2026-08-08","priority":"normal","assignee":"me","flow":"","checklist":["覆盖本周三件主要进展"],"reason":"你自己写更快，不用走流程"}}"""
 
 
+def _language_prompt(locale) -> str:
+    # Only trusted language names enter the system prompt; legacy clients retain Chinese.
+    languages = {"zh-CN": "Simplified Chinese", "en-US": "English",
+                 "ja-JP": "Japanese", "ko-KR": "Korean"}
+    language = languages.get(locale, "Simplified Chinese") if isinstance(locale, str) else "Simplified Chinese"
+    return (f"\n\nOutput language: {language}. Write all generated human-readable fields in {language} "
+            "(title, note, checklist, reason, tags and descriptive source text), even when the input, "
+            "reference materials or examples above use another language. The current UI language "
+            "takes precedence over their language. Do not translate JSON keys, enum values, dates, "
+            "catalog identifiers, repository names, person names, code or quoted literals. "
+            "Keep the original facts and constraints; return only the JSON object.")
+
+
 def _apply_scene(
     got: dict, scenes: list[dict], recommendation: dict, flows: list[dict]
 ) -> dict:

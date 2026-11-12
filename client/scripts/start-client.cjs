@@ -18,10 +18,17 @@ function command(platform = process.platform, root = ROOT) {
   return path.join(root, 'node_modules', 'electron', 'dist', binary);
 }
 function main(args = process.argv.slice(2)) {
-  const binary = command();
+  let binary = command();
   if (!fs.existsSync(binary)) {
     console.error('Electron is missing. Run npm ci in client/ with Node.js 22.19+, then npm start.');
     return 1;
+  }
+  if (process.platform === 'darwin') {
+    try { binary = require('./source-macos-app.cjs').prepareSourceApp({ root: ROOT, binary }); }
+    catch (error) {
+      console.error('SoduWork could not prepare its source application: ' + error.message);
+      return 1;
+    }
   }
   const sourceSession = process.env.SODUWORK_SOURCE_SESSION === '1';
   const child = spawn(binary, [ROOT, ...args], {

@@ -40,6 +40,18 @@ test('cached credentials perform one fresh check per native turn', async () => {
   assert.equal(requests, 2);
 });
 
+test('successful admission emits only a refresh hint, never a model grant as global quota', async () => {
+  const current = identity(), events = [];
+  const authorize = create({ identityOf: async () => current, fetchImpl: async () => allowed(),
+    onQuotaChanged: value => events.push(value) });
+  await authorize(current);
+  assert.deepEqual(events, [{ hub: current.hub, clientId: current.clientId }]);
+  const denied = create({ identityOf: async () => current, fetchImpl: async () => exceeded(),
+    onQuotaChanged: value => events.push(value) });
+  await assert.rejects(denied(current));
+  assert.equal(events.length, 1);
+});
+
 test('quota changes during queue wait block execution and preserve existing lifecycle checks', async () => {
   const current = identity();
   let exhausted = false, executions = 0, lifecycles = 0, notifications = 0;

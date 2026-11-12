@@ -51,6 +51,8 @@
     let positionFrame = null;
     let observingPosition = false;
     let sizeObserver = null;
+    let catalogAt = 0;
+    const catalogTtl = 30000;
 
     const tags = document.createElement('div');
     tags.className = 'cp-skill-tags';
@@ -63,7 +65,8 @@
     input.setAttribute('aria-controls', menu.id);
     input.setAttribute('aria-haspopup', 'listbox');
     input.setAttribute('aria-autocomplete', 'list');
-    input.setAttribute('aria-expanded', 'false');
+    // The multiline textbox exposes suggestions through controls and active-descendant, not combobox-only expanded state.
+    input.removeAttribute('aria-expanded');
     host.appendChild(tags);
     host.appendChild(menu);
 
@@ -162,7 +165,6 @@
       menu.innerHTML = '';
       menuItems = [];
       input.removeAttribute('aria-activedescendant');
-      input.setAttribute('aria-expanded', 'false');
     }
 
     function paintMenu() {
@@ -205,7 +207,6 @@
       menu.classList.add('show');
       watchPosition();
       menu.scrollTop = scrollTop;
-      input.setAttribute('aria-expanded', 'true');
     }
 
     function choose(name) {
@@ -228,10 +229,22 @@
     }
 
     function onInput() {
+      const wasOpen = !!match;
       match = queryOf(input.value, input.selectionStart);
       active = 0;
       menu.scrollTop = 0;
       paintMenu();
+      // Refresh on entry, never on each typed character or on a timer. Local
+      // mutations also invalidate the owners immediately through their event.
+      if (match && !wasOpen) {
+        if (typeof opts.onRefresh === 'function') {
+          if (!loading && Date.now() - catalogAt >= catalogTtl) opts.onRefresh();
+        } else {
+          // Older hosts refresh on each opening. Prefer the bounded refresh
+          // callback when both contracts are supplied to avoid duplicate work.
+          opts.onOpen?.();
+        }
+      }
     }
     function onKeydown(event) {
       if (event.isComposing || !menu.classList.contains('show')) return false;
@@ -291,6 +304,7 @@
       setItems(next) {
         loading = false;
         loadError = '';
+        catalogAt = Date.now();
         items = Array.isArray(next) ? next.slice() : [];
         paintTags();
         if (match) paintMenu();

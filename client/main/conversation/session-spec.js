@@ -22,7 +22,7 @@ function build(raw, resolved, defaults) {
   const goal = goalContract.normalize(input);
   return Object.freeze({
     schemaVersion: 4,
-    modelName: text(input.modelName, 300),
+    modelName: text(input.modelName, require('../../core/model-choice').nameLimit(input.modelName)),
     reasoningEffort: text(input.reasoningEffort, 24).toLowerCase(),
     cwd: text(input.cwd || fallback.cwd, 1200),
     readOnly: input.accessPolicy ? input.accessPolicy.mode === 'readonly' : readOnly,

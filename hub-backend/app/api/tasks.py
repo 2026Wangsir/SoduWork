@@ -132,6 +132,7 @@ async def parse_task(
     async def parse():
         return await svc.parse_task_text(session, str(body.get("text") or ""),
                                        client=client, model=str(body.get("model") or ""),
+                                       **({"locale": body["locale"]} if "locale" in body else {}),
                                        **({"attachments": body["attachments"]} if "attachments" in body else {}),
                                        **({"instruction": str(body.get("instruction") or "")} if "instruction" in body else {}),
                                        **({"automation": body} if body.get("kind") == "automation" else {}))
@@ -261,13 +262,9 @@ async def list_projects_for_box(
     """List projects visible through the user's department and ancestors, managed subtrees, or
     public organization-free projects, matching team-inbox scope.
     """
-    from sqlalchemy import or_, select as _sel
     from ..models import Project
-    from ..services import inbox as inbox_svc
-    u, scope = await inbox_svc._me_scope(session, client)
-    q = _sel(Project).where(Project.status == "active")
-    q = q.where(or_(Project.org_id.in_(scope), Project.org_id.is_(None))) if scope \
-        else q.where(Project.org_id.is_(None))
+    from ..services import requirement_projects
+    q = await requirement_projects.visible_query(session, client)
     rows = (await session.execute(q.order_by(Project.created_at.desc()))).scalars().all()
     return [{"id": p.id, "name": p.name, "desc": p.desc or ""} for p in rows]
 
@@ -1859,6 +1856,19 @@ async def task_acceptance_context(
     """Read fixed review outputs, acceptance criteria, and authorized reference materials."""
     from ..services import task_acceptance_review
     return await task_acceptance_review.context(session, client, tid)
+
+
+@router.get("/tasks/{tid}/acceptance-summary")
+async def task_acceptance_summary(
+    tid: str,
+    artifactVersionId: str | None = Query(default=None, max_length=36),
+    requirementVersion: int | None = Query(default=None, ge=1),
+    client: Client = Depends(current_client),
+):
+    """Export authorized delivery facts without changing their recorded acceptance state."""
+    from ..services import acceptance_summary
+    return await acceptance_summary.export(
+        client, tid, artifact_version_id=artifactVersionId, requirement_version=requirementVersion)
 
 
 @router.post("/tasks/{tid}/auto-review")

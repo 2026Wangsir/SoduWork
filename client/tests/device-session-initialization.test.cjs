@@ -179,6 +179,50 @@ test('a Hub switch before the refresh microtask starts prevents that obsolete in
   await f.api.myModels(); assert.equal(f.requests.length, 1);
 });
 
+for (const method of ['myModels', 'saveMyModels', 'testMyModel', 'checkMyModelCapabilities']) {
+  test(`${method} retains its Hub scope while local ownership is being read`, async () => {
+    const f = fixture(), catalog = deferred();
+    f.bridge.localModels = { get: () => catalog.promise };
+    const input = method === 'testMyModel' ? 'managed-provider' : {
+      providerId: 'managed-provider', keys: { 'managed-provider': 'fixture-key' },
+    };
+    const canceled = assert.rejects(f.api[method](input), { code: 'STALE_TASK_SCOPE' });
+    f.api.setHubEnvironment('development', 'http://127.0.0.1:9876');
+    catalog.resolve({ providers: [], myModels: [], revision: 1 });
+    await canceled;
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.requests, []);
+  });
+}
+
+test('a Hub switch during a local save prevents its managed portion from reaching the new Hub', async () => {
+  const f = fixture(), saved = deferred();
+  f.bridge.localModels = { get: async () => ({ providers: [], myModels: [], revision: 1 }),
+    save: () => saved.promise };
+  const canceled = assert.rejects(f.api.saveMyModels({ providers: [], models: [],
+    expectedRevision: 'hub-revision', localProviders: [], localModels: [], localRevision: 1 }),
+  { code: 'STALE_TASK_SCOPE' });
+  await flush();
+  f.api.setHubEnvironment('development', 'http://127.0.0.1:9876');
+  saved.resolve({ ok: true });
+  await canceled;
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.requests, []);
+});
+
+test('a local catalog cannot hide a stale Hub domain read', async () => {
+  const f = fixture(), result = deferred();
+  await f.api.registerClient();
+  f.bridge.localModels = { get: async () => ({ providers: [{ id: 'local-fixture', localOnly: true }], myModels: [] }) };
+  f.bridge.clientDomainRead = () => result.promise;
+  const canceled = assert.rejects(f.api.myModels(), { code: 'STALE_TASK_SCOPE' });
+  await flush();
+  f.api.setHubEnvironment('development', 'http://127.0.0.1:9876');
+  result.resolve({ ok: true, value: { providers: [] } });
+  await canceled;
+  assert.deepEqual(f.requests, []);
+});
+
 test('401 renewal has the same bounded failure and the next explicit attempt can recover', async () => {
   const f = fixture(); await f.api.registerClient();
   const gate = deferred(); f.bridge.deviceAuthBootstrap = () => gate.promise;

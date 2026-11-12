@@ -18,13 +18,34 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 import webbrowser
 
-from .local_environment import (ROOT, StartupError, check_dependencies, dependency_report,
+from .local_environment import (ROOT, StartupError, check_dependencies, check_desktop_session, dependency_report,
                                 prepare, prepare_desktop, spawn_options, stop_child, wait_child)
 
 
 STATE_VERSION = 1
 DEFAULT_PORT = 18989
 HTTP = build_opener(ProxyHandler({}))
+
+
+def check_source_checkout(root: Path) -> None:
+    """Do not copy an intermediate Git checkout into the persistent runtime."""
+    git_dir = root / '.git'
+    if git_dir.is_file():
+        pointer = git_dir.read_text(encoding='utf-8').strip()
+        if not pointer.startswith('gitdir: ') or not pointer[8:].strip():
+            raise StartupError('Cannot locate the source Git worktree metadata. Run git status before starting.')
+        git_dir = (root / pointer[8:].strip()).resolve()
+    elif not git_dir.is_dir():
+        # Source archives do not require Git or inherit a parent repository.
+        return
+    for marker, operation in [('rebase-merge', 'rebase'), ('rebase-apply', 'rebase/apply'),
+                              ('MERGE_HEAD', 'merge'), ('CHERRY_PICK_HEAD', 'cherry-pick'),
+                              ('REVERT_HEAD', 'revert')]:
+        if (git_dir / marker).exists():
+            raise StartupError(
+                f'The source checkout has an unfinished Git {operation}. Run git status in the source directory, '
+                'then finish the operation or back up your work before aborting it. '
+                'Restart only after your intended branch is restored; application data was not changed.')
 
 
 def default_state() -> Path:
@@ -321,9 +342,33 @@ def launch_desktop(state: Path, client: Path, env: dict, base: str, output) -> s
             json.dump({'workDir': str(work)}, stream)
     desktop_env = {key: value for key, value in env.items()
                    if key not in {'ADMIN_USER', 'ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL'}}
+    if sys.platform == 'darwin':
+        # macOS resolves the user's default Keychain through HOME. Isolate the
+        # application profile, not the native desktop's operating-system home.
+        desktop_env['HOME'] = str(Path.home())
+    elif sys.platform.startswith('linux'):
+        # Secret Service and desktop integration belong to the user's login
+        # session. Keep only the application profile isolated; the service's
+        # synthetic HOME/XDG paths must not select a different keyring.
+        desktop_env['HOME'] = str(Path.home())
+        for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
+                    'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS'):
+            desktop_env.pop(key, None)
+            if key in os.environ:
+                desktop_env[key] = os.environ[key]
+        # Electron uses these to select the secure-storage and display backends.
+        # Do not inherit unrelated credentials or force Wayland on X11 sessions.
+        for key in ('XDG_CURRENT_DESKTOP', 'DESKTOP_SESSION', 'XDG_SESSION_TYPE',
+                    'XDG_SESSION_DESKTOP', 'KDE_SESSION_VERSION', 'KDE_FULL_SESSION',
+                    'GNOME_DESKTOP_SESSION_ID'):
+            if key in os.environ:
+                desktop_env[key] = os.environ[key]
     desktop_env.update(SODUWORK_USER_DATA=str(profile), VIRTUAL_ENV=str(state / 'venv'),
                        SODUWORK_SOURCE_SESSION='1')
     bin_dir = state / 'venv' / ('Scripts' if os.name == 'nt' else 'bin')
+    # Bind Runner to the interpreter prepared for this exact source instance.
+    # The desktop must not infer executable ownership from an inherited PATH.
+    desktop_env['SODUWORK_SOURCE_RUNNER_PYTHON'] = str(bin_dir / ('python.exe' if os.name == 'nt' else 'python'))
     desktop_env['PATH'] = str(bin_dir) + os.pathsep + desktop_env.get('PATH', '')
     for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XAUTHORITY'):
         if key in os.environ:
@@ -368,6 +413,9 @@ def main(argv=None) -> int:
         signal.signal(signal.SIGBREAK, signal.default_int_handler)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
+        check_source_checkout(ROOT)
+        if args.desktop:
+            check_desktop_session()
         if args.check:
             dependency_report(desktop=args.desktop)
             return 0

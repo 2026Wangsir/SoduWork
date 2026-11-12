@@ -79,11 +79,11 @@ class ModelConfigTests(IsolatedDatabase):
         async with self.sessions() as left, self.sessions() as right:
             first, stale = await left.get(Client, "device"), await right.get(Client, "device")
             await tasks.put_my_models({"expectedRevision": guard.revision(first), "providers": [
-                {"id": "custom-local", "name": "Local", "baseUrl": "http://localhost:9999/v1"}]}, first, left)
+                {"id": "provider", "name": "Managed", "baseUrl": "http://localhost:9999/v1"}]}, first, left)
             saved = await config.put_config({"theme": "dark"}, stale, right)
             self.assertEqual(saved["theme"], "dark")
             self.assertNotIn("modelProviders", saved)
-            self.assertEqual(stale.config["modelProviders"][0]["id"], "custom-local")
+            self.assertEqual(stale.config["modelProviders"][0]["id"], "provider")
             # Old clients echo this server-owned field: ignore it without
             # rejecting their unrelated preferences or overwriting the catalog.
             echoed = await config.put_config({"modelProviders": [], "theme": "light"}, stale, right)
@@ -91,7 +91,7 @@ class ModelConfigTests(IsolatedDatabase):
             self.assertNotIn("modelProviders", echoed)
         async with self.sessions() as session:
             current = await session.get(Client, "device")
-            self.assertEqual(current.config["modelProviders"][0]["id"], "custom-local")
+            self.assertEqual(current.config["modelProviders"][0]["id"], "provider")
             self.assertNotIn("modelProviders", await config.get_config(current))
 
     async def test_admin_model_edit_and_delete_require_current_revision(self):

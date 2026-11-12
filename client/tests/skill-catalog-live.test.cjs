@@ -57,7 +57,7 @@ test('Skill capability UI auto-saves and refreshes instead of requiring a save b
     __dirname, '..', 'components', 'panels', 'skill-catalog-sync.js'), 'utf8');
   assert.match(source, /skillController\(\)\.scheduleSave\(\)/);
   assert.match(controller, /function scheduleSave\(\)/);
-  assert.match(source, /refreshMySkills\(\)/);
+  assert.match(source, /refreshMySkills\(\{ notify: !meta\?\.silent \}\)/);
   assert.match(source, /if \(tab === 'skills'\) skillController\(\)\.refresh\(\{ silent: true \}\)/);
   assert.match(source, /if \(enteredSkills\) skillController\(\)\.refresh\(\{ silent: true \}\)/);
   assert.match(source, /\u81ea\u52a8\u4fdd\u5b58|自动保存/u);

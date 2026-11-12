@@ -111,11 +111,13 @@ def issue_session(client: Client) -> tuple[str, int]:
     return token, SESSION_TTL_SECONDS
 
 
-def issue_proxy_ticket(client: Client) -> tuple[str, int]:
+def issue_proxy_ticket(client: Client, *, quota_runtime: str = "", quota_binding: str = "") -> tuple[str, int]:
     if client.auth_state != "active" or not client.user_ref:
         raise DeviceAuthError("这台 SoduWork 还没有被管理员激活", 403)
     token = sign_claims(
-        {"cid": client.id, "uid": client.user_ref, "ver": int(client.auth_version or 1)},
+        {"cid": client.id, "uid": client.user_ref, "ver": int(client.auth_version or 1),
+         **({"quotaRuntime": "pi", "quotaBinding": quota_binding}
+            if quota_runtime == "pi" and quota_binding else {})},
         ttl_seconds=AGENT_TTL_SECONDS,
         token_type="ai-proxy",
     )
@@ -243,8 +245,10 @@ async def client_from_session(session: AsyncSession, token: str, *, include_quot
 async def client_from_proxy_ticket(session: AsyncSession, token: str) -> Client:
     from . import auth_principals, shared_auth_cache
     if shared_auth_cache.reads_enabled():
-        principal, _ = await auth_principals.from_token(session, token, token_type="ai-proxy")
+        principal, claims = await auth_principals.from_token(session, token, token_type="ai-proxy")
         client = await _load_verified_client(session, principal, include_quota=True)
+        client._proxy_quota_runtime = claims.get("quotaRuntime", "") if claims.get("quotaBinding") else ""
+        client._proxy_quota_binding = claims.get("quotaBinding", "")
         return client
     claims = verify_claims(token, token_type="ai-proxy")
     if not claims:
@@ -252,6 +256,9 @@ async def client_from_proxy_ticket(session: AsyncSession, token: str) -> Client:
     row = await _binding(session, str(claims.get("cid") or ""), include_quota=True)
     client = row[0] if row else None
     _assert_active_binding_loaded(client, row[1] if row else None, claims)
+    if client is not None:
+        client._proxy_quota_runtime = claims.get("quotaRuntime", "") if claims.get("quotaBinding") else ""
+        client._proxy_quota_binding = claims.get("quotaBinding", "")
     return client
 
 

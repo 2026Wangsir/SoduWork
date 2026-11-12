@@ -108,11 +108,17 @@ function apiHarness(remote, authenticated = false) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context, {filename: file});
   }
   const api = window.SoduWorkAPI;
+  const initialScopeListeners = new Set(listeners.get('soduwork-data-scope-changed') || []);
   return { api, pending, get remoteCalls() { return remoteCalls; },
     emit: type => window.dispatchEvent({ type }),
     signIn: async next => { user = next; await api.registerClient(); },
     switchHub: host => api.setHubEnvironment('development', 'http://' + host + ':8989'),
-    scopeListenerCount: () => listeners.get('soduwork-data-scope-changed')?.size || 0,
+    scopeListenerCount: () => {
+      const current = listeners.get('soduwork-data-scope-changed') || new Set();
+      assert.ok([...initialScopeListeners].every(listener => current.has(listener)),
+        'Catalog cleanup must retain the API lifetime scope listeners');
+      return current.size - initialScopeListeners.size;
+    },
   };
 }
 test('local plugin discovery and Hub catalog start concurrently, then merge both sources', async () => {
@@ -205,6 +211,7 @@ test('simultaneous directory consumers share one local and remote read, but reop
   const s = apiHarness(() => new Response(JSON.stringify(catalog('remote'))));
   const first = s.api.pluginCatalog(), second = s.api.pluginCatalog(); await flush();
   assert.equal(s.remoteCalls, 1); assert.equal(s.pending.length, 1);
+  assert.equal(s.scopeListenerCount(), 1, 'Coalesced consumers share one request scope listener');
   s.pending[0].resolve(catalog('local'));
   assert.deepEqual(await first, await second);
   const next = s.api.pluginCatalog(); await flush();

@@ -386,7 +386,7 @@
       let expired = false, timer;
       const valid = () => !expired && owner === scope() && epoch === ctx._viewEpoch && authEpoch === scopeEpoch && nav === navigation;
       const load = async () => {
-        const list = rows(owner, sessionId);
+        let list = rows(owner, sessionId);
         await Promise.all([...list.values()].map(record => persist(record)));
         if (!valid()) return {stale: true};
         const pendingSelection = draftSelections.get(key(owner, String(sessionId)));
@@ -404,6 +404,12 @@
         if (!result?.ok) {
           const reason = String(result?.reason || '工作卡片暂时无法读取，请重新打开这条会话');
           tell('工作卡片读取失败：' + reason); return {blocked: true, reason};
+        }
+        // Account aliases resolve to the owned source archive in the main
+        // process. Keep restored cards and later edits under that same identity.
+        if (result.sessionId && result.sessionId !== sessionId) {
+          sessionId = String(result.sessionId);
+          list = rows(owner, sessionId);
         }
         if (result.workOnly && !ctx._ref && result.draftSelection != null &&
             (!validSelection(result.draftSelection) || !Number.isSafeInteger(result.draftSelectionRevision) || result.draftSelectionRevision < 0)) {

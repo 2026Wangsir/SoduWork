@@ -1,13 +1,14 @@
 'use strict';
 
-// Local operations commit to the workspace first. No Hub request or previous
-// account credential participates in authorizing local replica management.
-function create({ app, session, history, BrowserWindow, shell, trash }) {
+// Ordinary native data is device-shared. Protected local copies retain their
+// account authority; no Hub mutation is needed for local lifecycle management.
+function create({ app, session, history, BrowserWindow, shell, trash, resolveAlias,
+  identityOf = () => require('../conversation/requirement-context').cachedIdentity(app) }) {
   const queues = new Map();
   function publish(row) {
     for (const win of BrowserWindow?.getAllWindows?.() || []) {
       try { if (!win.isDestroyed()) win.webContents.send('pi-session-event', {
-        kind: 'history-lifecycle', sessionId: row.id, ref: '', presence: row,
+        kind: 'history-lifecycle', sessionId: row.id, ref: '', presence: { ...row, localOnly: true },
       }); } catch (_) { /* A closing window does not revert a durable operation. */ }
     }
   }
@@ -16,17 +17,27 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
       if (session.findBySessionId?.(id)?.inFlight?.()) throw Error('这条会话还在执行，完成或停止后再操作');
     }
   }
-  async function run(action, id, options = {}) {
+  async function assertResponseCurrent(row, captured, options) {
     await options.assertCurrent?.(true);
+    const access = require('../conversation/history-access'), current = identityOf();
+    access.assertLocalCurrent(app, captured, row, current);
+    access.assertReadable(app, row.id, access.actor(app, current), row);
+  }
+  async function run(action, id, options, captured) {
+    await options.assertCurrent?.(true);
+    const access = require('../conversation/history-access');
     const row = await history.resolve(id);
     if (!row) return null;
+    await options.assertCurrent?.(true);
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    const identity = captured.identity;
+    access.assertLocalMutation(app, row.id, captured, row);
     if (options.expectedRevision !== undefined && options.expectedRevision !== row.revision) {
       const alreadyApplied = action === 'delete' ? row.deleted : !row.deleted && row.archived === (action === 'archive');
       if (alreadyApplied) return { ok: true, id: row.id, conversation: row, unchanged: true, localOnly: true };
       throw Error('会话已在其他窗口更新，请刷新后重试');
     }
     idle(row);
-    const identity = require('../conversation/requirement-context').cachedIdentity(app);
     if (action === 'delete' && options.confirmed !== true) {
       const copy = require('../native-locale.cjs').dialogOptions({ title: '删除本地会话',
         message: '删除“' + String(row.title || '这条会话') + '”？',
@@ -45,7 +56,10 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
     // Stage deletion as an archive. A failed recycle leaves a visible retry
     // entry in archives; a stale directory refresh cannot reactivate it.
     await options.assertCurrent?.(true);
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    access.assertLocalMutation(app, row.id, captured, row);
     const staged = await history.lifecycle(row.id, action === 'delete' ? 'archive' : action, identity);
+    await assertResponseCurrent(row, captured, options);
     if (!staged?.ok) return staged;
     publish(staged.conversation);
     if (action === 'delete') {
@@ -66,6 +80,7 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
         }
       }
       const deleted = await history.lifecycle(row.id, 'delete', identity);
+      await assertResponseCurrent(row, captured, options);
       publish(deleted.conversation);
       return { ...deleted, id: row.id, aliasIds: row.historyAliasIds, localOnly: true, deleted: true };
     }
@@ -75,10 +90,26 @@ function create({ app, session, history, BrowserWindow, shell, trash }) {
   }
   return async (action, id, options) => {
     const settings = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
-    const row = await history.resolve(id);
-    if (!require('../conversation/shared-history.cjs').isLocalIdentity(row, id)) return null;
+    const captured = require('../conversation/history-access').actor(app, identityOf());
+    let row = await history.resolve(id);
+    let accountAlias = false;
+    if (!require('../conversation/shared-history.cjs').isLocalIdentity(row, id)) {
+      row = /^acct-/.test(id) && await resolveAlias?.(id);
+      if (!row) return null;
+      accountAlias = true;
+    }
     const previous = queues.get(row.id) || Promise.resolve();
-    const pending = previous.catch(() => {}).then(() => run(action, row.id, settings));
+    const pending = previous.catch(() => {}).then(async () => {
+      const guarded = accountAlias ? { ...settings, assertCurrent: async force => {
+        await settings.assertCurrent?.(force);
+        const current = await resolveAlias(id);
+        if (!current || current.id !== row.id) throw Error('会话已在其他窗口更新，请刷新后重试');
+      } } : settings;
+      const result = await run(action, row.id, guarded, captured);
+      // The directory ID is only a display alias for this response. Persisting
+      // it as a native identity would incorrectly outlive a later migration.
+      return accountAlias && result ? { ...result, aliasIds: [...new Set([id, ...(result.aliasIds || [])])] } : result;
+    });
     queues.set(row.id, pending);
     try { return await pending; }
     finally { if (queues.get(row.id) === pending) queues.delete(row.id); }

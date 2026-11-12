@@ -69,6 +69,14 @@ function source(handle) {
 
 function assertPortable(handle) {
   const snapshot = handle.snapshot();
+  const selectedName = String(snapshot.modelSelection?.name || '').trim();
+  const image = require('../../core/model-choice').imageChoice(selectedName);
+  // Handoff exports the acknowledged future selection. The last local call
+  // need not be rerun merely to apply a managed choice before transfer.
+  if (snapshot.modelSelection?.model?.localOnly === true || selectedName.startsWith('local:') ||
+      image?.name.startsWith('local:') || (!selectedName && handle.model?.localOnly === true)) {
+    throw Error('本地模型只能在本机使用，请先切换到云端可用模型再交接');
+  }
   if (snapshot.runtimeSwitching) throw Error('正在切换 Agent，请稍后再转到云端');
   const queue = snapshot.queue || snapshot.execution?.queue || [];
   if (queue.length || snapshot.queued) throw Error('请先处理排队中的消息，再转到云端');

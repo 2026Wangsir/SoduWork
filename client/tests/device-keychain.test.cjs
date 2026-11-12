@@ -83,6 +83,24 @@ function fixture(t) {
   } };
 }
 
+test('passive identity and status reads do not open secure storage without an applicable profile', async t => {
+  const f = fixture(t), native = storage();
+  f.install(native.safeStorage);
+  fs.unlinkSync(f.file);
+  for (let i = 0; i < 5; i++) {
+    assert.equal(f.auth.identity(f.app), null);
+    assert.equal(f.auth.localOwner(f.app), '');
+    assert.equal(f.auth.session(f.app), '');
+    assert.equal(f.handlers.get('device-auth-status')(null).ready, false);
+  }
+  assert.deepEqual(native.calls, { available: 0, decrypt: 0, encrypt: 0 });
+  fs.writeFileSync(f.file, JSON.stringify({ v: 1, profiles: { [slot]: row } }));
+  assert.equal(f.auth.identity(f.app, 'http://127.0.0.1:9090'), null);
+  assert.deepEqual(native.calls, { available: 0, decrypt: 0, encrypt: 0 });
+  assert.equal(f.auth.identity(f.app, hub).secret, 'fixture-key');
+  assert.equal(native.calls.decrypt, 1);
+});
+
 for (const entry of ['identity', 'bootstrap', 'login']) test('macOS denied access during ' + entry + ' preserves primary and backup bytes', async t => {
   const f = fixture(t), native = storage();
   const before = fs.readFileSync(f.file, 'utf8');

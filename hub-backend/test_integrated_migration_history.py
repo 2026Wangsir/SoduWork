@@ -18,10 +18,10 @@ from alembic import command
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext, MigrationStep
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, text
+from sqlalchemy import MetaData, Table, create_engine, text
 
 from app.config import get_settings
-from app.models import Client
+from app.models import Client, Task
 from app.schema_migrations import (
     SchemaMigrationError, _config, migrate_database, normalize_sqlite_merge_revision,
 )
@@ -29,7 +29,7 @@ from app.schema_migrations import (
 
 OLD_MERGE = "0067_merge_release_account_ownership"
 CANONICAL_MERGE = "0067_merge_account_ownership"
-CURRENT_HEAD = "0085_merge_public_schedule"
+CURRENT_HEAD = "0088_schedule_requirement_source"
 
 
 class IntegratedMigrationHistoryTests(unittest.TestCase):
@@ -108,6 +108,8 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
         script = ScriptDirectory.from_config(_config())
         self.assertEqual(script.get_heads(), [CURRENT_HEAD])
         expected = {
+            "0088_schedule_requirement_source": "0086_usage_quota_scope",
+            "0086_usage_quota_scope": "0085_merge_public_schedule",
             "0085_merge_public_schedule": ("0080_merge_public_discovery", "0084_schedule_custom_rule"),
             "0080_merge_public_discovery": ("0079_merge_public_projects", "0079_native_discovery"),
             "0084_schedule_custom_rule": "0083_schedule_timing_rules",
@@ -166,7 +168,7 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
                          "0065_merge_usage_notifications", "0067_merge_release_account_ownership",
                          "0065_im_transport", "0066_merge_im_transport", "0065_merge_feature_branches",
                          "0068_merge_notification_account", "0077_merge_public_runtime", "0078_account_task_projection",
-                         "0080_merge_public_discovery", "0084_schedule_custom_rule"):
+                         "0080_merge_public_discovery", "0084_schedule_custom_rule", "0086_usage_quota_scope"):
             path = list(script.iterate_revisions(CURRENT_HEAD, baseline))
             self.assertTrue(path, baseline)
 
@@ -174,7 +176,7 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
         for baseline in ("0065_merge_usage_notifications", "0066_merge_im_transport",
                          "0067_merge_release_account_ownership", "0065_merge_feature_branches",
                          "0068_merge_notification_account", "0077_merge_public_runtime", "0078_account_task_projection",
-                         "0080_merge_public_discovery", "0084_schedule_custom_rule"):
+                         "0080_merge_public_discovery", "0084_schedule_custom_rule", "0086_usage_quota_scope"):
             with self.subTest(baseline=baseline), tempfile.TemporaryDirectory(prefix="smoke-history-") as temp:
                 database = Path(temp) / "test.db"
                 with patch.dict(os.environ, {"DATABASE_URL": "sqlite+aiosqlite:///" + database.as_posix()}):
@@ -215,6 +217,68 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
                             self.assertTrue({"delivery_stream_id", "delivery_seq", "delivery_digest", "persisted_seq"} <= columns)
                     finally:
                         get_settings.cache_clear()
+
+    def test_requirement_source_upgrade_preserves_existing_schedules_and_task_links(self):
+        with tempfile.TemporaryDirectory(prefix="smoke-schedule-source-history-") as temp:
+            database = Path(temp) / "test.db"
+            with patch.dict(os.environ, {"DATABASE_URL": "sqlite+aiosqlite:///" + database.as_posix()}):
+                get_settings.cache_clear()
+                try:
+                    command.upgrade(_config(), "0086_usage_quota_scope")
+                    engine = create_engine("sqlite:///" + database.as_posix())
+                    try:
+                        with engine.begin() as connection:
+                            schedules = Table("ai_schedule", MetaData(), autoload_with=connection)
+                            self.assertNotIn("source_requirement", schedules.c)
+                            connection.execute(Client.__table__.insert().values(
+                                id="fixture-source-device", name="Preserved source device"))
+                            connection.execute(Task.__table__.insert().values(
+                                id="fixture-source-task", title="Original requirement", note="Original background",
+                                owner_client_id="fixture-source-device", automation_schedule_id="schedule-enabled",
+                                requirement_version=7))
+                            for enabled in (True, False):
+                                connection.execute(schedules.insert().values(
+                                    id="schedule-enabled" if enabled else "schedule-disabled",
+                                    title="Preserved schedule", note="Keep original schedule instructions",
+                                    every="weekly", at_hour=14, at_minute=35, weekday=3,
+                                    assignee_id="local:pi", assignee_type="agent", repo_id="fixture-repository",
+                                    flow=False, owner_client_id="fixture-source-device", enabled=enabled,
+                                    last_task_id="fixture-source-task", last_error="Preserved previous result",
+                                    created_by_name="Preserved owner", created_by="fixture-source-owner",
+                                    owner_user_id="fixture-source-owner", source_app={"id": "preserved-app"}))
+                            old_schedules = [dict(row) for row in connection.execute(
+                                text("SELECT * FROM ai_schedule ORDER BY id")).mappings()]
+                            old_tasks = [dict(row) for row in connection.execute(text("SELECT * FROM task")).mappings()]
+                    finally:
+                        engine.dispose()
+
+                    def assert_preserved(expected_source):
+                        with closing(sqlite3.connect(database)) as connection:
+                            connection.row_factory = sqlite3.Row
+                            self.assertEqual([row[0] for row in connection.execute(
+                                "SELECT version_num FROM alembic_version")], [CURRENT_HEAD])
+                            column = next(row for row in connection.execute("PRAGMA table_info(ai_schedule)")
+                                          if row["name"] == "source_requirement")
+                            self.assertEqual(column["notnull"], 1)
+                            self.assertEqual(column["dflt_value"], "'{}'")
+                            actual = [dict(row) for row in connection.execute("SELECT * FROM ai_schedule ORDER BY id")]
+                            for row in actual:
+                                self.assertEqual(json.loads(row.pop("source_requirement")),
+                                                 expected_source if row["id"] == "schedule-enabled" else {})
+                            self.assertEqual(actual, old_schedules)
+                            self.assertEqual([dict(row) for row in connection.execute("SELECT * FROM task")], old_tasks)
+
+                    command.upgrade(_config(), "head")
+                    assert_preserved({})
+                    provenance = {"id": "fixture-source-task", "title": "Recorded source", "requirementVersion": 7}
+                    with closing(sqlite3.connect(database)) as connection:
+                        connection.execute("UPDATE ai_schedule SET source_requirement=? WHERE id='schedule-enabled'",
+                                           (json.dumps(provenance),))
+                        connection.commit()
+                    command.upgrade(_config(), "head")
+                    assert_preserved(provenance)
+                finally:
+                    get_settings.cache_clear()
 
 
 class SQLiteMergeCompatibilityTests(unittest.TestCase):

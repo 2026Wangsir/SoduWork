@@ -10,7 +10,10 @@
     const providerId = value.slice(PREFIX.length, split), name = value.slice(split + 2);
     return providerId && name ? { providerId, name } : null;
   }
-  const api = { imageKey, imageChoice };
+  // A local reference includes a 48-character provider and up to 160 model
+  // characters, each of which may occupy nine percent-encoded ASCII bytes.
+  function nameLimit(value) { return typeof value === 'string' && value.trim().startsWith('local:') ? 1500 : 300; }
+  const api = { imageKey, imageChoice, nameLimit };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.SoduWorkModelChoice = api;
 })(typeof window !== 'undefined' ? window : globalThis);

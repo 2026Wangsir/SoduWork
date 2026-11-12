@@ -28,7 +28,7 @@ test('parse timeout is explicit and retains the one original model request', asy
   assert.doesNotMatch(result._parseError, /秒|130/);
   assert.match(result._parseError, /原文已保留.*重试.*手动填写/);
   assert.equal(f.calls.length, 1);
-  assert.deepEqual(f.calls[0].body, { text: '完整原文\n最后一个要求', model: 'chosen-model', keepalive: true, attachments: [], instruction: '当前要求' });
+  assert.deepEqual(f.calls[0].body, { text: '完整原文\n最后一个要求', model: 'chosen-model', keepalive: true, locale: 'zh-CN', attachments: [], instruction: '当前要求' });
 });
 
 test('transport failure is a network error without exposing the exception or retrying', async () => {

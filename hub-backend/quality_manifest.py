@@ -28,6 +28,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_runner_stdio.py",
     "test_runner_inventory_scope.py",
     "test_token_quota.py",
+    "test_personal_model_quota.py",
     "test_im_primitives.py",
     "test_im_transport.py",
     "test_im_archive.py",
@@ -42,11 +43,13 @@ RELEASE_SMOKES = tuple(sorted((
     "test_jiyong_contract.py",
     "test_jiyong_cloud_data.py",
     "test_schedule_source_app.py",
+    "test_schedule_requirement_source.py",
     "test_schedule_calendar.py",
     "test_plugin_window_contracts.py",
     "test_agent_install_recovery.py",
     "test_agent_platform_installation.py",
     "test_requirement_projection.py",
+    "test_acceptance_summary.py",
     # The four other maintenance suites have their own release entries below.
     # Run every case under its module deadline rather than repeat all five in
     # one aggregate process that exceeds the same 300-second deadline.
@@ -77,6 +80,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_runner_linux_entry.py",
     "test_plugin_smoke_groups.py",
     "test_plugin_access.py",
+    "test_plugin_lifecycle_notifications.py",
     "smoke/smoke_agent_model.py",
     "smoke/smoke_agent_naming.py",
     "smoke/smoke_agent_product_design.py",
@@ -372,6 +376,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_requirement_execution_claim.py",
     "test_requirement_plan_claim.py",
     "test_requirement_edit_policy.py",
+    "test_requirement_project_selection.py",
     "test_task_trace_lifecycle.py",
 )))
 

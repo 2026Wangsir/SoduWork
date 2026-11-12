@@ -3,6 +3,15 @@
 const contextWindow = require('./context-window');
 const thinkingCapabilities = require('./thinking-capabilities');
 const { replaceFileSync } = require('../verified-file-replace.cjs');
+const localPrivacy = require('../pi-session/local-model-runtime-privacy.cjs');
+
+function canonicalName(name, model) {
+  if (model?.localOnly) return localPrivacy.reference(model);
+  if (!String(name || '').startsWith('local:') || localPrivacy.OPAQUE_REFERENCE.test(name)) return name;
+  const canonical = require('../local-model-store.cjs').canonicalReference(name, { rememberMissing: true });
+  if (!canonical) throw new Error('Local model reference is unavailable');
+  return canonical;
+}
 
 // The previous fallback (16k/32k) was routinely consumed by hidden reasoning on
 // coding models before they emitted a tool call or a final answer. Keep an
@@ -14,7 +23,10 @@ function publicModel(model) {
   const m = model || {};
   const resolved = contextWindow.resolveContextWindow(m);
   return { id: String(m.id || ''), label: String(m.label || m.name || m.id || '默认模型'),
+    ...(m.localOnly === true ? { localOnly: true } : {}),
     ...(m.modality ? { modality: m.modality } : {}),
+    ...(m.quotaVersion === 2 && ['personal', 'platform'].includes(m.quotaScope)
+      ? { quotaVersion: 2, quotaScope: m.quotaScope } : {}),
     contextWindow: m.modality === 'image' ? 0 : resolved.contextWindow,
     contextWindowKnown: m.modality === 'image' ? false : resolved.contextWindowKnown,
     ...(m.modality === 'image' ? {} : {
@@ -26,6 +38,7 @@ function publicModel(model) {
 // A choice belongs to future submissions, never to the currently streaming turn.
 // Queue items capture a name, not credentials. The runtime changes only at a turn boundary.
 function create({ name = '', model, resolve, apply, persist = () => {}, changed = () => {}, generation = () => 0 }) {
+  name = canonicalName(name, model);
   let selected = name, active = name, selectedModel = model, activeModel = model;
   let selecting = false;
   let appliedGeneration = generation();
@@ -38,8 +51,9 @@ function create({ name = '', model, resolve, apply, persist = () => {}, changed 
     view: () => ({ name: selected, activeName: active, model: publicModel(selectedModel),
       activeModel: publicModel(activeModel), pending: needsApply(selected) }),
     async select(name) {
-      if (typeof name !== 'string' || name.length > 300 || /[\r\n\0]/.test(name))
+      if (typeof name !== 'string' || name.length > require('../../core/model-choice').nameLimit(name) || /[\r\n\0]/.test(name))
         return { ok: false, reason: '模型名称无效' };
+      name = name.trim();
       if (selecting) return { ok: false, reason: '正在更新模型，请稍候' };
       selecting = true;
       try {
@@ -48,6 +62,7 @@ function create({ name = '', model, resolve, apply, persist = () => {}, changed 
           reason: require('../../core/token-quota').detail(resolved)
             ? '当前 AI 使用额度暂不可用，请查看额度详情' : '该模型当前不可用，请刷新模型列表后重试',
           ...require('../../core/token-quota').fields(resolved) };
+        name = canonicalName(name, resolved.model);
         await persist(name);
         selected = name; selectedModel = resolved.model; changed();
         return { ok: true, selection: this.view() };
@@ -64,7 +79,7 @@ function create({ name = '', model, resolve, apply, persist = () => {}, changed 
         require('../../core/token-quota').fields(resolved));
       try { await apply(resolved.model, name); }
       catch (_) { throw new Error('模型未能切换，队列已暂停，原会话与历史已保留'); }
-      active = name; activeModel = resolved.model;
+      active = canonicalName(name, resolved.model); activeModel = resolved.model;
       appliedGeneration = applyingGeneration;
       if (selected === name) selectedModel = resolved.model;
       changed();
@@ -78,17 +93,19 @@ function preference(app, ref) {
   const root = app && typeof app.getPath === 'function' ? app.getPath('userData') : '';
   const file = root && path.join(root, 'conversation-models', crypto.createHash('sha256').update(ref).digest('hex') + '.json');
   const readSelection = () => {
+    let value;
     try {
-      const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-      return { ...(typeof value.name === 'string' ? { name: value.name } : {}),
-        ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}) };
+      value = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (_) { return {}; }
+    return { ...(typeof value.name === 'string' ? { name: canonicalName(value.name) } : {}),
+      ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}) };
   };
   return {
     read() { return readSelection().name; },
     readSelection,
     write(name, reasoningEffort = readSelection().reasoningEffort) {
       if (!file) return;
+      name = canonicalName(name);
       // Reopening a conversation must not rewrite an unchanged saved choice.
       // A transient destination lock may block new choices, but not restoration.
       const current = readSelection();
@@ -110,13 +127,19 @@ function preference(app, ref) {
 
 function piProvider(next) {
   const thinking = thinkingCapabilities.profile(next);
+  const localNoAuth = next?.localOnly === true && !String(next?.key || '').trim();
   const compat = {
     supportsDeveloperRole: false,
     supportsReasoningEffort: thinking.supportsReasoningEffort,
     ...(thinking.format ? { thinkingFormat: thinking.format } : {}),
   };
-  return { name: 'SoduWork \u6a21\u578b\u670d\u52a1', baseUrl: next.baseUrl, api: 'openai-completions', apiKey: next.key,
-    compat, models: [{ id: next.id, name: next.label || next.id,
+  return { name: 'SoduWork \u6a21\u578b\u670d\u52a1', baseUrl: next.baseUrl, api: 'openai-completions',
+    // Pi's OpenAI transport requires a non-empty credential marker before it
+    // creates a client. Session setup removes this marker from the wire request
+    // after the model has been resolved.
+    apiKey: localNoAuth ? 'soduwork-local-no-key' : next.key,
+    compat, models: [{ id: next.localOnly ? localPrivacy.reference(next) : next.id,
+      name: next.localOnly ? localPrivacy.LOCAL_LABEL : next.label || next.id,
       input: next.input || ['text'], reasoning: thinking.reasoning,
       ...(thinking.reasoning && thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

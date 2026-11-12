@@ -20,6 +20,7 @@
   let _mates = [];
   let _submission = null;
   let _card = null;
+  let _projectPicker = null;
 
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -49,6 +50,7 @@
   /* Entry points. */
   /* opts: {model(), atts(), clearAtts(), onCreated(id,title), workIntent} */
   function open(text, opts) {
+    _projectPicker?.dispose(); _projectPicker = null;
     _submission = null;
     _d = null;
     _opts = opts || {};
@@ -85,6 +87,7 @@
         _card?.phase === 'succeeded' && _card.receipt?.id &&
         _card.ownerScope === String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '')) return;
     const saved = capture();
+    _projectPicker?.dispose(); _projectPicker = null;
     _requestSeq++;
     _mateRequestSeq++;
     _d = null; _openSel = ''; _submission = null;
@@ -125,6 +128,7 @@
    */
   async function openWith(p, opts) {
     if (!p) return;
+    _projectPicker?.dispose(); _projectPicker = null;
     _submission = null;
     _d = null;
     _opts = opts || {};
@@ -171,6 +175,7 @@
       who: who,
       flow: '', flowExplicit: false, whoSource: p.assigneeUserId || p.assigneeKind ? 'proposal' : 'default',
       repo: options.repoId || p.repoId || "",
+      projectId: String(options.projectId || ''),
     };
     _applyParsedRouting(p, RequirementRouting.instruction(options, ''), true, draft, mates, directory?.ok === false);
     _acceptDraft(record, draft, directory);
@@ -219,6 +224,7 @@
       if (record.phase === 'error') button.textContent = _submission?.stored ? '重试上传并继续' : '重试创建需求';
     }
     const cancel = _box()?.querySelector('#cpCancel'); if (cancel) cancel.disabled = false;
+    _projectPicker?.paint();
   }
 
   async function restore(saved, opts) {
@@ -360,6 +366,7 @@
       who: null,
       flow: '', flowExplicit: false,
       repo: options.repoId || "",
+      projectId: String(options.projectId || ''),
     };
     const directory = got[1], mates = RequirementRouting.normalizeMates(Array.isArray(directory) ? directory : directory?.mates);
     _applyParsedRouting(f, direct, true, draft, mates, directory?.ok === false);
@@ -429,6 +436,14 @@
       return;
     }
     const d = _d;
+    if (!Object.prototype.hasOwnProperty.call(d, 'projectId')) d.projectId = String(_opts.projectId || '');
+    if (!_projectPicker && global.RequirementFields?.projectPicker) {
+      const record = _card;
+      _projectPicker = global.RequirementFields.projectPicker({value: d.projectId,
+        current: () => _card === record && Boolean(_d),
+        editable: () => !_d?.repo && !_submission?.stored && !_submission?.running && !_submission?.preflighting && _card?.phase !== 'submitting',
+        onChange: value => { if (_card === record && _d) _d.projectId = value; }});
+    }
     const inChat = _opts.variant === 'chat';
     const fixedActions = _opts.variant === 'sheet' && _opts.fixedActions === true;
     box.innerHTML =
@@ -438,7 +453,7 @@
           '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' : '') +
         (_opts.variant === 'sheet' ? '<div class="cp-sec-h cp-content-heading">' + (global.RequirementFields?.sectionIcon?.('content') || '') + '需求内容</div><label class="cp-field-label" for="cpTitle">需求标题</label>' : '') +
-        '<input class="cp-title" id="cpTitle" value="' + esc(d.title) + '" placeholder="需求标题">' +
+        _titleHtml(d.title) +
         (_opts.variant === 'sheet' ? '<label class="cp-field-label" for="cpNote">背景与说明</label>' : '') +
         '<textarea class="cp-note" id="cpNote" rows="3" placeholder="要说清楚的细节">' + esc(d.note) + '</textarea>' +
         _sourceHtml() +
@@ -452,6 +467,7 @@
         '</div>' +
       '</div>';
     box.classList.add('show');
+    _projectPicker?.bind(box);
     if (fixedActions) _opts.onFormRendered?.(box.querySelector('.cp-form-materials'));
   }
 
@@ -486,7 +502,7 @@
         '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
       '</div>' +
-      '<input class="cp-title" id="cpTitle" value="' + esc(d.title) + '" placeholder="需求标题">' +
+      _titleHtml(d.title) +
       (d.note ? '<div class="cp-quick-note">' + esc(_cut(d.note.replace(/\s+/g, ' '), 120)) + '</div>' : '') +
       _sourceHtml() +
       '<div class="cp-quick-meta">' + meta.map((s) => '<span>' + esc(s) + '</span>').join('') + '</div>' +
@@ -496,6 +512,12 @@
         '<button class="cp-ghost" id="cpExpand">检查详情</button>' +
       '</div>' +
     '</div>';
+  }
+
+  function _titleHtml(title) {
+    return '<input class="cp-title" id="cpTitle" value="' + esc(title) +
+      '" placeholder="需求标题" aria-describedby="cpTitleLimit">' +
+      '<small class="cp-title-limit" id="cpTitleLimit">需求标题最多 200 个字符</small>';
   }
 
   function _goLabel() {
@@ -525,10 +547,12 @@
     '</div>';
   }
 
-  /* Category and owner are editable; execution method and repository association are outside this creation form. */
+  /* Project, category, and owner are editable; repository associations never migrate here. */
   function _rowsHtml() {
     const wl = _whoLabel();
     let html = '<div class="cp-sec"><div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('settings') || '') + '基本信息</div>';
+    if (_projectPicker) html += '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpProjectId">关联项目</label>' +
+      _projectPicker.html({id:'cpProjectId',hint:_d.repo ? '项目由已关联仓库确定，本次不迁移仓库' : ''}) + '</div>';
     html += _row('负责人', _sel('who', wl.name, wl.sub));
     if (_d.who?.hint) html += '<div class="cp-why">' + esc(_d.who.hint) + '</div>';
     html += _row('优先级', _sel('prio', _PRIO[_d.priority] || '普通', '') +
@@ -700,6 +724,7 @@
      */
     _wiredBox = box;
     global.RequirementFields?.bindTags(box);
+    global.RequirementFields?.bindVisibility?.(box);
 
     box.addEventListener('click', (e) => {
       const sb = e.target.closest('[data-selbtn]');
@@ -742,6 +767,7 @@
     });
 
     box.addEventListener('input', (e) => {
+      if (e.target.id === 'cpTitle') e.target.setAttribute('aria-invalid', String(e.target.value.trim().length > 200));
       const search = e.target.closest('[data-selsearch]');
       if (!search) { if (_d && !_submission?.running && !_submission?.stored) _publishDraft(); return; }
       _whoQuery = String(search.value || '').slice(0, 80);
@@ -803,6 +829,7 @@
     if (g('cpVisibility')) _d.visibility = g('cpVisibility').value;
     if (g('cpTags')) _d.tags = global.RequirementFields.readTags(g('cpTags'));
     if (g('cpTriage')) _d.triageStage = g('cpTriage').value;
+    if (_projectPicker) _d.projectId = _projectPicker.value();
     const cks = document.querySelectorAll('.cp-ck-t');
     if (document.getElementById('cpCheck')) {
       _d.check = Array.prototype.map.call(cks, (el) => el.value);
@@ -817,6 +844,7 @@
   function _rerender() {
     const el = document.getElementById('cpRows');
     if (el) el.innerHTML = _rowsHtml(); else _render();
+    _projectPicker?.bind(_box());
     _positionSelection();
     const btn = document.getElementById('cpCreate');
     if (btn && !btn.disabled) btn.textContent = _goLabel();
@@ -839,6 +867,13 @@
     if (!title) {
       global.petSay?.('先给它一个标题');
       document.getElementById('cpTitle')?.focus(); return;
+    }
+    // Preserve oversized input for correction instead of letting task synchronization truncate it.
+    const titleInput = document.getElementById('cpTitle');
+    titleInput?.setAttribute('aria-invalid', String(title.length > 200));
+    if (title.length > 200) {
+      global.petSay?.('需求标题最多 200 个字符');
+      titleInput?.focus(); return;
     }
     const w = draft.who, mate = w.kind === 'mate' ? _mateOf(w.id) : null;
     if (w.kind === 'pending' || draft.flowProblem) {

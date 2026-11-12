@@ -7,15 +7,23 @@ test('Linux packages install the libsecret client required by Electron safeStora
   assert.ok(build.deb.depends.includes('libsecret-1-0'));
   assert.ok(build.rpm.depends.includes('libsecret'));
 });
-for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${firstRelease ? 'first release reinstall' : 'upgrade'} evidence`, async () => {
-  const calls = [], errors = [], version = '1.13.15';
+async function exercise(firstRelease, overrides = {}) {
+  const calls = [], reads = [], errors = [], version = '1.13.15';
   let checks;
   const state = { platform: 'linux', exitCode: undefined };
   const contract = {
     root: '/fixture', dist: '/fixture/dist',
     verify: async () => ({ version, artifacts: ['deb', 'rpm', 'tar.gz'].map(format => ({ name: `candidate.${format}`, format })) }),
-    read: async () => ({ ok: true, version, upgraded: !firstRelease, reinstalled: firstRelease,
-      oldVersion: firstRelease ? '' : '1.13.14', nodeShimExecutable: true }),
+    read: async file => {
+      reads.push(file);
+      if (path.basename(file) !== 'result.json') {
+        return { secureStorage: { backend: 'gnome_libsecret', roundTrip: true, ...overrides.secureStorage } };
+      }
+      return { ok: true, version, upgraded: !firstRelease, reinstalled: firstRelease,
+        oldVersion: firstRelease ? '' : '1.13.14', nodeShimExecutable: true,
+        credentialProviderDependencyVerified: path.basename(path.dirname(file)) !== 'ubuntu22-tgz',
+        upgradeDependencyResolutionVerified: false, ...overrides.result };
+    },
     acceptance: async (_platform, rows) => { checks = rows; },
   };
   const modules = {
@@ -28,12 +36,22 @@ for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${fir
   };
   await vm.runInNewContext(source, { process: state, require: name => modules[name],
     console: { error: error => errors.push(error) } });
+  return { calls, reads, errors, state, checks };
+}
+
+for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${firstRelease ? 'first release reinstall' : 'upgrade'} evidence`, async () => {
+  const { calls, reads, errors, state, checks } = await exercise(firstRelease);
   assert.deepEqual(errors, []);
   assert.equal(state.exitCode, undefined);
   assert.equal(checks.length, 4);
   for (const row of checks) {
     assert.equal(row.upgraded, !firstRelease);
     assert.equal(row.reinstalled, firstRelease);
+    assert.equal(row.secureStorageBackend, 'gnome_libsecret');
+    assert.equal(row.credentialProviderDependencyVerified, row.name !== 'ubuntu22-tgz');
+    assert.equal(row.upgradeDependencyResolutionVerified, false);
+    assert.deepEqual(reads.filter(file => path.basename(path.dirname(file)) === row.name).map(file => path.basename(file)),
+      ['result.json', 'fresh.json', 'restart.json', ...(firstRelease ? [] : ['old.json']), 'restored.json']);
   }
   for (const [, args] of calls.filter(([, args]) => args[0] === 'create')) {
     assert.equal(args[args.indexOf('--cap-add') + 1], 'IPC_LOCK');
@@ -46,4 +64,19 @@ for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${fir
     if (firstRelease) assert.equal(args.at(-2), '-');
   }
   assert.equal(calls.filter(([, args]) => args[0] === 'rm').length, 4);
+});
+
+test('Linux acceptance rejects missing package dependencies and insecure phase evidence', async () => {
+  for (const overrides of [
+    { result: { credentialProviderDependencyVerified: false } },
+    { result: { upgradeDependencyResolutionVerified: true } },
+    { secureStorage: { backend: 'basic_text' } },
+    { secureStorage: { roundTrip: false } },
+  ]) {
+    const { calls, errors, state, checks } = await exercise(true, overrides);
+    assert.equal(errors.length, 1);
+    assert.equal(state.exitCode, 1);
+    assert.equal(checks, undefined);
+    assert.equal(calls.filter(([, args]) => args[0] === 'rm').length, 1);
+  }
 });

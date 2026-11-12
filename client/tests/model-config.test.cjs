@@ -90,16 +90,20 @@ test('模型中心支持个人地址覆盖与任意自定义服务', () => {
   assert.match(panel, /OpenAI 兼容/);
   assert.match(panel, /本地服务无需密钥/);
   assert.match(panel, /providers, models: _mdMyModels, keys: _mdKeyEdits/);
-  assert.match(api, /async saveMyModels\(body\)[\s\S]*?jfetch\('\/my-models', \{ method: 'PUT', body: JSON\.stringify\(body \|\| \{\}\)/);
+  assert.match(api, /async saveMyModels\(body\)[\s\S]*?jfetch\('\/my-models', \{ method: 'PUT'/);
 });
 
-test('saving personal models preserves provider overrides, custom services, and key removal', async () => {
-  const values = new Map(), calls = [];
-  const response = { ok: true, providers: [{ id: 'custom-local', hasKey: false }] };
+test('saving personal models keeps local services out of the Hub payload', async () => {
+  const values = new Map(), calls = [], localCalls = [];
+  const response = { ok: true, providers: [{ id: 'company-provider', hasKey: false }] };
   const window = { dispatchEvent() {}, soduWorkAPI: {
     getHubConnection: async () => ({ ok: true, hub: 'https://hub.example.test', editable: true }),
     deviceAuthBootstrap: async () => ({ ok: true, stored: true, clientId: 'device-1',
       user: { id: 'alice' }, session: 'fixture-session', expiresIn: 1800 }),
+    localModels: {
+      get: async () => ({ revision: 7, providers: [{ id: 'custom-local', localOnly: true }], myModels: [], usable: [], mediaUsable: {} }),
+      save: async body => { localCalls.push(body); return { ok: true, revision: 8 }; },
+    },
   } };
   vm.runInNewContext(read('api.js'), {
     window, User: { id: 'device-1', name: 'Fixture' }, navigator: { platform: 'test' },
@@ -114,18 +118,125 @@ test('saving personal models preserves provider overrides, custom services, and 
   const body = {
     providers: [
       { id: 'company-provider', baseUrl: 'https://personal.example.test/v1' },
-      { id: 'custom-local', name: 'Local service', baseUrl: 'http://127.0.0.1:12345/v1', kind: 'openai-compat', personal: true, authMode: 'none' },
+      { id: 'custom-local', name: 'Local service', baseUrl: 'http://127.0.0.1:12345/v1', kind: 'openai-compat', personal: true, authMode: 'none', localOnly: true },
     ],
-    models: [{ name: 'custom-model', providerId: 'custom-local', label: 'Custom model' }],
-    keys: { 'company-provider': null, 'custom-local': '' },
+    models: [
+      { name: 'company-model', providerId: 'company-provider', label: 'Company model' },
+      { name: 'custom-model', providerId: 'custom-local', label: 'Custom model', localOnly: true },
+    ],
+    keys: { 'company-provider': null, 'custom-local': 'local-secret' },
+    localProviders: [{ id: 'custom-local', name: 'Local service', baseUrl: 'http://127.0.0.1:12345/v1', kind: 'openai-compat', personal: true, authMode: 'none', localOnly: true }],
+    localModels: [{ name: 'custom-model', providerId: 'custom-local', label: 'Custom model', localOnly: true }],
+    localKeys: { 'custom-local': 'local-secret' },
+    localRevision: 7,
     expectedRevision: 7,
   };
   assert.deepEqual(JSON.parse(JSON.stringify(await api.saveMyModels(body))), response);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://hub.example.test/api/v1/my-models');
-  assert.equal(calls[0].options.method, 'PUT');
-  assert.equal(calls[0].options.headers.Authorization, 'Device fixture-session');
-  assert.deepEqual(JSON.parse(calls[0].options.body), body);
+  assert.equal(localCalls.length, 1);
+  assert.equal(localCalls[0].expectedRevision, 7);
+  assert.equal(localCalls[0].keys['custom-local'], 'local-secret');
+  const hubCalls = calls.filter(call => call.url === 'https://hub.example.test/api/v1/my-models');
+  assert.equal(hubCalls.length, 1);
+  assert.equal(hubCalls[0].options.method, 'PUT');
+  assert.equal(hubCalls[0].options.headers.Authorization, 'Device fixture-session');
+  const hubBody = JSON.parse(hubCalls[0].options.body);
+  assert.deepEqual(hubBody.providers, [{ id: 'company-provider', baseUrl: 'https://personal.example.test/v1' }]);
+  assert.deepEqual(hubBody.models, [{ name: 'company-model', providerId: 'company-provider', label: 'Company model' }]);
+  assert.deepEqual(hubBody.keys, { 'company-provider': null });
+  assert.equal(JSON.stringify(hubBody).includes('custom-local'), false);
+});
+
+test('saving only local models does not require a Hub connection', async () => {
+  const values = new Map(), calls = [], localCalls = [];
+  const window = { dispatchEvent() {}, soduWorkAPI: { localModels: {
+    get: async () => ({ revision: 2, providers: [], myModels: [], usable: [], mediaUsable: {} }),
+    save: async body => { localCalls.push(body); return { ok: true }; },
+  } } };
+  vm.runInNewContext(read('api.js'), {
+    window, User: {}, navigator: { platform: 'test' },
+    localStorage: { getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
+    fetch: async (url, options) => { calls.push({ url, options }); throw Error('Hub must not be contacted'); },
+    URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
+    console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
+  }, { filename: 'api.js' });
+  await window.SoduWorkAPI.saveMyModels({
+    localProviders: [{ id: 'custom-local', localOnly: true, baseUrl: 'http://127.0.0.1:12345/v1' }],
+    localModels: [{ providerId: 'custom-local', name: 'custom-model', localOnly: true }],
+    localKeys: {}, localRevision: 2,
+  });
+  assert.equal(localCalls.length, 1);
+  assert.equal(calls.length, 0);
+});
+
+test('local capability checks stay in the desktop process', async () => {
+  const values = new Map(), calls = [], probes = [];
+  const window = { dispatchEvent() {}, soduWorkAPI: { localModels: {
+    get: async () => ({ providers: [{ id: 'custom-local', localOnly: true }],
+      myModels: [{ providerId: 'custom-local', name: 'qwen3', localOnly: true }], usable: [], mediaUsable: {} }),
+    test: async (providerId, model) => { probes.push({ providerId, model }); return { ok: true, detail: 'direct' }; },
+  } } };
+  vm.runInNewContext(read('api.js'), {
+    window, User: {}, navigator: { platform: 'test' },
+    localStorage: { getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
+    fetch: async (url, options) => { calls.push({ url, options }); throw Error('Hub must not be contacted'); },
+    URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
+    console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
+  }, { filename: 'api.js' });
+  const report = await window.SoduWorkAPI.checkMyModelCapabilities({ providerId: 'custom-local', model: 'qwen3', checks: ['connection', 'streaming'] });
+  assert.equal(report.ok, true);
+  assert.deepEqual(probes, [{ providerId: 'custom-local', model: 'qwen3' }]);
+  assert.equal(report.checks.connection.status, 'passed');
+  assert.equal(report.checks.streaming.status, 'inconclusive');
+  assert.equal(calls.length, 0);
+});
+
+test('a managed-only save does not erase existing local model definitions', async () => {
+  const values = new Map(), localCalls = [], hubCalls = [];
+  const window = { dispatchEvent() {}, soduWorkAPI: { localModels: {
+    get: async () => ({ revision: 4, providers: [{ id: 'custom-local', localOnly: true,
+      baseUrl: 'http://127.0.0.1:12345/v1', authMode: 'none' }],
+      myModels: [{ providerId: 'custom-local', name: 'qwen3', localOnly: true }], usable: [], mediaUsable: {} }),
+    save: async body => { localCalls.push(body); return { ok: true }; },
+  } } };
+  vm.runInNewContext(read('api.js'), {
+    window, User: {}, navigator: { platform: 'test' },
+    localStorage: { getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
+    fetch: async (url, options) => { hubCalls.push({ url, options }); return new Response(JSON.stringify({ ok: true })); },
+    URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
+    console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
+  }, { filename: 'api.js' });
+  await window.SoduWorkAPI.saveMyModels({
+    providers: [{ id: 'company-provider', baseUrl: '' }], keys: { 'custom-local': 'ignored-by-hub' },
+  });
+  assert.equal(localCalls.length, 0);
+  assert.equal(hubCalls.length, 1);
+  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('custom-local'), false);
+});
+
+test('a missing local bridge cannot forward local-looking keys to the Hub', async () => {
+  const values = new Map(), hubCalls = [];
+  const window = { dispatchEvent() {} };
+  vm.runInNewContext(read('api.js'), {
+    window, User: {}, navigator: { platform: 'test' },
+    localStorage: { getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
+    fetch: async (url, options) => {
+      hubCalls.push({ url, options });
+      return new Response(JSON.stringify({ ok: true }));
+    },
+    URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
+    console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
+  }, { filename: 'api.js' });
+  await window.SoduWorkAPI.saveMyModels({
+    providers: [{ id: 'company-provider', baseUrl: '' }],
+    keys: { 'local-service': 'must-not-forward' },
+  });
+  assert.equal(hubCalls.length, 1);
+  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('must-not-forward'), false);
+  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('local-service'), false);
 });
 
 test('模型配置保留就地真实探测与组织地址恢复能力', () => {

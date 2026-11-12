@@ -8,8 +8,8 @@ const { units } = require('./usage-values');
 // Checkpoints for one cumulative session must be delivered in order. A failed
 // account/session must not starve other sessions, and unacknowledged rows must
 // never be evicted to enforce a telemetry buffer limit.
-function create(file, onError = () => {}) {
-  let rows = {}, loaded = false, blocked = false, generation = 0;
+function create(file, onError = () => {}, options = {}) {
+  let rows = {}, quarantined = {}, loaded = false, blocked = false, generation = 0;
   let writing = null, dirty = false, active = null, nextScope = '';
   const last = new Map();
   const totals = new Map();
@@ -24,6 +24,8 @@ function create(file, onError = () => {}) {
       try {
         const doc = JSON.parse(fs.readFileSync(name, 'utf8'));
         if (doc?.v !== 1 || !doc.rows || Array.isArray(doc.rows) || typeof doc.rows !== 'object') throw Error('Invalid usage outbox');
+        if (doc.quarantined !== undefined && (!doc.quarantined || Array.isArray(doc.quarantined) ||
+            typeof doc.quarantined !== 'object')) throw Error('Invalid usage quarantine');
         if (Object.values(doc.rows).some(row => !row || typeof row !== 'object' ||
             typeof row.hub !== 'string' || typeof row.clientId !== 'string' ||
             !row.payload || typeof row.payload !== 'object' || !row.payload.usage || typeof row.payload.usage !== 'object'))
@@ -34,6 +36,15 @@ function create(file, onError = () => {}) {
     candidates.sort((a, b) => (b.generation || 0) - (a.generation || 0));
     if (candidates.length) {
       rows = candidates[0].rows; generation = candidates[0].generation || 0;
+      quarantined = candidates[0].quarantined || {};
+      // Retain unsafe historical checkpoints in the same atomic document,
+      // outside both delivery and cumulative high-water initialization.
+      for (const key of options.quarantine?.(rows) || []) {
+        if (!Object.hasOwn(rows, key)) continue;
+        quarantined[key] = rows[key]; delete rows[key]; dirty = true;
+      }
+      try { if (options.protectQuarantine?.(quarantined)) dirty = true; }
+      catch (error) { failure(error); }
       for (const [key, row] of Object.entries(rows)) if (row.scope) {
         totals.set(row.scope, row.payload?.usage || {}); tails.set(row.scope, key);
       }
@@ -51,7 +62,8 @@ function create(file, onError = () => {}) {
       await new Promise(resolve => setImmediate(resolve));
       while (dirty) {
         dirty = false;
-        const data = JSON.stringify({ v: 1, generation: ++generation, rows });
+        const data = JSON.stringify({ v: 1, generation: ++generation, rows,
+          ...(Object.keys(quarantined).length ? { quarantined } : {}) });
         try {
           await fs.promises.mkdir(path.dirname(file), { recursive: true });
           await fs.promises.writeFile(file + '.tmp', data, { encoding: 'utf8', mode: 0o600 });

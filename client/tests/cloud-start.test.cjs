@@ -68,6 +68,22 @@ for (const runtime of catalog.runtimes()) test(runtime.id + ': starts in cloud w
   assert.equal(history.chats[0].locationMode, 'remote');
   assert.equal(history.chats[0].cwd, '', 'remote replay cache must never become a local workspace');
 });
+test('cloud creation rejects local model references before network or durable writes', async t => {
+  const f = await fixture(t), cloud = f.controller();
+  for (const model of ['local:private:model', 'image::private::local:private:image']) {
+    await assert.rejects(cloud.start({ requestId: crypto.randomUUID(), agentId: 'pi',
+      text: 'Private local work', model }), /本地模型只能在本机使用/);
+  }
+  assert.deepEqual(f.requests, []);
+  assert.deepEqual(await fs.readdir(f.root), []);
+});
+test('retrying an older cloud receipt cannot transmit a stored local model reference', async () => {
+  const cloud = require('../main/conversation/cloud-start').create({
+    identity: () => assert.fail('local model retry must fail before Hub identity lookup'),
+    request: () => assert.fail('local model retry must not reach Hub'),
+  });
+  await assert.rejects(cloud.retry({ cloudStart: { options: { model: 'local:private:model' } } }), /本地模型只能在本机使用/);
+});
 test('forget checks the latest execution of a locally started cloud chat', async t => {
   const f = await fixture(t), cloud = f.controller();
   const { sessionId } = await cloud.start({ requestId: crypto.randomUUID(), agentId: 'pi', text: 'hello' });

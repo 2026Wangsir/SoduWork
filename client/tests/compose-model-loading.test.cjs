@@ -89,6 +89,22 @@ test('managed picker shows protocol and warns on an incompatible selected defaul
   assert.match(f.nodes.cpModelPop.innerHTML, /role="note">企业模型/);
 });
 
+test('device-local models stay available only in local Pi and never enter the Hub image route', async () => {
+  const catalog = { usable: [{ name: 'managed-model' }, { name: 'local:private:model', localOnly: true }],
+    defaultModels: { pi: 'managed-model', qwen: 'managed-model' },
+    mediaUsable: { image: [{ providerId: 'private', name: 'local:private:image', localOnly: true }] } };
+  const f = fixture(); f.start(); f.requests[0].resolve(catalog); await f.picker.ready();
+  assert.match(f.nodes.cpModelPop.innerHTML, /local:private:model/);
+  assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:image/);
+  f.choose('local:private:model'); assert.equal(f.picker.value().modelName, 'local:private:model');
+  f.location('cloud'); const cloud = f.picker.refresh(); f.requests[1].resolve(catalog); await cloud;
+  assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:/);
+  assert.equal(f.picker.value().modelName, 'managed-model');
+  f.location('local'); f.agent('qwen'); const other = f.picker.refresh(); f.requests[2].resolve(catalog); await other;
+  assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:/);
+  assert.equal(f.picker.value().modelName, 'managed-model');
+});
+
 test('binding after preference paint reuses the pending directory and a new draft refreshes completed data', async () => {
   const f = fixture();
   const painted = f.picker.refresh();
