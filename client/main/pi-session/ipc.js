@@ -975,6 +975,8 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
     if (!maintenance.ok) return maintenance;
     const s = session.get(ref);
     if (!s) return { ok: false, code: 'SESSION_NOT_FOUND', notSent: true, reason: '这条对话已经不在了（可能已关闭）' };
+    if (s.localReplica === true) return { ok: false, accepted: false, notSent: true,
+      reason: '本地历史为只读，请使用当前账号新建会话继续' };
     let selectedSkills;
     try { selectedSkills = skillTurn.names(rawOptions?.skills); }
     catch (error) { return skillTurn.failure(error); }
@@ -1205,6 +1207,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
     const win = BrowserWindow.fromWebContents(event.sender);
     const attached = _uiWindow.request(s, win, options);
     if (s.localReplica) {
+      const historyAccess = require('../conversation/history-access');
       const captured = historyAccess.actor(app);
       historyAccess.assertReadable(app, s.sessionId, captured, s.historyRow());
       return Promise.resolve(s.loadHistory?.(options || {})).then(() => {

@@ -335,6 +335,15 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
     return attempt(async () => {
       let id = sessionId(rawId);
       const captured = await auth();
+      // Cached local transcripts have no native work-card archive. Their scoped
+      // index authorizes passive preparation only, never card writes or execution.
+      const cached = await session.indexedHistoryRow?.(id);
+      await guard(captured);
+      if (cached?.cached === true && require('./shared-history.cjs').isLocalIdentity(cached, id)) {
+        if (cached.deleted) throw Error('这条会话已经不存在，工作表单未保存');
+        return { ok: true, sessionId: cached.id, cards: [], workOnly: false,
+          draftSelection: null, draftSelectionRevision: 0 };
+      }
       let row = await resolve(id, captured, { allowMissing: true });
       if (accountHistory && (!row || row.accountProjection || row.adapterId === 'account-sync')) {
         // Card restoration runs before Agent opening. Resolve a trusted account

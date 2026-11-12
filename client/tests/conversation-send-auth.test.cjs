@@ -220,7 +220,7 @@ async function fixture(t, spec, legacySendIdentity = false) {
     return result;
   }
   return { root, app, open, send, installed, bridge, turns, memories, handlers,
-    event, listeners, frames, controls,
+    event, listeners, frames, controls, closeWindow: () => window.emit('closed'),
     emit: (handle, kind) => nativeHandles.get(handle.ref).emit(kind),
     openInstalled: options => handlers.get('pi-session-open')(event, { capabilities: [], ...options }),
     identity: () => auth.authenticatedIdentity(app), localIdentity: () => auth.identity(app),
@@ -238,6 +238,84 @@ async function fixture(t, spec, legacySendIdentity = false) {
       account: 'fixture-account-b', password: 'fixture-only' }),
   };
 }
+
+
+async function openCachedCopy(f) {
+  await f.bridge.indexedHistoryRow('imported-snapshot');
+  const store = require('../main/conversation/replica-store.cjs').createWorker(path.join(f.root, 'conversation-replicas', 'history.sqlite'));
+  const body = Buffer.from(JSON.stringify([{ role: 'user', text: 'Cached private prompt' }, { role: 'assistant', text: 'Cached private answer' }]));
+  const pointer = { sha256: require('node:crypto').createHash('sha256').update(body).digest('hex'), size: body.length };
+  try {
+    assert.equal((await store.importChunk('imported-snapshot', pointer, 0, body.toString('base64'))).ok, true);
+    assert.equal((await store.sealImport('imported-snapshot', pointer, { title: 'Cached snapshot', adapterId: 'pi',
+      creator: { account: 'fixture-account-a', hub: f.localIdentity().hub }, importedHistory: true })).ok, true);
+  } finally { await store.close(); }
+  const opened = await f.openInstalled({ chatId: 'imported-snapshot' });
+  assert.equal(opened.ok, true, opened.reason);
+  const handle = f.bridge.get(opened.ref);
+  assert.equal(handle.localReplica, true);
+  return handle;
+}
+
+test('production installed cached readonly snapshots load the original transcript without invoking a model', async t => {
+  const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
+  const snapshot = () => f.handlers.get('pi-session-snapshot')(f.event, handle.ref, { messageLimit: 200 });
+  const result = await snapshot();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.snapshot.messages.map(row => row.text), ['Cached private prompt', 'Cached private answer']);
+  assert.equal(result.snapshot.execution.readOnly, true);
+  const calls = [], restore = [];
+  for (const [name, key] of [['../main/pi-session/skill-turn', 'names'],
+    ['../main/pi-session/plugin-context', 'inputSelections'], ['../main/pi-session/task-input', 'prepare'],
+    ['../main/pi-session/attachments', 'stage']]) {
+    const dependency = require(name), original = dependency[key];
+    dependency[key] = (...args) => { calls.push(key); return original(...args); };
+    restore.push(() => { dependency[key] = original; });
+  }
+  const originalSend = handle.send;
+  handle.send = (...args) => { calls.push('send'); return originalSend(...args); };
+  let denied;
+  try {
+    denied = await f.handlers.get('pi-session-send')(f.event, handle.ref, 'Cannot execute a cached copy', [],
+      { skills: ['fixture-skill'], plugins: [{ pluginId: 'fixture-plugin', inputValues: { key: 'value' } }], taskId: 'fixture-task' });
+  } finally { for (const undo of restore) undo(); handle.send = originalSend; }
+  assert.equal(denied.ok, false); assert.equal(denied.accepted, false); assert.equal(denied.notSent, true);
+  assert.match(denied.reason, /只读/);
+  assert.deepEqual(calls, [], 'trusted passive views are rejected before skills, plugins, tasks, attachment staging or send');
+  assert.deepEqual(f.turns, []);
+  f.expire(); await f.identity();
+  assert.equal((await snapshot()).ok, true, 'renewing the same account preserves passive snapshot access');
+});
+
+test('closing the owning desktop window detaches a passive cached view without treating it as active execution', async t => {
+  const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
+  assert.doesNotThrow(() => f.closeWindow(), 'the installed window-close handler must detach a passive history view');
+  assert.equal(handle.status(), 'idle');
+  assert.equal(handle.inFlight(), false);
+  assert.deepEqual(f.turns, []);
+});
+
+test('an in-flight cached snapshot cannot return content after account, Hub or logout scope changes', async t => {
+  for (const change of ['account', 'hub', 'logout']) await t.test(change, async t => {
+    const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
+    const original = handle.loadHistory.bind(handle);
+    let release, entered;
+    const gate = new Promise(resolve => { release = resolve; });
+    const started = new Promise(resolve => { entered = resolve; });
+    handle.loadHistory = async options => { await original(options); entered(); await gate; };
+    const pending = Promise.resolve().then(() => f.handlers.get('pi-session-snapshot')(f.event, handle.ref));
+    const outcome = pending.then(value => ({ value }), error => ({ error }));
+    await Promise.race([started, outcome.then(result => { if (result.error) throw result.error; throw Error('Expected a pending history read'); })]);
+    if (change === 'account') assert.equal((await f.login()).ok, true);
+    else if (change === 'hub') assert.equal((await f.enrollHub('http://127.0.0.1:10')).ok, true);
+    else assert.equal((await f.logout()).ok, true);
+    release();
+    const result = await outcome;
+    assert.ok(result.error, 'a captured readonly snapshot cannot cross an identity change');
+    assert.match(result.error.message, /账号|服务|切换|登录/);
+    assert.deepEqual(f.turns, []);
+  });
+});
 
 test('production installed open keeps token refresh usable and blocks old-account events and ref controls', async t => {
   const f = await fixture(t, catalog.runtime('pi'));

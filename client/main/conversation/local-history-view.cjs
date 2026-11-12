@@ -101,7 +101,7 @@ async function create({ row, read }) {
   return { ref: 'local-history-' + row.id, sessionId: row.id, adapterId: value.adapterId,
     localReplica: true, readOnly: true, ui: { mode: 'readonly', title: row.title || '', capabilities: [] },
     snapshot: () => value, uiSnapshot: () => value, historyRow: () => row, loadHistory,
-    on: () => () => {}, inFlight: () => false, close: async () => { closed = true; streams.clear(); entries.length = 0; return true; },
+    status: () => 'idle', on: () => () => {}, inFlight: () => false, close: async () => { closed = true; streams.clear(); entries.length = 0; return true; },
     send: async () => ({ ok: false, accepted: false, reason: '本地历史为只读，请使用当前账号新建会话继续' }),
     stop: async () => ({ ok: false, reason: '本地历史没有正在执行的任务' }) };
 }
