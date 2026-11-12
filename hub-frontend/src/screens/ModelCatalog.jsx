@@ -1,5 +1,5 @@
 import { translateText as tx, localeMap, useLocale } from '../i18n.js'
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { useViewportHeight } from '../viewport-height.js'
 import { Loading, ErrorState, Icon, Modal, Confirm, toast, SelectMenu } from '../ui.jsx'
@@ -40,7 +40,12 @@ const THINKING_FORMATS = localeMap(() => ([
 const KINDS = localeMap(() => ([['openai-compat', 'OpenAI 兼容'], ['anthropic', 'Anthropic']]))
 
 export default function ModelCatalog() {
-  const listRef = useViewportHeight()
+  const viewportRef = useViewportHeight()
+  const listRef = useRef(null)
+  const bindList = useCallback(element => {
+    listRef.current = element
+    viewportRef(element)
+  }, [viewportRef])
   const uiLocale = useLocale();
   const [d, setD] = useState(null)
   const [editP, setEditP] = useState(null)     // provider | 'new'
@@ -50,6 +55,8 @@ export default function ModelCatalog() {
   // Keep provider cards compact and expand model lists on demand.
   const [expandedProviders, setExpandedProviders] = useState(() => new Set())
   const [error, setError] = useState(null)
+  const [newProviderId, setNewProviderId] = useState('')
+  const pendingProviderFocus = useRef('')
 
   const load = () => {
     setError(null)
@@ -58,8 +65,18 @@ export default function ModelCatalog() {
   useEffect(() => { load() }, [])
   const models = d?.models || []
   const byP = (pid) => models.filter((m) => m.providerId === pid)
+  // Keep the newly created service in view for this visit without changing the saved catalog order.
   const providers = (d?.providers || []).slice().sort((a, b) =>
+    Number(b.id === newProviderId) - Number(a.id === newProviderId) ||
     (b.enabled - a.enabled) || (b.builtin - a.builtin) || a.name.localeCompare(b.name))
+  useEffect(() => {
+    if (!pendingProviderFocus.current || !d?.providers?.some(p => p.id === pendingProviderFocus.current)) return
+    const card = listRef.current?.querySelector('.model-provider.is-new-provider')
+    if (!card) return
+    pendingProviderFocus.current = ''
+    card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    card.focus({ preventScroll: true })
+  }, [d, newProviderId, listRef])
   const enabledProviders = providers.filter((p) => p.enabled).length
   const enabledModels = models.filter((m) => m.enabled).length
   const readyProviders = providers.filter((p) => p.enabled && p.baseUrl && p.keySet).length
@@ -89,7 +106,7 @@ export default function ModelCatalog() {
       </>} />
       {error && <ErrorState msg={error.message} onRetry={load} />}
       {!d && !error && <Loading />}
-      <div ref={listRef} className="model-provider-grid" tabIndex={0} role="region" aria-label={tx("服务与模型列表，可滚动")}>
+      <div ref={bindList} className="model-provider-grid" tabIndex={0} role="region" aria-label={tx("服务与模型列表，可滚动")}>
         {providers.map((p) => {
           const ms = byP(p.id)
           const modelsOpen = expandedProviders.has(p.id)
@@ -97,7 +114,8 @@ export default function ModelCatalog() {
           const ready = p.enabled && p.baseUrl && p.keySet
           const state = ready ? tx("已配置") : (!p.enabled ? tx("已停用") : (!p.baseUrl ? tx("缺地址") : tx("缺密钥")))
           return (
-            <article key={p.id} className={'model-provider' + (p.enabled ? '' : ' disabled') + (modelsOpen ? ' is-models-expanded' : '')}>
+            <article key={p.id} tabIndex={p.id === newProviderId ? -1 : undefined}
+              className={'model-provider' + (p.enabled ? '' : ' disabled') + (modelsOpen ? ' is-models-expanded' : '') + (p.id === newProviderId ? ' is-new-provider' : '')}>
               <header className="model-provider-head">
                 <span className={'model-provider-glyph' + (ready ? ' ready' : '')}>{(p.name || p.id || '?').slice(0, 1)}</span>
                 <div className="model-provider-title">
@@ -171,7 +189,10 @@ export default function ModelCatalog() {
 
       {defaultOpen && <Modal title={tx("组织默认调用")} icon="key" wide onClose={() => setDefaultOpen(false)}><LlmSettings embedded /></Modal>}
       {editP && <ProviderForm initial={editP === 'new' ? null : editP}
-        onClose={() => setEditP(null)} onSaved={() => { setEditP(null); load() }} />}
+        onClose={() => setEditP(null)} onSaved={(providerId) => {
+          if (editP === 'new') { setNewProviderId(providerId); pendingProviderFocus.current = providerId }
+          setEditP(null); load()
+        }} />}
       {addM && <ModelForm providerId={addM.providerId} initial={addM.model || null}
         onClose={() => setAddM(null)} onSaved={() => { setAddM(null); load() }} />}
       {del && <Confirm title={del.kind === 'p' ? tx("删除模型服务") : tx("删除模型")} danger confirmText={tx("删除")}
@@ -215,7 +236,7 @@ function ProviderForm({ initial, onClose, onSaved }) {
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       })
       toast(apiKey.trim() ? tx("已保存，密钥已更新") : tx("已保存（密钥未改动）"))
-      onSaved()
+      onSaved(pid)
     } catch (e) { toast(tx("保存失败：") + (e.message || e)) }
     setBusy(false)
   }
