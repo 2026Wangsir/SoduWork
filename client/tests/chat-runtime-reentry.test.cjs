@@ -12,7 +12,11 @@ function section(start, end) {
 // Execute the production navigation, handle reuse and public identity methods.
 // UI mounting and the IPC open response are the external boundaries here.
 function fixture(runtime = 'opencode') {
-  const opened = [], reset = [];
+  const opened = [], reset = [], applicationChecks = [];
+  const api = { openApplication: async id => {
+    applicationChecks.push(id);
+    return { ok: true, handled: false };
+  } };
   const ctx = {
     global: {}, document: { getElementById: () => null }, setTimeout: () => 1, clearTimeout() {},
     _ref: '', _sessionId: '', _draftKey: 'new', _busy: false, _viewEpoch: 1, _entryRequest: 0,
@@ -22,7 +26,7 @@ function fixture(runtime = 'opencode') {
     _pending: '', _pendingPlugins: [], _pendingAttachmentNames: [], _restoreFailedDraft() {},
     _rememberConversationDraft() {}, _clearConversationDraft() {}, _restoreConversationDraft() {},
     _restoreRetainedConversationFailure() {},
-    _api: () => ({}),
+    _api: () => api,
     async _ensureOnce(chatId) {
       opened.push({ id: chatId, options: { ...ctx._sessionOptions } });
       ctx._ref = 'ref-' + chatId; ctx._sessionId = chatId;
@@ -44,8 +48,61 @@ function fixture(runtime = 'opencode') {
     section('  function _fail(', '  async function refreshHistory') +
     section('  async function enter(first, chatId, options)', '  function _paintOpening()') +
     section('  function sessionInfo()', '  function hasSession()'), ctx);
-  return { ctx, opened, reset };
+  return { ctx, opened, reset, api, applicationChecks };
 }
+
+test('handled or denied application navigation preserves the current renderer session', async () => {
+  for (const response of [{ ok: true, handled: true }, { ok: false, reason: 'Application unavailable' }, Error('Navigation disconnected')]) {
+    const { ctx, opened, reset, api, applicationChecks } = fixture();
+    assert.equal(await ctx.enter('', 'current-chat'), true);
+    assert.deepEqual(applicationChecks, ['current-chat'], 'ordinary history uses the unhandled application contract');
+    const snapshot = ctx._snap, options = ctx._sessionOptions, workspace = ctx._wd;
+    const notices = []; ctx.global.petSay = text => notices.push(text);
+    api.openApplication = async () => { if (response instanceof Error) throw response; return response; };
+    assert.equal(await ctx.enter('', 'application-chat'), false);
+    assert.equal(ctx._sessionId, 'current-chat'); assert.equal(ctx._ref, 'ref-current-chat');
+    assert.equal(ctx._snap, snapshot); assert.equal(ctx._sessionOptions, options); assert.equal(ctx._wd, workspace);
+    assert.deepEqual(opened.map(row => row.id), ['current-chat']); assert.deepEqual(reset, []);
+    assert.deepEqual(notices, response.ok ? [] : [response.reason || response.message]);
+  }
+});
+
+test('the latest ordinary navigation wins when application checks finish in either order', async () => {
+  for (const order of [['old', 'new'], ['new', 'old']]) {
+    const { ctx, opened, api } = fixture();
+    const pending = new Map();
+    api.openApplication = id => new Promise(resolve => pending.set(id, resolve));
+    const older = ctx.enter('', 'old'), newer = ctx.enter('', 'new');
+    for (const id of order) pending.get(id)({ ok: true, handled: false });
+    assert.deepEqual(await Promise.all([older, newer]), [false, true]);
+    assert.deepEqual(opened.map(row => row.id), ['new']);
+    assert.equal(ctx._sessionId, 'new');
+  }
+});
+
+test('a newer handled or denied application check supersedes old navigation without resetting the main draft', async () => {
+  for (const response of [{ ok: true, handled: true }, { ok: false, reason: 'Application unavailable' }, Error('Navigation disconnected')]) {
+    for (const order of [['old', 'new'], ['new', 'old']]) {
+      const { ctx, opened, reset, api } = fixture();
+      await ctx.enter('', 'current-chat');
+      const snapshot = ctx._snap, options = ctx._sessionOptions, workspace = ctx._wd, epoch = ctx._viewEpoch;
+      const pending = new Map(), notices = [];
+      ctx.global.petSay = text => notices.push(text);
+      api.openApplication = id => new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+      const older = ctx.enter('', 'old'), newer = ctx.enter('', 'new');
+      for (const id of order) {
+        if (id === 'new' && response instanceof Error) pending.get(id).reject(response);
+        else pending.get(id).resolve(id === 'new' ? response : { ok: true, handled: false });
+      }
+      assert.deepEqual(await Promise.all([older, newer]), [false, false]);
+      assert.equal(ctx._sessionId, 'current-chat'); assert.equal(ctx._ref, 'ref-current-chat');
+      assert.equal(ctx._snap, snapshot); assert.equal(ctx._sessionOptions, options); assert.equal(ctx._wd, workspace);
+      assert.equal(ctx._viewEpoch, epoch, 'application checks must not invalidate the retained main view');
+      assert.deepEqual(opened.map(row => row.id), ['current-chat']); assert.deepEqual(reset, []);
+      assert.deepEqual(notices, response.ok ? [] : [response.reason || response.message]);
+    }
+  }
+});
 
 test('cold remote requirement navigation restores work cards before opening its original execution', async t => {
   const fsp = require('node:fs/promises');
@@ -78,9 +135,9 @@ test('cold remote requirement navigation restores work cards before opening its 
   vm.runInNewContext(ipc.slice(start,ipc.indexOf('\n  });',start)+6), {
     session:bridge,_cloudHandoff:cloud,_accountSync:{history:async()=>({ok:true,chats:[]})}});
   const cards = require('../main/conversation/work-conversation-cards').create({app,session:bridge,identityOf:async()=>actor});
-  const {ctx} = fixture('pi');
+  const {ctx, api} = fixture('pi');
   ctx.window=ctx.global;ctx.global.SoduWorkAPI={taskStorageKey:()=> 'isolated-owner'};
-  ctx._api=()=>({workCards:async id=>{events.push('cards');return cards.read(id);}});
+  api.workCards=async id=>{events.push('cards');return cards.read(id);};
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../components/panels/chat-work-cards.js'),'utf8'),ctx);
   ctx._workCards=ctx.global.ChatWorkCards.create(ctx);
   const views=[];
@@ -163,10 +220,10 @@ test('a later application redirect cancels an older pending ordinary history pre
 });
 
 test('re-entering the same work-only conversation preserves its choices for the first ordinary send', async () => {
-  const { ctx, opened, reset } = fixture('qwen');
+  const { ctx, opened, reset, api } = fixture('qwen');
   ctx.window = ctx.global;
   ctx.global.SoduWorkAPI = { taskStorageKey: () => 'isolated-work-owner' };
-  ctx._api = () => ({ workCards: async () => ({ ok: true, workOnly: true, cards: [] }),
+  Object.assign(api, { workCards: async () => ({ ok: true, workOnly: true, cards: [] }),
     saveWorkDraftSelection: async (_id, {selection, revision}) => ({ok:true, draftSelection:selection, draftSelectionRevision:revision+1}) });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../components/panels/chat-work-cards.js'), 'utf8'), ctx);
   ctx._workCards = ctx.global.ChatWorkCards.create(ctx);
@@ -190,10 +247,10 @@ test('re-entering the same work-only conversation preserves its choices for the 
 });
 
 test('a work-only view reconnects to the authoritative runtime started by another window', async () => {
-  const {ctx,opened}=fixture('pi');let started=false;
+  const {ctx,opened,api}=fixture('pi');let started=false;
   ctx.window=ctx.global;ctx.global.SoduWorkAPI={taskStorageKey:()=> 'isolated-owner'};
   const selection={adapterId:'qwen',modelName:'draft-model',modelLabel:'Draft',reasoningEffort:'high',thinkingLevel:'medium'};
-  ctx._api=()=>({workCards:async()=>({ok:true,workOnly:!started,cards:[],
+  Object.assign(api,{workCards:async()=>({ok:true,workOnly:!started,cards:[],
     draftSelection:started?null:selection,draftSelectionRevision:started?0:1}),
     saveWorkDraftSelection:async()=>({ok:false,code:'WORK_CONVERSATION_STARTED',reason:'already running elsewhere'})});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../components/panels/chat-work-cards.js'),'utf8'),ctx);
@@ -244,6 +301,8 @@ test('空白页面连续点开历史时，迟到的首次卡片读取不能启�
   const {ctx, opened, reset} = fixture(); let finishOld;
   ctx._workCards = {restore: id => id === 'old' ? new Promise(resolve => {finishOld=resolve;}) : Promise.resolve(null)};
   const old = ctx.enter('', 'old');
+  for (let n = 0; n < 10 && !finishOld; n++) await Promise.resolve();
+  assert.equal(typeof finishOld, 'function', 'the old navigation is awaiting its work cards');
   assert.equal(await ctx.enter('', 'new'), true);
   finishOld(null); assert.equal(await old, false);
   assert.deepEqual(opened.map(row=>row.id), ['new']); assert.equal(reset.length,0);
@@ -306,6 +365,8 @@ test('切换会话后迟到的工作卡片拒绝或异常不能覆盖当前流�
     const {ctx, opened} = fixture(); let resolve, reject;
     ctx._workCards = {restore: id => id === 'old' ? new Promise((yes, no) => {resolve=yes; reject=no;}) : Promise.resolve(null)};
     const old = ctx.enter('', 'old');
+    for (let n = 0; n < 10 && !resolve; n++) await Promise.resolve();
+    assert.equal(typeof resolve, 'function', 'the old navigation is awaiting its work cards');
     assert.equal(await ctx.enter('', 'current'), true);
     const snapshot = ctx._snap = {status:'streaming', messages:[{role:'assistant', text:'current reply'}]};
     if (rejected) reject(Error('old failure'));
