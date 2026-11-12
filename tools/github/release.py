@@ -50,11 +50,13 @@ def context(env=None):
                 commit=sha, runId=run, tag=f"v{version}")
 
 
-def api(route, optional=False):
+def api(route, optional=False, *, payload=None):
     require(os.environ.get("GITHUB_API_URL") == "https://api.github.com", "Public GitHub API required")
     request = urllib.request.Request("https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + route,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
         headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
-                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                 **({"Content-Type": "application/json"} if payload is not None else {})})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -215,17 +217,22 @@ def draft(ctx, folder):
         require(existing.get("draft") is True, "Refusing to modify a public Release")
         require(marker in existing.get("body", ""), "Release belongs to another candidate; refusing overwrite")
     else:
-        gh("release", "create", ctx["tag"], "--repo", ctx["repository"], "--target", ctx["commit"], "--draft",
-           "--title", "SoduWork " + ("Client + Hub" if ctx["component"] == "all" else ctx["component"]) + " " + ctx["version"],
-           "--notes", marker + "\n\nDraft for internal testing only. See release-manifest.json for checksums and acceptance scope.")
-        existing = find_release_by_tag(ctx["tag"])
-    require(existing is not None, "Created Draft Release could not be found")
+        # The list endpoint may not expose a newly created draft immediately.
+        # Keep the identity returned by creation instead of rediscovering it.
+        existing = api("/releases", payload={
+            "tag_name": ctx["tag"], "target_commitish": ctx["commit"], "draft": True,
+            "name": "SoduWork " + ("Client + Hub" if ctx["component"] == "all" else ctx["component"]) + " " + ctx["version"],
+            "body": marker + "\n\nDraft for internal testing only. See release-manifest.json for checksums and acceptance scope.",
+        })
+    require(isinstance(existing, dict) and type(existing.get("id")) is int and existing["id"] > 0,
+            "Draft Release response has no valid ID")
     release_route = "/releases/" + str(existing["id"])
     # Never overwrite an asset: a retry downloads and compares assets already uploaded.
     existing = api(release_route)
     require(existing.get("tag_name") == ctx["tag"], "Release tag changed")
     require(existing.get("draft") is True, "Refusing to modify a public Release")
     require(marker in existing.get("body", ""), "Release belongs to another candidate; refusing overwrite")
+    require(existing.get("target_commitish") == ctx["commit"], "Draft target must identify the accepted commit")
     actual_names = {a["name"] for a in existing["assets"]}
     desired = {a["name"] for a in manifest["assets"]} | {"release-manifest.json"}
     require(actual_names <= desired, "Unexpected assets on existing Release")

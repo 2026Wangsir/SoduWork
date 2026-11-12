@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -137,7 +138,8 @@ class ReleaseTests(unittest.TestCase):
         manifest = release.candidate(self.ctx, self.root)
         names = [a['name'] for a in manifest['assets']] + ['release-manifest.json']
         marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
-        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'body': marker, 'draft': True, 'assets': []}
+        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'target_commitish': self.ctx['commit'],
+                    'body': marker, 'draft': True, 'assets': []}
         # Simulate one asset already uploaded by a previous attempt of this run.
         def add(name):
             existing['assets'].append({'name': name, 'browser_download_url': 'https://example.test/' + name})
@@ -169,47 +171,73 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(all(c[1] == 'download' for c in calls))
         self.assertTrue(all('--clobber' not in c for c in calls))
 
-    def test_new_draft_targets_accepted_sha_without_creating_a_tag_or_publishing(self):
+    def test_new_draft_uses_creation_id_even_when_release_list_stays_empty(self):
         self.bundle()
         release.candidate(self.ctx, self.root)
         existing = None
         calls = []
         api_calls = []
-        def api(route, optional=False):
+        def response(request, timeout):
+            nonlocal existing
+            self.assertEqual(timeout, 30)
+            self.assertEqual(request.get_header('Authorization'), 'Bearer fixture-token')
+            prefix = 'https://api.github.com/repos/' + self.ctx['repository']
+            self.assertTrue(request.full_url.startswith(prefix))
+            route = request.full_url[len(prefix):]
             api_calls.append(route)
             if route.startswith('/git/ref/tags/'):
-                return None
-            # A draft has a pending tag only: the published-by-tag API is 404.
-            if route.startswith('/releases/tags/'):
-                if optional:
-                    return None
-                raise RuntimeError('GitHub API: HTTP 404')
-            if route == '/releases?per_page=100&page=1':
-                return [existing] if existing else []
-            if route == '/releases/42':
-                return existing
-            self.fail('Unexpected GitHub API route: ' + route)
+                self.assertEqual(request.get_method(), 'GET')
+                raise release.urllib.error.HTTPError(request.full_url, 404, 'Not Found', {}, None)
+            if route == '/releases':
+                self.assertIsNone(existing, 'Only one draft creation is allowed')
+                self.assertEqual(request.get_method(), 'POST')
+                self.assertEqual(request.get_header('Content-type'), 'application/json')
+                payload = json.loads(request.data)
+                self.assertIs(payload['draft'], True)
+                self.assertEqual(payload['tag_name'], self.ctx['tag'])
+                self.assertEqual(payload['target_commitish'], self.ctx['commit'])
+                marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
+                self.assertIn(marker, payload['body'])
+                existing = {'id': 42, 'assets': [], **payload}
+                data = existing
+            elif route == '/releases?per_page=100&page=1':
+                self.assertEqual(request.get_method(), 'GET')
+                data = []  # Simulate a list that never exposes the new pending-tag draft.
+            elif route == '/releases/42':
+                self.assertEqual(request.get_method(), 'GET')
+                data = existing
+            else:
+                self.fail('Unexpected GitHub API route: ' + route)
+            return io.BytesIO(json.dumps(data).encode())
         def gh(*args):
-            nonlocal existing
             calls.append(args)
-            if args[1] == 'create':
-                self.assertIn('--draft', args)
-                self.assertEqual(args[args.index('--target') + 1], self.ctx['commit'])
-                existing = {'id': 42, 'tag_name': self.ctx['tag'],
-                            'body': args[args.index('--notes') + 1], 'draft': True, 'assets': []}
-            elif args[1] == 'upload':
+            if args[1] == 'upload':
                 existing['assets'].append({'name': Path(args[3]).name})
             elif args[1] == 'download':
                 name = args[args.index('--pattern') + 1]
                 (Path(args[args.index('--dir') + 1]) / name).write_bytes((self.root / name).read_bytes())
             else:
                 self.fail('Draft must never publish or mutate tags')
-        with patch.object(release, 'preflight'), patch.object(release, 'api', side_effect=api), \
+        with patch.dict(os.environ, {**self.env, 'GITHUB_API_URL': 'https://api.github.com', 'GH_TOKEN': 'fixture-token'}), \
+                patch.object(release, 'preflight'), patch.object(release.urllib.request, 'urlopen', side_effect=response), \
                 patch.object(release, 'gh', side_effect=gh):
             release.draft(self.ctx, self.root)
         self.assertTrue(existing['draft'])
         self.assertFalse(any(route.startswith('/releases/tags/') for route in api_calls))
+        self.assertEqual(api_calls.count('/releases?per_page=100&page=1'), 1)
+        self.assertEqual(api_calls.count('/releases'), 1)
         self.assertEqual(api_calls.count('/releases/42'), 2)
+
+    def test_draft_creation_requires_a_valid_response_id_before_upload(self):
+        self.bundle()
+        release.candidate(self.ctx, self.root)
+        for response in [None, {}, {'id': None}, {'id': True}, {'id': '42'}, {'id': 0}]:
+            with self.subTest(response=response), patch.object(release, 'preflight'), \
+                    patch.object(release, 'find_release_by_tag', return_value=None), \
+                    patch.object(release, 'api', side_effect=[None, response]), \
+                    patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, 'valid ID'):
+                release.draft(self.ctx, self.root)
+            gh.assert_not_called()
 
     def test_draft_rejects_public_release_even_for_same_candidate(self):
         self.bundle()
@@ -241,17 +269,21 @@ class ReleaseTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, 'Multiple Releases'):
             release.find_release_by_tag(self.ctx['tag'])
 
-    def test_draft_refuses_public_release_after_refresh(self):
+    def test_draft_refuses_changed_candidate_after_refresh(self):
         self.bundle()
         release.candidate(self.ctx, self.root)
         marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
-        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'body': marker, 'draft': True, 'assets': []}
-        with patch.object(release, 'preflight'), \
-                patch.object(release, 'find_release_by_tag', return_value=existing), \
-                patch.object(release, 'api', side_effect=[None, {**existing, 'draft': False}]), \
-                patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, 'public Release'):
-            release.draft(self.ctx, self.root)
-        gh.assert_not_called()
+        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'target_commitish': self.ctx['commit'],
+                    'body': marker, 'draft': True, 'assets': []}
+        for changes, error in [({'draft': False}, 'public Release'), ({'tag_name': 'v9.9.9'}, 'tag changed'),
+                               ({'body': 'other candidate'}, 'another candidate'),
+                               ({'target_commitish': 'b' * 40}, 'accepted commit')]:
+            with self.subTest(changes=changes), patch.object(release, 'preflight'), \
+                    patch.object(release, 'find_release_by_tag', return_value=existing), \
+                    patch.object(release, 'api', side_effect=[None, {**existing, **changes}]), \
+                    patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, error):
+                release.draft(self.ctx, self.root)
+            gh.assert_not_called()
 
     def test_combined_candidate_requires_hub_and_every_desktop_shard(self):
         ctx = {**self.ctx, 'component': 'all'}
