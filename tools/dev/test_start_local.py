@@ -298,6 +298,8 @@ class LocalStartupTests(unittest.TestCase):
         self.assertNotIn('SODUWORK_TEST_HUB_URL', child_env)
         self.assertEqual(child_env['SODUWORK_SOURCE_SESSION'], '1')
         self.assertEqual(child_env['VIRTUAL_ENV'], str(self.state / 'venv'))
+        self.assertEqual(child_env['SODUWORK_SOURCE_RUNNER_PYTHON'], str(self.state / 'venv' /
+                         ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')))
         for name in ('ADMIN_PASS', 'AUTH_SECRET', 'DATABASE_URL'):
             self.assertNotIn(name, child_env)
         for name in ('SYSTEMDRIVE', 'PROGRAMDATA'):
@@ -478,9 +480,13 @@ class LocalStartupTests(unittest.TestCase):
                      "hub-frontend/src/index.jsx", "hub-frontend/package.json", "hub-frontend/package-lock.json",
                      "hub-frontend/index.html", "hub-frontend/vite.config.js"):
             put(name)
-        calls = []
+        calls, commands, fault = [], [], {'probe_failures': 0}
         def run(_command, *, label, **_kwargs):
             calls.append(label)
+            commands.append(_command)
+            if label.startswith('[Runner]') and fault['probe_failures']:
+                fault['probe_failures'] -= 1
+                raise build.StartupError('fixture Runner dependency import failure')
             if "private Python" in label:
                 python = self.state / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
                 python.parent.mkdir(parents=True); python.write_text("fixture")
@@ -493,6 +499,9 @@ class LocalStartupTests(unittest.TestCase):
         with patch.object(build, "ROOT", source), patch.object(build, "check_dependencies", return_value=("node", "npm")), \
                 patch.object(build, "run", side_effect=run):
             build.prepare(self.state, self.state / "startup.log")
+            install = next(command for command in commands if 'pip' in command)
+            for manifest in ('requirements.txt', 'requirements-runner.txt'):
+                self.assertIn(str(source / 'hub-backend' / manifest), install)
             for name in ("LICENSE", "third-party/manifest.json"):
                 self.assertEqual((self.state / "application" / name).read_bytes(), (source / name).read_bytes())
             generated = [self.state / 'application/client' / relative for relative in (
@@ -503,10 +512,28 @@ class LocalStartupTests(unittest.TestCase):
             calls.clear()
             put("client/assets/connector-brands/fixture.svg", "updated artwork")
             build.prepare(self.state, self.state / "startup.log")
-            self.assertEqual(calls, ["[4/4] 构建管理页面 / Building the management UI"])
+            self.assertEqual(calls, ["[Runner] 检查本地运行环境 / Checking the local Runner environment",
+                                     "[4/4] 构建管理页面 / Building the management UI"])
             self.assertEqual((self.state / "application/client/assets/connector-brands/fixture.svg").read_text(), "updated artwork")
             for file in generated:
                 self.assertEqual(file.read_bytes(), b'generated runtime fixture')
+            before = (self.state / 'python-dependencies.sha256').read_text()
+            put('hub-backend/requirements-runner.txt', 'updated Runner dependencies')
+            commands.clear()
+            build.prepare(self.state, self.state / 'startup.log')
+            self.assertTrue(any('pip' in command for command in commands))
+            self.assertNotEqual((self.state / 'python-dependencies.sha256').read_text(), before)
+            commands.clear()
+            fault['probe_failures'] = 1
+            build.prepare(self.state, self.state / 'startup.log')
+            self.assertTrue(any('pip' in command for command in commands), 'A broken cached environment is repaired')
+            before = (self.state / 'python-dependencies.sha256').read_text()
+            put('hub-backend/requirements-runner.txt', 'unverified Runner dependencies')
+            fault['probe_failures'] = 1
+            with self.assertRaisesRegex(build.StartupError, 'dependency import failure'):
+                build.prepare(self.state, self.state / 'startup.log')
+            self.assertEqual((self.state / 'python-dependencies.sha256').read_text(), before,
+                             'Failed readiness checks cannot stamp an unusable environment as installed')
 
     def test_interactive_password_recovers_without_restarting_or_printing_secrets(self):
         config = start.initialize(self.state, 'admin')

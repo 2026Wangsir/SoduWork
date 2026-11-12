@@ -36,7 +36,7 @@
 
 ## 开发与验证
 
-首次体验推荐根目录的 `sh start.sh --desktop`。独立开发时保持 Hub 运行，在 `client/` 安装依赖 `npm ci` 后执行 `npm start`，三种桌面系统共用这一入口。开发 Runner 使用 `../hub-backend/` 中的虚拟环境与源码；不要手工复制旧发行版 Runner 代替当前源码。
+首次体验推荐根目录的 `sh start.sh --desktop`。根目录启动器在专用 `venv/` 中安装 Hub 和 Runner 依赖，并明确将生成的桌面副本绑定到同一 Python 解释器。独立开发时保持 Hub 运行，在 `client/` 安装依赖 `npm ci` 后执行 `npm start`，三种桌面系统共用这一入口；这种方式使用安装了 `requirements-runner.txt` 的 `../hub-backend/.venv`。两种方式都执行当前后端源码，不要手工复制旧发行版 Runner 代替当前源码。
 
 `npm test` 运行客户端的单元和契约检查。`npm run check:layout` 检查源码与生成目录的边界。`e2e/` 脚本应按文件声明选择隔离夹具或真实服务：隔离界面通过不等于真实模型、用户账号或线上交付验证通过。
 

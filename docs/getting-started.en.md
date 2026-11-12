@@ -23,6 +23,8 @@ Your first run has four steps: install the prerequisites, extract the source, st
 
 You do not need to create a database, install Docker or Git, prepare an `.env` file, or install each project separately. First-time setup needs internet access; later starts reuse completed work.
 
+The launcher installs both Hub and Runner dependencies in its private `venv/`, checks the Runner's Python imports, and gives the desktop that exact interpreter. You do not need a separate `hub-backend/.venv` for this entry point. If Agent management reports an incomplete source Runner environment, quit the source session and rerun the same launcher; keep the data directory intact.
+
 On Windows, desktop startup also prepares and verifies a private PortableGit command runtime in this instance's application copy so Agents can use Bash, Git, and common tools. No separate Git installation or WSL configuration is needed. Later starts preserve the runtime and download cache and check the tools again. If preparation fails, inspect `startup.log`, fix network access, and rerun the same launcher.
 
 ## Know when startup is complete
@@ -221,5 +223,7 @@ python3 tools/dev/verify_local_start.py
 The second command installs dependencies in a new temporary instance and verifies real HTTP login, persistence, uploads, source downloads, and process shutdown. It does not use a production database or call a paid model. Native macOS/Linux desktop behavior must be checked on those systems; Windows-only validation is not evidence of a complete three-platform release.
 
 On a machine with a graphical desktop, add `--desktop` to also verify native Electron readiness, the isolated local connection, and desktop cleanup after Ctrl+C and a forcibly closed launcher.
+
+On macOS, run `TMPDIR=/private/tmp python3 tools/dev/verify_source_runner.py` with Node.js 22 on `PATH` and a test Python 3.12+ containing `websockets`. It creates a temporary Hub, desktop profile, and real Runner, signs in with a synthetic account, and checks Agent discovery without creating tasks or calling models. Chromium uses a mock Keychain for this fixture; it does not verify native Keychain access.
 
 For desktop connection and sign-in regression checks, run `node e2e/hub-connection.cjs` from `client`. It uses an isolated Electron profile, OS-encrypted storage, and two temporary HTTP fixtures to check offline address editing, sign-in, identity isolation on switching, returning to the original service, and reopening. Screenshots and reports are written to `outputs/hub-connection/`. It does not connect to an existing service or call a model. This check is also included in `npm run test:e2e:local`.

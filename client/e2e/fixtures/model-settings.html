@@ -12,6 +12,8 @@
 <link rel="stylesheet" href="../../theme/workspace-page-heads.css">
 </head><body>
 <script>
+// These journeys begin with Chinese assertions before testing language changes.
+window.cfg={locale:'zh-CN'};
 window.errors=[];addEventListener('error',e=>errors.push(e.message));
 addEventListener('unhandledrejection',e=>errors.push(String(e.reason?.stack||e.reason)));
 // Match core/store.js: top-level lexical helpers are not window properties.

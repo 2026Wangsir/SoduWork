@@ -201,6 +201,16 @@ def read_stamp(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
 
 
+def verify_runner_environment(python: Path, backend: Path, log: Path) -> None:
+    """Check imports and the control-channel API without starting a Runner."""
+    probe = ("import inspect, sys, websockets, yaml, pg8000, pymysql, pymongo, dns, redis, cryptography\n"
+             "assert sys.version_info >= (3, 12), 'Runner requires Python 3.12+'\n"
+             "assert {'additional_headers', 'proxy'} <= set(inspect.signature(websockets.connect).parameters), "
+             "'Runner requires the websockets 15+ connection API'\n")
+    run([str(python), "-I", "-c", probe], cwd=backend, log=log, timeout=60,
+        label="[Runner] 检查本地运行环境 / Checking the local Runner environment")
+
+
 def prepare(state: Path, log: Path) -> tuple[Path, Path]:
     _, npm = check_dependencies()
     runtime = state / "application"
@@ -224,13 +234,22 @@ def prepare(state: Path, log: Path) -> tuple[Path, Path]:
     if not python.is_file():
         run([sys.executable, "-m", "venv", str(venv)], cwd=state, log=log,
             label="[1/4] 创建独立环境 / Creating a private Python environment")
-    requirements = ROOT / "hub-backend/requirements.txt"
+    requirements = [ROOT / "hub-backend" / name for name in ("requirements.txt", "requirements-runner.txt")]
     py_stamp = state / "python-dependencies.sha256"
-    wanted = hashlib.sha256(requirements.read_bytes()).hexdigest()
-    if read_stamp(py_stamp) != wanted:
+    wanted = digest_files(requirements, ROOT)
+    install = read_stamp(py_stamp) != wanted
+    if not install:
+        try:
+            verify_runner_environment(python, backend, log)
+        except StartupError:
+            # A stamp is not proof that packages still import. Repair only this
+            # launcher's environment, never a checkout or activated shell venv.
+            install = True
+    if install:
         run([str(python), "-m", "pip", "install", "--disable-pip-version-check",
-             "-r", str(requirements)], cwd=state, log=log,
+             *[argument for file in requirements for argument in ("-r", str(file))]], cwd=state, log=log,
             label="[2/4] 安装服务依赖 / Installing server dependencies (first run needs internet)")
+        verify_runner_environment(python, backend, log)
         py_stamp.write_text(wanted, encoding="utf-8")
 
     source = ROOT / "hub-frontend"
