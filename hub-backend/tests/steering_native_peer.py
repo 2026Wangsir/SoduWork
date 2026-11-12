@@ -110,7 +110,10 @@ def native(agent, args):
     text = sys.stdin.read()
     old = Path("native-session")
     if agent in {"pi", "claude"}:
-        flag = "--resume" if "--resume" in args else "--session-id"
+        flag = ("--session" if agent == "pi" and "--session" in args else
+                "--resume" if "--resume" in args else "--session-id")
+        if flag == "--session":
+            assert old.exists(), "explicit Pi resume must not create a missing session"
         sid = args[args.index(flag) + 1]
     else:
         sid = args[args.index("resume") + 1] if "resume" in args else "native-codex"

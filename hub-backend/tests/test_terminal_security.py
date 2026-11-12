@@ -228,9 +228,10 @@ class RunnerEnvironmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runner_environment("task", "ref", "qwen")["OPENAI_API_KEY"], "runner-login")
 
     async def test_recovered_pi_keeps_bundled_node_launcher(self):
-        with patch.dict(local_base._RUNS, {"ref": {"taskId": "task", "cli": "pi", "cfg": {}}}, clear=True), \
+        with tempfile.TemporaryDirectory(prefix="soduwork-pi-terminal-") as directory, \
+             patch.dict(local_base._RUNS, {"ref": {"taskId": "task", "cli": "pi", "cfg": {}}}, clear=True), \
              patch.object(local_base, "_bundled_pi_node", return_value="bundled-electron"), \
-             patch.dict(os.environ, {"PATH": "runner-bin"}, clear=True):
+             patch.dict(os.environ, {"PATH": "runner-bin", "SODUWORK_DATA_ROOT": directory}, clear=True):
             env = runner_environment("task", "ref", "pi")
         self.assertEqual(env["ELECTRON_RUN_AS_NODE"], "1")
         self.assertNotIn("SODUWORK_LLM_KEY", env)
