@@ -13,6 +13,7 @@ import time
 import uuid
 
 from . import codex_runtime_home as _codex_runtime_home
+from . import opencode_model_selection
 from .runtime_defaults import DEFAULT_OUTPUT
 
 log = logging.getLogger("uvicorn.error")
@@ -351,10 +352,11 @@ _NATIVE_PROFILES = {
         "runtime_probe": _opencode_runtime_issue,
         # Pass OpenCode's --dir explicitly.
         # Relying only on subprocess cwd can write outputs into the backend repository instead.
-        "start": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws],
+        "start": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws,
+                                                  *opencode_model_selection.native_arguments(cfg)],
         # Capture OpenCode's provider-issued session ID from output and use it for resume.
         "resume": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws,
-                                                   "--session", sid],
+                                                   "--session", sid, *opencode_model_selection.native_arguments(cfg)],
         "needs_llm": True,          # Use the shared model service, injecting configuration through OPENCODE_CONFIG_CONTENT.
         "own_session": False,       # The CLI assigns its own session ID.
         # Session console: attach the TUI to the conversation currently associated with this task.

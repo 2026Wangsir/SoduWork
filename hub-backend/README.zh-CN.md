@@ -91,6 +91,12 @@ python3 quality_gate.py --list
 
 隔离验证入口：`python3 -B tests/unified_requirements_upgrade.py --sqlite` 和 `python3 -B tests/unified_requirements_upgrade.py`。后者仅创建随机本机 PostgreSQL 临时实例，完成后停止并清理，不使用业务数据库。权限回归为 `test_unified_requirements_acl.py`，包含真实迁移后的 HTTP 多身份和 WebSocket 投影检查。
 
+## OpenCode 恢复会话时的模型选择
+
+受管 OpenCode 原生命令会明确传入本轮模型；ACP 路径在发送提示词前选择组件实际公布的精确模型标识，并保留原会话 ID 和历史。仅更新注入配置中的默认模型，无法替换原生会话记住的模型。找不到指定模型或组件未确认切换时，本轮停止执行；适配器不会恢复旧凭据、改写模型名称或新建替代会话。
+
+安装后端测试依赖后，可运行 `SODUWORK_TEST_OPENCODE_BIN=/absolute/path/to/opencode python3 -m unittest test_opencode_native_model_selection`，通过回环模型接口验证原生命令与 ACP 的模型切换。测试使用隔离的原生状态和合成凭据，检查三轮执行的历史保留、模型标识和凭据更新，不覆盖生产模型服务或桌面界面。
+
 ## 需求自动化草稿
 
 具有管理权限的用户可将未归档需求的公开内容复制为独立的自动化草稿。打开或取消表单不会创建记录。保存始终创建未启用的自动化，不改变原需求、需求版本或已有自动化关联。之后编辑或启用自动化与原需求相互独立。

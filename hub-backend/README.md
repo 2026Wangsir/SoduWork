@@ -95,6 +95,12 @@ The second command creates and tears down an isolated local PostgreSQL instance.
 
 See [release scope](../docs/release-scope.en.md) for distribution boundaries.
 
+## OpenCode model selection on resume
+
+Managed native OpenCode turns pass the current model explicitly. ACP turns select the exact advertised model before prompting, using the existing session ID and history. Updating the injected default alone does not change the model retained by a native session. Missing routes or an unconfirmed model change stop the turn; the adapter does not restore old credentials, rename models, or create a replacement session.
+
+Run `SODUWORK_TEST_OPENCODE_BIN=/absolute/path/to/opencode python3 -m unittest test_opencode_native_model_selection` with the backend test dependencies to verify native and ACP model changes against loopback endpoints. The test uses isolated native state and synthetic credentials, and checks retained history, model IDs, and credential rotation over three turns. It does not exercise a production provider or desktop UI.
+
 ## Requirement automation drafts
 
 An authorized manager of an unarchived requirement can copy its public content into an independent automation draft. Opening or canceling the form creates nothing. Saving always creates a disabled schedule and never changes the source requirement, its version, or its existing automation link. Later schedule edits and enabling are independent of the requirement.

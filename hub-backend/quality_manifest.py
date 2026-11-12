@@ -377,6 +377,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_requirement_edit_policy.py",
     "test_requirement_project_selection.py",
     "test_task_trace_lifecycle.py",
+    "test_opencode_model_selection.py",
 )))
 
 # These remain offline, but need a real browser, a local listener or longer-lived
