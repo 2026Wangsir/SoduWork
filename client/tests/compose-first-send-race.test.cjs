@@ -8,10 +8,11 @@ function deferred() { let resolve; const promise = new Promise(done => { resolve
 async function until(check) { for (let i = 0; i < 40 && !check(); i++) await tick(); assert.ok(check()); }
 
 function fixture(t, { modelReady = Promise.resolve(true), send } = {}) {
-  const calls = [], releases = [];
+  const calls = [], releases = [], opens = [];
   let owner = 'account-a', compose, picked = [], modelRequests = 0;
+  let runtime = 'pi', location = 'local', executionRevision = 0;
   const api = {
-    open: async () => ({ ok: true, ref: 'ref-first', sessionId: 'first-chat', snapshot: { messages: [] } }),
+    open: async options => { opens.push(options); return { ok: true, ref: 'ref-first', sessionId: 'first-chat', snapshot: { messages: [] } }; },
     snapshot: async () => ({ ok: true, snapshot: { messages: [] } }),
     send: async (...args) => { calls.push(args); return send ? send(...args) : { ok: true }; },
     onEvent() { return () => {}; }, release: async ref => { releases.push(ref); return { ok: true }; },
@@ -43,7 +44,9 @@ function fixture(t, { modelReady = Promise.resolve(true), send } = {}) {
     compose = context;
     return { ...create(context), _panel: () => panel, _paintSetup() {}, refreshComposeRecommendations() {} };
   };
-  f.g.ComposeRuntime = { value: () => 'pi', ready: async () => true, accessSupported: () => false };
+  f.g.ComposeRuntime = { value: () => runtime, ready: async () => true, accessSupported: () => false };
+  f.g.ComposeExecution = { value: () => location, revision: () => executionRevision,
+    reset() { location = 'local'; executionRevision++; }, bind() {}, paint() {} };
   f.g.ComposeModelPicker = { ready: () => { modelRequests++; return modelReady; },
     value: () => ({ modelName: 'fixture-model' }), refresh() {} };
   publish(); load('panels-compose');
@@ -53,9 +56,11 @@ function fixture(t, { modelReady = Promise.resolve(true), send } = {}) {
   input.addEventListener('input', () => compose._rememberComposeDraft());
   f.g.openComposePanel({ newSession: true });
   t.after(() => f.g.NativeChat.reset());
-  return { ...f, input, panel, calls, releases, compose,
+  return { ...f, input, panel, calls, releases, opens, compose,
     readyCalls: () => modelRequests,
     owner: value => { owner = value; },
+    runtime: value => { runtime = value; },
+    location: value => { if (value !== location) executionRevision++; location = value; },
     type(text, plugins = []) { picked = plugins.slice(); input.value = text; input.dispatchEvent(new Event('input')); },
     plugins: () => picked.slice(),
     draft: key => f.g.NativeChat.getDraft(key || 'new'),
@@ -86,6 +91,21 @@ test('account changes during model preparation reject the old request even befor
   assert.equal(f.calls.length, 0);
   assert.equal(f.input.value, 'account A request');
   assert.equal(f.panel.dataset.stage, 'compose');
+});
+
+for (const selection of ['runtime', 'execution']) test(selection + ' changes during model preparation cannot dispatch the earlier draft', async t => {
+  const ready = deferred(), f = fixture(t, { modelReady: ready.promise });
+  f.type('request under original selection', [oldPlugin]);
+  const pending = f.submit(); await until(() => f.readyCalls());
+  if (selection === 'runtime') f.runtime('codex');
+  else { f.location('cloud'); f.location('local'); }
+  ready.resolve(true); await pending;
+  assert.equal(f.opens.length, 0, 'changed selection must be rejected before opening a runtime');
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.panel.dataset.stage, 'compose');
+  assert.equal(f.input.value, 'request under original selection');
+  assert.equal(f.draft(), 'request under original selection');
+  assert.deepEqual(f.plugins(), [oldPlugin]);
 });
 
 test('ordinary attachment preparation cannot start a stale first send after new-session navigation', async t => {

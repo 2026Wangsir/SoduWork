@@ -97,10 +97,24 @@ assert.doesNotMatch(composerCss, /\.cp-runtime-pop \.wc-pop-row>span\{flex:1 1 a
   'the generic text column must never stretch the brand icon container');
 const enterChat = compose.slice(compose.indexOf('async function _enterChat('), compose.indexOf('async function makeDraft('));
 const localStart = enterChat.slice(enterChat.indexOf('const viewSeq = _composeViewSeq;'));
+const preparationAwait = localStart.indexOf('await global.ComposeModelPicker?.ready?.()');
+assert.ok(preparationAwait >= 0, 'the local first send waits for model preparation');
 assert.match(localStart, /const adapterId = global\.ComposeRuntime\?\.value\?\.\(\) \|\| 'pi';/,
   'local conversation must capture its selected runtime with an explicit Pi default');
-assert.ok(localStart.indexOf('const adapterId =') < localStart.indexOf('await '),
+assert.ok(localStart.indexOf('const adapterId =') < preparationAwait,
   'runtime selection must be captured before asynchronous preparation');
+assert.match(localStart, /const executionRevision = global\.ComposeExecution\?\.revision\?\.\(\);/,
+  'local conversation must capture its execution location revision');
+assert.ok(localStart.indexOf('const executionRevision =') < preparationAwait,
+  'execution location revision must be captured before asynchronous preparation');
+assert.ok(localStart.indexOf('const current =') < preparationAwait,
+  'the full selection guard must exist before asynchronous preparation');
+assert.match(localStart, /global\.ComposeExecution\?\.revision\?\.\(\) === executionRevision/,
+  'returning to local execution still invalidates a send prepared under an earlier revision');
+assert.match(localStart, /await global\.ComposeModelPicker\?\.ready\?\.\(\);\s*if \(!current\(\)\) return false/,
+  'the selected runtime and location must still match after model warmup');
+assert.match(localStart, /await _capabilityPromise\.catch\(\(\) => \{\}\);\s*if \(!current\(\)\) return false/,
+  'the selected runtime and location must still match after capability warmup');
 assert.match(localStart, /NativeChat\.enter\([\s\S]*?Object\.assign\(\{\s*adapterId,\s*modelName:/,
   'the captured runtime must reach the final session open options unchanged');
 assert.match(localStart, /global\.ComposeRuntime\?\.value\?\.\(\) \|\| 'pi'\) === adapterId/,

@@ -448,19 +448,19 @@
     // then fence NativeChat on that same request before entering the chat.
     const viewSeq = _composeViewSeq;
     const ownerScope = global.SoduWorkAPI?.taskStorageKey?.('ops') || '';
-    const currentEntry = () => viewSeq === _composeViewSeq &&
-      ownerScope === (global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
-    await global.ComposeModelPicker?.ready?.();
-    if (!currentEntry()) return false;
-    await _capabilityPromise.catch(() => {});
-    if (!currentEntry()) return false;
     const adapterId = global.ComposeRuntime?.value?.() || 'pi';
     const executionRevision = global.ComposeExecution?.revision?.();
+    const currentEntry = () => viewSeq === _composeViewSeq &&
+      ownerScope === (global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
     // Preparation can await permission, plugins and models. Changing location
     // or Agent invalidates this send; keep its draft instead of starting the
     // previously selected local runtime under the new visible controls.
     const current = () => currentEntry() && global.ComposeExecution?.value?.() !== 'cloud' &&
       global.ComposeExecution?.revision?.() === executionRevision && (global.ComposeRuntime?.value?.() || 'pi') === adapterId;
+    await global.ComposeModelPicker?.ready?.();
+    if (!current()) return false;
+    await _capabilityPromise.catch(() => {});
+    if (!current()) return false;
     if (_accessConsent && !await _accessConsent.ready()) return false;
     await _pluginSelectTask;
     await global.ComposeRuntime?.ready?.();

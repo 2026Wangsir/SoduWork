@@ -100,7 +100,7 @@ test('plugin-center launch waits for asynchronous selection before the first sen
  assert.match(source,/selectionSeq !== _pluginSelectSeq/);
  assert.match(source,/_pluginSelectTask = selection\.catch/);
 });
-test('pending plugin send is fenced to its original view and account before preparation',()=>{
+test('pending plugin send is fenced to its original view, account and execution selection before preparation',()=>{
  const source=read('components/panels/panels-compose.js');
  const entry=source.slice(source.indexOf('async function _enterChat('),source.indexOf('async function _openRequirementPicker('));
  const preparation=entry.slice(entry.indexOf('const viewSeq = _composeViewSeq;'));
@@ -109,13 +109,15 @@ test('pending plugin send is fenced to its original view and account before prep
  const beforeAwait=entry.slice(0,warmup);
  assert.match(source,/let _composeViewSeq = 0/);
  // Behavioral navigation/account races are exercised by compose-first-send-race.test.cjs.
- // Keep the source contract here: both identities must be captured before warmup.
+ // Keep the source contract here: identity and execution selection precede warmup.
  assert.match(beforeAwait,/const viewSeq = _composeViewSeq/);
  assert.match(beforeAwait,/const ownerScope = global\.SoduWorkAPI\?\.taskStorageKey\?\.\('ops'\) \|\| ''/);
+ assert.match(beforeAwait,/const adapterId = global\.ComposeRuntime\?\.value\?\.\(\) \|\| 'pi'/);
+ assert.match(beforeAwait,/const executionRevision = global\.ComposeExecution\?\.revision\?\.\(\)/);
  assert.match(beforeAwait,/const currentEntry = \(\) => viewSeq === _composeViewSeq &&\s*ownerScope === \(global\.SoduWorkAPI\?\.taskStorageKey\?\.\('ops'\) \|\| ''\)/);
- assert.match(preparation,/await global\.ComposeModelPicker\?\.ready\?\.\(\);\s*if \(!currentEntry\(\)\) return false/);
- assert.match(preparation,/await _capabilityPromise\.catch\(\(\) => \{\}\);\s*if \(!currentEntry\(\)\) return false/);
- assert.match(preparation,/const current = \(\) => currentEntry\(\) &&/);
+ assert.match(beforeAwait,/const current = \(\) => currentEntry\(\) &&/);
+ assert.match(preparation,/await global\.ComposeModelPicker\?\.ready\?\.\(\);\s*if \(!current\(\)\) return false/);
+ assert.match(preparation,/await _capabilityPromise\.catch\(\(\) => \{\}\);\s*if \(!current\(\)\) return false/);
  assert.match(preparation,/await _pluginSelectTask;\s*await global\.ComposeRuntime\?\.ready\?\.\(\);\s*if \(!current\(\)\) return false/);
  assert.match(source,/_composeViewSeq \+= 1/);
 });
