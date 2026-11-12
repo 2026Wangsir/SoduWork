@@ -11,4 +11,9 @@
 @container chat-column (min-width:1100px){
   .nchat-summary-open .nchat-main>.nchat-content-area,
   .nchat-summary-open .nchat-main>.nchat-foot{margin-right:328px}
+  /* cqw still measures the full chat column, including the reserved summary. */
+  .nchat-summary-open .nchat-inner{
+    width:min(var(--nchat-column-max),calc(100cqw - 328px - 2 * var(--nchat-column-gutter)));
+    margin-left:max(var(--nchat-column-gutter),calc((100cqw - 328px - var(--nchat-column-max)) / 2));
+  }
 }
