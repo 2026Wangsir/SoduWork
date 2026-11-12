@@ -184,3 +184,76 @@ test('ten thousand mixed-account rows keep authorized paging bounded and reuse o
   t.diagnostic(JSON.stringify({ rows: 10000, authorized: 5000, firstMs,
     warmPages: 16, warmMs: Math.round(performance.now() - warm), heartbeat }));
 });
+
+function legacyMemoryRecord(f, id, owner, hub) {
+  const folder = path.join(f.root, 'session-memory-bindings');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, crypto.createHash('sha256').update(id).digest('hex') + '.json');
+  fs.writeFileSync(file, JSON.stringify({ owner, ids: [], ...(hub === undefined ? {} : { hub }) }));
+  return file;
+}
+
+test('restoring ordinary work cards preserves a legacy native archive original Hub when its owner migrates', async t => {
+  const f = await fixture(t), runtime = require('../main/platform-connections/runtime.cjs');
+  const row = f.row('legacy-native', f.a, { creator: null, workOwner: undefined });
+  const file = legacyMemoryRecord(f, row.id, runtime.legacyScope(f.a.hub, f.a.clientId, f.a));
+  await f.history.register([row]);
+  assert.ok(await f.history.resolve(row.id), 'the original legacy fingerprint already proves the current Hub');
+  f.session.archivedConversation = async (_app, id) => id === row.id ? row : null;
+  const cards = require('../main/conversation/work-conversation-cards').create({
+    app: f.app, session: f.session, identityOf: async () => f.current });
+  assert.equal((await cards.read(row.id)).ok, true, 'the normal pre-open work-card read performs the migration');
+  const migrated = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(migrated.owner, scope(f.a));
+  assert.equal(migrated.hub, new URL(f.a.hub).origin);
+  assert.deepEqual(migrated.ids, []);
+  assert.ok(await f.history.resolve(row.id), 'reading cards must not hide an already-owned archive');
+  assert.deepEqual((await f.history.page()).chats.map(row => row.id), [row.id]);
+});
+
+test('legacy memory migration retains the proven original Hub and device instead of the current connection', async t => {
+  const f = await fixture(t), runtime = require('../main/platform-connections/runtime.cjs');
+  const memory = require('../main/conversation/session-memory'), auth = require('../main/device-auth');
+  const row = f.row('legacy-other-hub', f.a, { creator: null, workOwner: undefined });
+  const originalHub = f.a.hub, originalClient = 'retired-device';
+  const file = legacyMemoryRecord(f, row.id, runtime.legacyScope(originalHub, originalClient, f.a));
+  t.mock.method(auth, 'profiles', () => [{ hub: originalHub, clientId: originalClient }]);
+  await f.history.register([row]);
+  f.current = { ...f.a, hub: 'https://different-hub.invalid' };
+  assert.equal(await f.history.resolve(row.id), null);
+  assert.deepEqual(memory.binding(f.app, row.id, f.current), []);
+  const migrated = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(migrated.owner, scope(f.a));
+  assert.equal(migrated.hub, new URL(originalHub).origin, 'the current Hub must not replace verified legacy provenance');
+  assert.equal(await f.history.resolve(row.id), null, 'memory migration grants no cross-Hub archive visibility');
+  f.current = f.a;
+  assert.ok(await f.history.resolve(row.id), 'the original Hub remains readable after device and account-hash migration');
+});
+
+test('legacy memory migration preserves explicit provenance and refuses another account fingerprint', async t => {
+  const f = await fixture(t), runtime = require('../main/platform-connections/runtime.cjs');
+  const memory = require('../main/conversation/session-memory');
+  const row = f.row('legacy-explicit-hub', f.a, { creator: null, workOwner: undefined });
+  const explicitHub = 'https://conflicting-hub.invalid';
+  const file = legacyMemoryRecord(f, row.id, runtime.legacyScope(f.a.hub, f.a.clientId, f.a), explicitHub);
+  await f.history.register([row]);
+  assert.deepEqual(memory.binding(f.app, row.id, f.a), []);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hub, explicitHub);
+  assert.equal(await f.history.resolve(row.id), null, 'existing conflicting evidence must not be overwritten');
+  const foreign = legacyMemoryRecord(f, 'foreign-legacy', runtime.legacyScope(f.b.hub, f.b.clientId, f.b));
+  const bytes = fs.readFileSync(foreign);
+  assert.throws(() => memory.binding(f.app, 'foreign-legacy', f.a), /另一个账号/);
+  assert.deepEqual(fs.readFileSync(foreign), bytes);
+});
+
+test('an account-only memory fingerprint still cannot invent missing Hub provenance', async t => {
+  const f = await fixture(t), memory = require('../main/conversation/session-memory');
+  const row = f.row('account-only-unknown-hub', f.a, { creator: null, workOwner: undefined });
+  const file = legacyMemoryRecord(f, row.id, scope(f.a));
+  const bytes = fs.readFileSync(file);
+  await f.history.register([row]);
+  assert.deepEqual(memory.binding(f.app, row.id, f.a), []);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.throws(() => access.assertReadable(f.app, row.id, access.actor(f.app, f.a), row), { code: 'HISTORY_HUB_MISSING' });
+  assert.equal(await f.history.resolve(row.id), null);
+});
