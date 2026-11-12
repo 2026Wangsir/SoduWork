@@ -70,6 +70,25 @@ app.whenReady().then(async () => {
       assigneeName:'客户成功与产品体验团队',assigneeUserId:'member-1',due:'2026-10-25'}];
       SoduWorkAPI.listAttachments=async()=>Array.from({length:8},(_,i)=>({id:'file-'+i,name:'需求说明与交付检查记录-'+i+'.md',size:2048}));
       RequirementsBoard.render(true);void 0;`);
+    await js(`tasks.push({id:'short-detail',title:'Short layout fixture',note:'Brief background',status:'doing',
+      triageStage:'ready',myRoles:['creator'],canViewExecution:true,canEditRequirement:false});void 0;`);
+    for (const [width, height, zoom] of [[2560, 1395, 1], [1440, 1000, 1.5]]) {
+      win.webContents.setZoomFactor(zoom); win.setContentSize(width, height);
+      await js(`RequirementsDetail.open('short-detail')`); await wait(100);
+      const layout = await js(`(()=>{const drawer=document.querySelector('.rq-detail'),backdrop=drawer.parentElement,
+        footer=drawer.querySelector('.rq-detail-footer'),content=drawer.querySelector('.rq-detail-content'),
+        d=drawer.getBoundingClientRect(),b=backdrop.getBoundingClientRect(),f=footer.getBoundingClientRect(),
+        c=content.getBoundingClientRect(),style=getComputedStyle(backdrop);
+        return{gap:Math.abs(d.bottom-(b.bottom-parseFloat(style.paddingBottom))),
+          topGap:Math.abs(d.top-(b.top+parseFloat(style.paddingTop))),
+          footerGap:Math.abs(f.bottom-d.bottom),contentGap:Math.abs(c.bottom-f.top),
+          visible:f.top>=0&&f.bottom<=innerHeight&&d.right<=innerWidth};})()`);
+      assert.ok(layout.gap<=2 && layout.topGap<=2 && layout.footerGap<=2 && layout.contentGap<=2 && layout.visible,
+        'Short content must fill the drawer and keep its footer at the available window edge: '+JSON.stringify(layout));
+      report.layouts.push({label:'short/'+width+'/'+zoom,...layout});
+      await shot('short-full-height-'+width);
+      await click('[data-rq-dismiss]');
+    }
     for (const theme of ['azure', 'ruby', 'steady', 'warm', 'minimal']) {
       console.log('detail design: ' + theme);
       await js(`document.documentElement.dataset.theme=${JSON.stringify(theme)};void 0;`);
