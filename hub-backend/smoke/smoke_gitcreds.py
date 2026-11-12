@@ -170,8 +170,11 @@ async def main():
         ("git" in (ctx2.get("cfg") or {})) and "git" not in ctx2, sorted(ctx2.keys()))
     chk("原件不动（回的是新 ctx）", "git" not in (ctx.get("cfg") or {}))
 
+    # Pi requires this dispatch's model; no inference occurs in this Git-only check.
+    runtime_cfg = {**(ctx2.get("cfg") or {}), "llm": {
+        "base": "http://127.0.0.1:9/v1", "key": "git-smoke-fixture", "model": "git-smoke"}}
     for cli in ("pi", "opencode", "claude"):
-        env = _env_for(_PROFILES[cli], ctx2.get("cfg") or {})
+        env = _env_for(_PROFILES[cli], runtime_cfg)
         n = int(env.get("GIT_CONFIG_COUNT") or 0)
         keys = [env.get("GIT_CONFIG_KEY_%d" % i) for i in range(n)]
         vals = [env.get("GIT_CONFIG_VALUE_%d" % i, "") for i in range(n)]
@@ -191,7 +194,7 @@ async def main():
     try:
         git(ws, "init", "-q", "-b", "main")
         io.open(os.path.join(ws, "a.txt"), "w").write("hi")
-        env = _env_for(_PROFILES["pi"], ctx2.get("cfg") or {})
+        env = _env_for(_PROFILES["pi"], runtime_cfg)
         git(ws, "add", "a.txt", env=env)
         c0, o0 = git(ws, "commit", "-q", "-m", "smoke", env=env)
         chk("★★真跑一次 git commit 成功", c0 == 0, o0[:200])

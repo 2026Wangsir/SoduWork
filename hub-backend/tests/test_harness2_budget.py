@@ -1,4 +1,4 @@
-"""Budgeted seven-stage refinement never silently retries or drops real usage."""
+"""Seven-stage refinement bounds explicit truncation recovery and retains real usage."""
 from __future__ import annotations
 
 import importlib
@@ -6,7 +6,7 @@ import importlib.util
 import json
 import unittest
 
-from app.services.harness2_errors import StructuredFailure, failure_message
+from app.services.harness2_errors import StructuredFailure, PlanningOutputLimit, failure_message
 from app.services.harness2_budget import (
     MAX_PROMPT_BYTES, MAX_REPORTED_TOKENS, MAX_SECONDS, MAX_REQUEST_SECONDS,
     MAX_OUTPUT_TOKENS,
@@ -175,6 +175,108 @@ class Harness2BudgetTests(unittest.TestCase):
         self.assertEqual(self.usage, [])
         self.assert_budget_failure(self.run_request)
         self.assertEqual(self.requests, ["failed"])
+
+    def test_one_recovery_counts_every_attempt_without_changing_seven_phase_limit(self):
+        retries = []
+        def truncated_once(model, messages, on_usage, *, timeout):
+            self.complete(model, messages, on_usage, timeout=timeout)
+            if len(self.requests) == 1:
+                raise PlanningOutputLimit()
+            return "complete"
+        self.assertEqual(self.budget.run(self.model, self.messages, truncated_once,
+                                        self.usage.append, on_retry=lambda: retries.append(True)), "complete")
+        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [2048, 4096])
+        self.assertEqual(self.requests[0][1], self.requests[1][1])
+        self.assertEqual(retries, [True])
+        for _ in range(6):
+            self.run_request()
+        self.assertEqual((self.budget.calls, self.budget.retries, len(self.requests)), (7, 1, 8))
+        self.assertEqual((len(self.usage), self.budget.reported_tokens), (8, 120))
+        self.assert_budget_failure(self.run_request)
+
+    def test_recovery_preserves_smaller_model_cap_and_never_mutates_configuration(self):
+        for limit, expected in [(512, [512]), (2048, [2048]), (3000, [2048, 3000])]:
+            with self.subTest(limit=limit):
+                self.setUp()
+                original = {**self.model, "maxOutputTokens": limit}
+                def truncated(model, messages, on_usage, *, timeout):
+                    self.complete(model, messages, on_usage, timeout=timeout)
+                    raise PlanningOutputLimit()
+                with self.assertRaises(PlanningOutputLimit):
+                    self.run_request(truncated, model=original)
+                self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], expected)
+                self.assertEqual(original["maxOutputTokens"], limit)
+                self.assertEqual(len(self.usage), len(expected))
+                self.assert_budget_failure(self.run_request)
+
+    def test_always_on_reasoning_gets_at_most_one_bounded_recovery(self):
+        messages = [{"role": "system", "content": "SODUWORK_HARNESS2_EDIT\nstage=inv1.a1"}]
+        def truncated(model, messages, on_usage, *, timeout):
+            self.complete(model, messages, on_usage, timeout=timeout)
+            raise PlanningOutputLimit()
+        with self.assertRaises(PlanningOutputLimit):
+            self.run_request(truncated, model={**self.model, "reasoning": True}, messages=messages)
+        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [8192, 16384])
+        self.assertEqual(self.budget.retries, 1)
+        self.assert_budget_failure(self.run_request)
+
+    def test_successful_recovery_headroom_is_reused_only_for_same_phase_kind(self):
+        proposals = [{"role": "system", "content": "SODUWORK_HARNESS2_EDIT\nstage=inv1.a1"}]
+        def truncate_initial(model, messages, on_usage, *, timeout):
+            self.complete(model, messages, on_usage, timeout=timeout)
+            if model["maxOutputTokens"] < 8192:
+                raise PlanningOutputLimit()
+            return "complete"
+        self.assertEqual(self.run_request(truncate_initial, messages=proposals), "complete")
+        self.assertEqual(self.run_request(truncate_initial, messages=proposals), "complete")
+        self.run_request(messages=proposals, model={**self.model, "maxOutputTokens": 5000})
+        self.run_request()
+        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [4096, 8192, 8192, 5000, 2048])
+        self.assertEqual(self.budget.retries, 1)
+
+    def test_second_phase_cannot_spend_another_recovery(self):
+        def truncated_once(model, messages, on_usage, *, timeout):
+            self.complete(model, messages, on_usage, timeout=timeout)
+            if len(self.requests) != 2:
+                raise PlanningOutputLimit()
+            return "complete"
+        self.assertEqual(self.run_request(truncated_once), "complete")
+        with self.assertRaises(PlanningOutputLimit):
+            self.run_request(truncated_once)
+        self.assertEqual((self.budget.calls, self.budget.retries, len(self.requests)), (2, 1, 3))
+        self.assert_budget_failure(self.run_request)
+
+    def test_retry_checks_remaining_time_and_usage_without_masking_token_limit(self):
+        for elapsed, tokens in [(MAX_SECONDS, 15), (0, MAX_REPORTED_TOKENS)]:
+            with self.subTest(elapsed=elapsed, tokens=tokens):
+                self.setUp()
+                def truncated(*args, **kwargs):
+                    self.requests.append(True)
+                    self.clock.now = elapsed
+                    args[2]({"input_tokens": tokens, "output_tokens": 0})
+                    raise PlanningOutputLimit()
+                with self.assertRaises(PlanningOutputLimit):
+                    self.run_request(truncated)
+                self.assertEqual(len(self.requests), 1)
+                self.assertEqual(self.budget.reported_tokens, tokens)
+                self.assert_budget_failure(self.run_request)
+
+    def test_retry_recomputes_deadline_and_progress_cancellation_blocks_transport(self):
+        def truncated(model, messages, on_usage, *, timeout):
+            self.complete(model, messages, on_usage, timeout=timeout)
+            if len(self.requests) == 1:
+                self.clock.now = MAX_SECONDS - 2
+                raise PlanningOutputLimit()
+            return "complete"
+        self.assertEqual(self.run_request(truncated), "complete")
+        self.assertEqual(self.requests[1][2], 2)
+        self.setUp()
+        def cancelled():
+            raise RuntimeError("cancelled")
+        with self.assertRaises(RuntimeError):
+            self.budget.run(self.model, self.messages, truncated, on_retry=cancelled)
+        self.assertEqual(len(self.requests), 1)
+        self.assert_budget_failure(self.run_request)
 
     def test_controller_state_and_budget_error_never_retain_model_or_prompt(self):
         self.run_request()

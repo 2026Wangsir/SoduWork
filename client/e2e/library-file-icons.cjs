@@ -105,7 +105,7 @@ app.whenReady().then(async () => {
   await js(`(()=>{const style=document.createElement('style');style.textContent=${JSON.stringify(read('theme/workspace-page-heads.css'))};document.head.appendChild(style)})()`);
   await js(`window.errors=[];window.notices=[];window.petSay=text=>notices.push(text);addEventListener('error',e=>errors.push(e.message));addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));window.fixtureItems=${JSON.stringify(records)};window.SoduWorkAPI={listLibrary:async opts=>({items:fixtureItems.map(row=>({...row,...(opts.scope==='trash'?{deletedAt:'2026-09-30T09:00:00Z'}:{})})),folders:[],trashCount:fixtureItems.length}),getLibraryStorageStatus:async()=>({local:{available:true},minio:{available:false}}),readLibraryBinary:async()=>null};void 0;`);
   for (const file of JSON.parse(read('core/locales/manifest.json'))) await js(read('core/locales/' + file));
-  for (const file of ['core/i18n-dom.js', 'core/i18n.js', 'components/panels/library-file-icons.js', 'components/panels/panels-library-dialogs.js', 'components/panels/panels-library.js']) await js(read(file) + '\nvoid 0;');
+  for (const file of ['core/i18n-dom.js', 'core/i18n.js', 'components/panels/library-file-icons.js', 'components/panels/panels-library-dialogs.js', 'components/panels/library-delivery.js', 'components/panels/library-preview-html.js', 'components/panels/library-preview-archive.js', 'components/panels/library-preview-pane.js', 'components/panels/panels-library.js']) await js(read(file) + '\nvoid 0;');
   await js('SoduWorkI18n.setLocale("zh-CN",{persist:false,broadcast:false});openLibraryPanel();void 0;');
   report.verificationNavigatorOnline = await js('navigator.onLine');
   assert.equal(report.verificationNavigatorOnline, false);
@@ -114,7 +114,7 @@ app.whenReady().then(async () => {
     'untyped files must use the same system generic document icon as unassociated extensions, never a drive icon');
   report.cases.push('All twelve metadata cases resolve to real decodable system icons while offline; actual filenames beat misleading titles, MIME identifies extensionless Word, and unspecified formats stay generic');
   if (compactOnly) {
-    await click('[data-library-menu-toggle="options"]'); await click('[data-library-trash]');
+    await click('[data-library-trash]');
     await verifyCompactTrash();
     assert.deepEqual(await js('errors'), []); assert.deepEqual(report.errors, []); assert.deepEqual(report.blockedNetwork, []);
     report.nativeTypes = [...replies.keys()]; report.ok = true; return;
@@ -130,18 +130,19 @@ app.whenReady().then(async () => {
   }
   report.cases.push('Real mouse toggles list/grid across Chinese/English, 960/1366 pixels and two production themes; original icon colors and usable layout remain intact');
   await click('[data-library-scope="favorites"]'); await verifyIcons('favorites'); await shot('favorites');
-  await js(`SoduWorkAPI.readLibraryBinary=async()=>({blob:new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH0UAAAAASUVORK5CYII='),c=>c.charCodeAt(0))],{type:'image/png'})});closeLibraryPanel();openLibraryPanel();void 0;`);
+  await js(`SoduWorkAPI.readLibraryThumbnail=SoduWorkAPI.readLibraryBinary=async()=>({blob:new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aKk0AAAAASUVORK5CYII='),c=>c.charCodeAt(0))],{type:'image/png'})});closeLibraryPanel();openLibraryPanel();void 0;`);
   await until(`document.querySelector('[data-library-image="image"]')?.naturalWidth>0`);
   assert.equal(await js(`document.querySelector('[data-library-image="image"]').parentElement.querySelector('[data-library-image-fallback]').hidden`), true);
-  await click('[data-library-preview="image"]');
-  await until(`document.querySelector('.library-image-dialog img')?.naturalWidth>0`);
-  await shot('image-preview'); await click('[data-library-image-close]');
+  await click('[data-library-file-preview="image"]');
+  await until(`document.querySelector('.library-preview-pane img')?.naturalWidth>0`);
+  await shot('image-preview'); await click('[data-preview-close]');
+  await until(`!document.querySelector('.library-preview-pane')`);
   report.cases.push('A real PNG Blob still hydrates the thumbnail and opens the full-size preview; the system image icon remains its loading/read-failure fallback');
-  await click('[data-library-menu-toggle="options"]'); await click('[data-library-trash]');
+  await click('[data-library-trash]');
   await verifyIcons('trash'); assert.equal(await js('document.querySelectorAll("[data-library-restore]").length'), records.length);
   await shot('trash');
   await verifyCompactTrash(); win.setContentSize(960, 950);
-  await js('SoduWorkAPI.readLibraryBinary=async()=>null;closeLibraryPanel();openLibraryPanel();void 0;');
+  await js('SoduWorkAPI.readLibraryThumbnail=SoduWorkAPI.readLibraryBinary=async()=>null;closeLibraryPanel();openLibraryPanel();void 0;');
   await verifyIcons('trash-reopened');
   await click('[data-library-root]'); await verifyIcons('return-from-trash');
   report.cases.push('Favorites and trash use the same real type icons; return navigation retains the full original set');

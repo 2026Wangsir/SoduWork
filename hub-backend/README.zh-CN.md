@@ -22,6 +22,14 @@ python3 -m venv .venv
 
 打开 http://127.0.0.1:9080/docs 查看 API 文档，健康检查为 `GET /healthz`。
 
+## 受管 Pi 执行
+
+受管 Pi 执行为每条 Runner 执行记录绑定独立的配置与会话目录，目录位于 Runner 数据根目录下。启动及后续轮次使用同一个明确路径，不依赖继承的桌面 Pi 设置或操作系统主目录解析。模型文件只保存凭据的环境变量引用；模型配置缺失或文件发布失败时，会在 Pi 启动前停止执行。个人 Pi 与桌面本地模型配置保持不变。升级时，只允许将 Runner 记录中明确标识且工作目录匹配的原生会话复制到私有目录，原文件保持不变。已有执行历史的后续轮次必须找到原生会话，不会静默新建会话。
+
+Runner 重启后，恢复终端仍绑定原执行的会话历史，不恢复模型凭据，也不改写模型文件。新的受管执行轮次仍须单独获得模型授权。
+
+安装客户端依赖后，可在后端测试环境运行 `python3 e2e_pi_dispatch_config.py --output /absolute/evidence/directory`，通过隔离鉴权 Hub、真实 Runner 和 Pi 子进程及本机回环模型验证派发、后续轮次、文件产物、重启后的原生终端恢复与个人模型配置保护。该验证不覆盖生产模型或原生桌面界面。
+
 ## 质量门禁
 
 所有后端冒烟都登记在 `quality_manifest.py`，新增脚本未登记会直接阻断发布：
@@ -44,6 +52,10 @@ python3 quality_gate.py --list
 
 冒烟脚本集中在 [`smoke/`](smoke/) 目录。单独运行时，在 `hub-backend/` 目录使用模块命令，例如 `python3 -m smoke.smoke_capabilities`；质量门禁会选择已登记的模块。单元测试和 `tests/` 集成辅助脚本保留现有位置。
 
+## Harness² 推演恢复
+
+Harness² 在原生执行前完成七个无工具推演阶段。仅当模型完整响应明确报告达到输出 token 上限时，整轮允许重试同一阶段一次：预算最多为首次的两倍，同时不得超过 16,384 token 和已配置的模型上限。两次尝试的实际用量均保留，共用原有整轮时限和 token 预算，客户端会显示重试进度。成功恢复后的预算会在本轮后续同类阶段沿用，仍受配置上限约束，不增加重试次数。未完成的计划会被丢弃；此恢复路径不重试异常断流、HTTP 错误或原生执行。持续截断或较低的配置上限仍会在执行前报错。
+
 ## 连数据库
 
 在 `.env` 里设 `DATABASE_URL`：
@@ -56,6 +68,10 @@ python3 quality_gate.py --list
 
 > **密钥不入库**：`.env` 已被 `.gitignore` 排除；部署凭据通过密钥管理或环境配置提供，勿写进提交文件。
 > 使用专用数据库和最小权限账号；部署与备份恢复见 [`../ops/self-host/README.md`](../ops/self-host/README.zh-CN.md)。实际内部地址和运维记录应单独保管。
+
+## OpenCode 回合完成状态
+
+OpenCode 原生和 ACP 执行均保留当前回合的模型停止原因。达到输出 token 上限时，即使已有部分文本且原生进程正常退出，也会标记为未完成；已有进度和会话保留，可人工继续。ACP 适配器使用单次调用的临时插件，只观察原生会话、回合标识及停止原因；缺少完成证据时阻止成功结算，不重试工具或改变权限。执行 `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode`，可用明确指定的已安装二进制和隔离的本地回环模型服务进行验收。
 
 ## API 概览
 
@@ -91,6 +107,12 @@ python3 quality_gate.py --list
 
 隔离验证入口：`python3 -B tests/unified_requirements_upgrade.py --sqlite` 和 `python3 -B tests/unified_requirements_upgrade.py`。后者仅创建随机本机 PostgreSQL 临时实例，完成后停止并清理，不使用业务数据库。权限回归为 `test_unified_requirements_acl.py`，包含真实迁移后的 HTTP 多身份和 WebSocket 投影检查。
 
+## OpenCode 恢复会话时的模型选择
+
+受管 OpenCode 原生命令会明确传入本轮模型；ACP 路径在发送提示词前选择组件实际公布的精确模型标识，并保留原会话 ID 和历史。仅更新注入配置中的默认模型，无法替换原生会话记住的模型。找不到指定模型或组件未确认切换时，本轮停止执行；适配器不会恢复旧凭据、改写模型名称或新建替代会话。
+
+安装后端测试依赖后，可运行 `SODUWORK_TEST_OPENCODE_BIN=/absolute/path/to/opencode python3 -m unittest test_opencode_native_model_selection`，通过回环模型接口验证原生命令与 ACP 的模型切换。测试使用隔离的原生状态和合成凭据，检查三轮执行的历史保留、模型标识和凭据更新，不覆盖生产模型服务或桌面界面。
+
 ## 需求自动化草稿
 
 具有管理权限的用户可将未归档需求的公开内容复制为独立的自动化草稿。打开或取消表单不会创建记录。保存始终创建未启用的自动化，不改变原需求、需求版本或已有自动化关联。之后编辑或启用自动化与原需求相互独立。
@@ -98,3 +120,9 @@ python3 quality_gate.py --list
 此路径的 `POST /api/v1/schedules` 接收 `sourceRequirement: {id, requirementVersion}` 和稳定的 `creationRequestId`。Hub 检查当前管理权限、归档状态和预期版本，随后由服务端生成 `source_requirement` 快照，记录来源 ID、公开标题及版本。响应以 `sourceRequirement` 返回这三项；普通自动化编辑不能替换来源，来源记录也不会扩大对原需求的访问权限。不复制执行路由、凭据或本地模型引用。
 
 同一账号、设备重复发送相同创建请求会返回已创建的自动化；同一标识携带不同内容时返回 409。原需求后来发生变化也不影响恢复丢失的创建响应。迁移 `0088_schedule_requirement_source` 为已有自动化增加默认空 JSON 字段，不推断历史来源，也不改写旧关联。
+
+## 受管 ACP 状态目录
+
+Codex Harness、Qwen、Kimi 和 DeepSeek Harness 使用 Runner 数据根目录下的独立状态目录。如果权限、同名文件或存储故障导致目录无法创建，准备阶段会在启动执行组件前拒绝本轮执行，并返回不含个人路径或文件系统异常内容的可操作提示。继承的个人状态保持不变；修复目录后，可以通过正常准入检查重新派发。
+
+`python3 -m unittest test_acp_home_isolation` 验证真实文件冲突、模拟权限拒绝，以及真实子进程与 ACP 桥接下使用合成底座的 Runner 准入流程，确认准备失败时执行组件未启动、修复目录后能够执行。这不等同真实模型服务或原生平台验收。

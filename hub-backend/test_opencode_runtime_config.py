@@ -32,6 +32,8 @@ class OpenCodeRuntimeConfigTests(unittest.TestCase):
             "XDG_STATE_HOME": str(self.root / "native-state"),
             "XDG_CACHE_HOME": str(self.root / "native-cache"),
             "OPENCODE_DB": str(self.root / "native.db"),
+            "OPENCODE_CONFIG": str(self.personal),
+            "OPENCODE_CONFIG_DIR": str(self.personal.parent),
             "OPENCODE_CONFIG_CONTENT": '{"model":"company/fixture","permission":{"edit":"deny"}}',
             "SODUWORK_APPROVAL_CHANNEL": "",
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -42,9 +44,21 @@ class OpenCodeRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(Path(env["XDG_CONFIG_HOME"]), expected)
         self.assertTrue(expected.is_dir())
         self.assertEqual(list(expected.iterdir()), [])
+        self.assertFalse(env.get("OPENCODE_CONFIG"))
+        self.assertFalse(env.get("OPENCODE_CONFIG_DIR"))
         for key in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_DB"):
             self.assertEqual(env[key], self.environment[key], key)
         self.assertEqual(self.personal.read_bytes(), b"invalid personal config: PRIVATE-FIXTURE")
+
+    def test_config_override_names_are_removed_case_insensitively(self):
+        from app.services.opencode_runtime_config import prepare_environment
+        env = {**self.environment, "OpenCode_Config": str(self.personal),
+               "opencode_config_dir": str(self.personal.parent)}
+        prepare_environment(env, str(self.root / "runner"))
+        self.assertFalse(any(key.upper() in {"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"}
+                             for key in env))
+        self.assertEqual(env["OPENCODE_CONFIG_CONTENT"], self.environment["OPENCODE_CONFIG_CONTENT"])
+        self.assert_config(env)
 
     def test_parent_environment_ignores_personal_config_and_keeps_native_state(self):
         cfg = {"llm": {"base": "http://127.0.0.1/v1", "key": "fixture", "model": "fixture"},

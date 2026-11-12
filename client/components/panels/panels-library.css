@@ -208,7 +208,7 @@ html[data-desk-panel="workspace"] #libraryPanel{
   letter-spacing:.1em;
   line-height:1;
 }
-.library-toolbar{gap:7px;}
+.library-toolbar{gap:7px;flex-wrap:wrap;}
 .library-head .library-toolbar{justify-content:flex-end;}
 /* The selection action bar belongs to the workspace surface, so it must use
    the full available panel width instead of inheriting the old 1660px cap.
@@ -271,6 +271,10 @@ html[data-desk-panel="workspace"] #libraryPanel .library-batch-toolbar{
   box-shadow:0 4px 10px color-mix(in srgb,var(--accent) 16%,transparent);
 }
 .library-create:hover{opacity:1;filter:brightness(1.035);}
+.library-trash-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--bg-0);color:var(--ink-2);font:500 max(var(--font-min-readable,14.5px),13px)/1 var(--font-ui);white-space:nowrap;cursor:pointer;}
+.library-trash-button:hover{background:var(--bg-1);}
+.library-trash-button[hidden]{display:none;}
+@media(max-width:680px){.library-toolbar>.library-create-wrap{margin-left:auto;}}
 .library-create .library-icon{width:13px;height:13px;}
 .library-menu{
   top:40px;

@@ -13,6 +13,7 @@ import time
 import uuid
 
 from . import codex_runtime_home as _codex_runtime_home
+from . import opencode_model_selection
 from .runtime_defaults import DEFAULT_OUTPUT
 
 log = logging.getLogger("uvicorn.error")
@@ -313,11 +314,19 @@ def _pi_model(cfg: dict) -> str:
     return ((cfg or {}).get("llm") or {}).get("model") or ""
 
 
-def _pi_args(sid: str, mode: str, cfg: dict | None) -> list:
+def _pi_args(sid: str, mode: str, cfg: dict | None, *, resume: bool = False) -> list:
     """Build Pi arguments with cli.js first because the executable is Node. Pi uses the subprocess
     working directory directly and needs no --dir flag.
     """
-    args = [_pi_cli_js() or "", "-p", "--mode", "json", "--session-id", sid,
+    # Pi's --session-id silently creates a new session when the file is absent.
+    # Established turns require --session so lost history cannot be discarded.
+    with _LOCK:
+        established = resume and any(
+            run.get("cliSid") == sid and (run.get("turnCompleted")
+                or (run.get("usage") or {}).get("total")
+                or any(row.get("kind") in {"say", "do"} for row in run.get("lines") or []))
+            for run in _RUNS.values())
+    args = [_pi_cli_js() or "", "-p", "--mode", "json", "--session" if established else "--session-id", sid,
             "--provider", "company", "--model", _pi_model(cfg),
 
 
@@ -351,10 +360,11 @@ _NATIVE_PROFILES = {
         "runtime_probe": _opencode_runtime_issue,
         # Pass OpenCode's --dir explicitly.
         # Relying only on subprocess cwd can write outputs into the backend repository instead.
-        "start": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws],
+        "start": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws,
+                                                  *opencode_model_selection.native_arguments(cfg)],
         # Capture OpenCode's provider-issued session ID from output and use it for resume.
         "resume": lambda sid, mode, ws, cfg=None: ["run", "--format", "json", "--thinking", "--dir", ws,
-                                                   "--session", sid],
+                                                   "--session", sid, *opencode_model_selection.native_arguments(cfg)],
         "needs_llm": True,          # Use the shared model service, injecting configuration through OPENCODE_CONFIG_CONTENT.
         "own_session": False,       # The CLI assigns its own session ID.
         # Session console: attach the TUI to the conversation currently associated with this task.
@@ -395,12 +405,12 @@ _NATIVE_PROFILES = {
     "pi": {
         "name": "Pi",
         "bin": _pi_bin,
-        "needs_llm": True,          # Use the shared model service with ~/.pi/agent/models.json (see _write_pi_models).
+        "needs_llm": True,          # Use execution-scoped managed Pi model configuration.
         "own_session": True,
         "start": lambda sid, mode, ws, cfg=None: _pi_args(sid, mode, cfg),
         # Resume by explicit session ID rather than the most recent session.
         # This prevents concurrent tasks from continuing each other's conversations.
-        "resume": lambda sid, mode, ws, cfg=None: _pi_args(sid, mode, cfg),
+        "resume": lambda sid, mode, ws, cfg=None: _pi_args(sid, mode, cfg, resume=True),
         # pi --session <id> without -p opens the interactive interface for the same session.
         # argv_prefix places cli.js before other arguments because the executable is Node.
         "session_flag": ["--session"],
@@ -900,8 +910,11 @@ def _prepare_codex_home(env: dict) -> None:
     _codex_runtime_home.clean_skills(env)
 
 
-def _env_for(prof: dict, cfg: dict, runtime_ref: str = "") -> dict:
-    """Build the child-process environment; inject OpenCode model configuration and credentials through environment variables instead of files."""
+def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: bool = True) -> dict:
+    """Build the child environment; native recovery terminals may omit model admission.
+
+    That internal exception does not obtain credentials or authorize a managed turn.
+    """
     env = dict(os.environ)
     from . import runtime_images
     env.pop(runtime_images.ENV_KEY, None)
@@ -979,6 +992,18 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "") -> dict:
     kind = llm.get("kind") or "openai-compat"
     acp_key = str(prof.get("acp_key") or "")
     if not (base and key and model):
+        if prof is _PROFILES.get("pi"):
+            if require_model:
+                raise RuntimeError("Pi 没有拿到本次派发的模型配置，请检查模型授权后重试。")
+            # Recovered terminals still own the archived execution's history.
+            # Binding paths does not restore or borrow a prior turn's credentials.
+            from .pi_runtime_config import prepare_session_environment
+            with _LOCK:
+                execution = dict(_RUNS.get(runtime_ref) or {})
+            prepare_session_environment(env, _data_root(), runtime_ref, execution)
+            for name in list(env):
+                if name.upper() == "SODUWORK_LLM_KEY":
+                    del env[name]
         if cfg.get("accessPolicy") and prof is _PROFILES.get("opencode"):
             raise RuntimeError("OpenCode requires a managed model before applying its access policy")
         # Reject ACP runtime startup when required model configuration is absent.
@@ -1005,10 +1030,12 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "") -> dict:
         return _no_proxy_for(env, base)
 
     if prof.get("name") == "Pi":
-        # Pi reads model configuration from its agent models.json file.
-        # Store only the SODUWORK_LLM_KEY environment reference, never the plaintext key.
+        # The writer and CLI must use the same execution-scoped directory.
         from .local_context_policy import window
-        _write_pi_models(base, model, kind, window(cfg) or _CTX_WINDOW_DEFAULT, llm=llm)
+        from .pi_runtime_config import prepare
+        with _LOCK:
+            execution = dict(_RUNS.get(runtime_ref) or {})
+        prepare(env, _data_root(), llm, window(cfg) or _CTX_WINDOW_DEFAULT, runtime_ref, execution)
         return _no_proxy_for(env, base)
     # OpenCode's default external_directory permission asks for confirmation, which unattended execution cannot provide.
     # Grant only the authorized Runner work root rather than enabling all permissions.
@@ -1083,45 +1110,6 @@ def _git_host_no_proxy(env: dict, git_url: str) -> None:
         if host not in parts:
             parts.insert(0, host)
         env[k] = ",".join(parts)
-
-
-def _write_pi_models(base: str, model: str, kind: str = "openai-compat", context_window: int = _CTX_WINDOW_DEFAULT, *, llm: dict | None = None) -> None:
-    """Write ~/.pi/agent/models.json, which Pi requires instead of environment-only configuration.
-    
-    Keep plaintext keys off disk: apiKey contains only the $SODUWORK_LLM_KEY variable reference.
-    _env_for injects its value into the child environment, using Pi's $ENV_VAR interpolation.
-    OpenAI-compatible services may not support developer roles or reasoning_effort,
-    so disable these optional capabilities through compat.
-    Do not rewrite unchanged content; repeated writes are unnecessary and can race an active session.
-    """
-    from . import runtime_images
-    try:
-        d = os.path.join(os.path.expanduser("~"), ".pi", "agent")
-        os.makedirs(d, exist_ok=True)
-        path = os.path.join(d, "models.json")
-        provider = {
-            "name": "SoduWork 模型服务",
-            "baseUrl": base,
-            "api": "anthropic-messages" if kind == "anthropic" else "openai-completions",
-            "apiKey": "$SODUWORK_LLM_KEY",
-            "models": [{"id": model, "name": "公司 coding 模型",
-                        "input": ["text", "image"] if runtime_images.transport_supported(llm) else ["text"],
-                        "contextWindow": context_window,
-                        "maxTokens": min(runtime_images.model_fields(llm).get("maxOutputTokens", DEFAULT_OUTPUT), context_window)}],
-        }
-        if kind != "anthropic":
-            provider["compat"] = {"supportsDeveloperRole": False, "supportsReasoningEffort": False}
-        want = {"providers": {"company": provider}}
-        blob = json.dumps(want, ensure_ascii=False, indent=1)
-        try:
-            if open(path, encoding="utf-8").read() == blob:
-                return
-        except Exception:  # noqa: BLE001 - Write configuration when the previous file is absent or unreadable.
-            pass
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(blob)
-    except Exception as e:  # noqa: BLE001 - Let the runtime report configuration errors if this optional write fails.
-        log.warning("写 pi models.json 失败：%s", type(e).__name__)
 
 
 def _friendly(msg: str) -> str:

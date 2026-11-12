@@ -6,12 +6,14 @@ import time
 import threading
 from typing import Callable
 
-from .harness2_errors import StructuredFailure
+from .harness2_errors import StructuredFailure, PlanningOutputLimit
 
 MAX_CALLS = 7
 MAX_SECONDS = 420.0
 MAX_REQUEST_SECONDS = 300.0
 MAX_OUTPUT_TOKENS = 8192
+# One extra tool-free request across the entire turn, never seven extra retries.
+MAX_RECOVERY_OUTPUT_TOKENS = 16384
 # A user turn replays the full task in four probes and three proposals. These
 # are whole-turn accounting and per-request wire limits, respectively; the old
 # diagnostic limits could reject the second stage of a normal Runner prompt.
@@ -35,6 +37,8 @@ class RefinementBudget:
         self._clock = clock
         self.started = clock()
         self.calls = 0
+        self.retries = 0
+        self._recovered_allowances = {}
         self.reported_tokens = 0
         self._failed = False
         self._lock = threading.RLock()
@@ -59,8 +63,8 @@ class RefinementBudget:
                     raise StructuredFailure("response_format") from None
         return 0
 
-    def run(self, model: dict, messages: list[dict], complete, on_usage=None) -> str:
-        """Run exactly one request; any failure prevents later requests."""
+    def run(self, model: dict, messages: list[dict], complete, on_usage=None, *, on_retry=None) -> str:
+        """Run a phase, with one turn-wide recovery for an explicit output limit."""
         from .harness2_provider import can_disable_reasoning
         with self._lock:
             self._remaining()
@@ -78,6 +82,10 @@ class RefinementBudget:
             allowance = 4096 if proposal else 2048
             if model.get("reasoning") is True and not can_disable_reasoning(model):
                 allowance *= 2
+            # Reuse successful recovery headroom for later phases of the same
+            # kind. Otherwise every proposal would hit the same artificial cap
+            # after the turn's only retry has already been consumed.
+            allowance = max(allowance, self._recovered_allowances.get(proposal, 0))
             bounded_model = {**model, "maxOutputTokens": min(limit, allowance)}
             timeout = min(MAX_REQUEST_SECONDS, self._remaining())
             self.calls += 1
@@ -94,7 +102,31 @@ class RefinementBudget:
                 on_usage(tokens)
 
         try:
-            result = complete(bounded_model, messages, usage, timeout=timeout)
+            try:
+                result = complete(bounded_model, messages, usage, timeout=timeout)
+            except PlanningOutputLimit as truncated:
+                with self._lock:
+                    try:
+                        self._remaining()
+                    except StructuredFailure:
+                        # Keep the provider's precise first failure after its
+                        # usage has been charged, even if no retry budget remains.
+                        raise truncated
+                    recovery_limit = min(limit, MAX_RECOVERY_OUTPUT_TOKENS,
+                                         bounded_model["maxOutputTokens"] * 2)
+                    if self.retries or recovery_limit <= bounded_model["maxOutputTokens"]:
+                        raise
+                    self.retries += 1
+                if on_retry:
+                    on_retry()
+                with self._lock:
+                    timeout = min(MAX_REQUEST_SECONDS, self._remaining())
+                # Regenerate the same phase from the original messages. Partial
+                # plans or JSON never enter the next phase or native execution.
+                result = complete({**model, "maxOutputTokens": recovery_limit},
+                                  messages, usage, timeout=timeout)
+                with self._lock:
+                    self._recovered_allowances[proposal] = recovery_limit
             with self._lock:
                 self._remaining()
         except Exception:

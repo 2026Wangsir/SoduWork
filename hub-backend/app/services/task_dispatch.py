@@ -52,6 +52,8 @@ async def dispatch(tid, body, client, session, *, actor=None):
         ensure_available(t, body.get("conversationTurn"), "dispatch")
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    from .dispatch_instructions import confirmed_turn
+    instruction_scope = confirmed_turn(t, body.get("conversationTurn"))
     if t.status == "done":
         raise HTTPException(status_code=400, detail="需求已完成，不用再交给 AI")
     if t.status == "cancel":
@@ -355,6 +357,7 @@ async def dispatch(tid, body, client, session, *, actor=None):
              if isinstance(p, dict) and (p.get("text") or "").strip()]
     ev.record(session, tid, ai_exec.EV_DISPATCHED,
                {**dispatch_attempts.success_detail(attempt_id, aid, picked),
+                **({"conversationTurn": instruction_scope} if instruction_scope else {}),
                 "ref": r.get("issueId", ""), "issueId": r.get("issueId", ""),
                 "identifier": r.get("identifier", ""),
                 "url": r.get("url", ""), "by": who, "provider": r.get("provider", ""),

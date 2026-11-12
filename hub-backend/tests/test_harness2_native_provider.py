@@ -61,6 +61,39 @@ class NativeProviderTests(unittest.TestCase):
         self.assertEqual(len(usages), 1)
         self.assertEqual((usages[0]['input'], usages[0]['output']), (11, 7))
 
+    def test_only_explicit_tool_free_planning_limit_allows_recovery(self):
+        from app.services.harness2_errors import PlanningOutputLimit
+        from app.services.harness2_budget import RefinementBudget
+        call = {'id': 'partial', 'type': 'function',
+                'function': {'name': 'write_file', 'arguments': '{'}}
+        for planning, calls, recoverable in [(True, [], True), (False, [], False), (True, [call], False)]:
+            payload = {'choices': [{'message': {'content': 'partial', 'tool_calls': calls},
+                                    'finish_reason': 'length'}]}
+            with self.subTest(planning=planning, calls=calls), patch.object(
+                    provider.urllib.request.OpenerDirector, 'open', return_value=Response(payload)):
+                with self.assertRaises(StructuredFailure) as caught:
+                    provider.request(MODEL, MESSAGES, [], planning=planning)
+                self.assertEqual(isinstance(caught.exception, PlanningOutputLimit), recoverable)
+        anthropic = {'content': [{'type': 'text', 'text': 'partial'}], 'stop_reason': 'max_tokens'}
+        with patch.object(provider.urllib.request.OpenerDirector, 'open', return_value=Response(anthropic)):
+            with self.assertRaises(PlanningOutputLimit):
+                provider.request({**MODEL, 'kind': 'anthropic'}, MESSAGES, [], planning=True)
+        # EOF without the terminal event has no reliable token-limit proof.
+        raw = event({'choices': [{'delta': {'content': 'partial'}, 'finish_reason': 'length'}],
+                     'usage': {'prompt_tokens': 3, 'completion_tokens': 2}}).encode()
+        from app.services import harness2_bridge
+        usage = []
+        with patch.object(provider.urllib.request.OpenerDirector, 'open',
+                          return_value=Response(raw, 'text/event-stream')) as transport:
+            budget = RefinementBudget()
+            with self.assertRaises(StructuredFailure) as caught:
+                budget.run(MODEL, MESSAGES, harness2_bridge.complete, usage.append)
+            self.assertNotIsInstance(caught.exception, PlanningOutputLimit)
+            self.assertEqual(caught.exception.code, 'response_truncated')
+            self.assertEqual(transport.call_count, 1)
+            self.assertEqual(budget.retries, 0)
+            self.assertEqual(usage, [{'input_tokens': 3, 'output_tokens': 2}])
+
     def test_broken_stream_keeps_reported_usage_but_never_completes(self):
         raw = event({'choices': [{'delta': {'content': 'partial'}, 'finish_reason': None}],
                      'usage': {'prompt_tokens': 3, 'completion_tokens': 2}})

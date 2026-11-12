@@ -30,7 +30,7 @@ class Harness2TransportTests(unittest.TestCase):
         from app.services.harness2_budget import RefinementBudget
 
         payload = {"choices": [{"message": {"content": "partial"}, "finish_reason": "length"}],
-                   "usage": {"prompt_tokens": 12000, "completion_tokens": 1}}
+                   "usage": {"prompt_tokens": 128000, "completion_tokens": 1}}
         budget = RefinementBudget()
         observed = []
         with patch.object(provider.urllib.request.OpenerDirector, "open",
@@ -39,8 +39,8 @@ class Harness2TransportTests(unittest.TestCase):
                 budget.run({"base": "https://fixture.invalid/v1", "key": "private-key", "model": "fixture"},
                            [{"role": "user", "content": "Task"}], bridge.complete, observed.append)
         self.assertEqual(caught.exception.code, "response_truncated")
-        self.assertEqual(budget.reported_tokens, 12001)
-        self.assertEqual(observed, [{"input_tokens": 12000, "output_tokens": 1}])
+        self.assertEqual(budget.reported_tokens, 128001)
+        self.assertEqual(observed, [{"input_tokens": 128000, "output_tokens": 1}])
 
     def test_real_refinement_boundary_preserves_safe_transport_category_and_stage(self):
         failures = [
@@ -88,8 +88,8 @@ class Harness2TransportTests(unittest.TestCase):
                     result = bridge.main(["--cwd", str(root), "--refine"])
                 self.assertEqual(result, 2)
                 execute.assert_not_called()
-                self.assertEqual(stages, ["base1", "inv1.a1"],
-                                 "No later model call starts after the failed proposal")
+                self.assertEqual(stages, ["base1", "inv1.a1"] + (["inv1.a1"] if code == "response_truncated" else []),
+                                 "Only one token-limit recovery is allowed; no later phase starts after failure")
                 errors = [json.loads(line)["error"] for line in output.getvalue().splitlines()
                           if "error" in json.loads(line)]
                 self.assertEqual(errors[-1].get("code"), code)

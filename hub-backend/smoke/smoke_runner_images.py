@@ -20,6 +20,8 @@ import zlib
 
 
 def fake_agent():
+    from tests.opencode_peer_outcome import NativeOutcome
+    native_outcome = NativeOutcome()
     for line in sys.stdin:
         message = json.loads(line)
         method = message.get("method")
@@ -29,6 +31,7 @@ def fake_agent():
         elif method in ("session/new", "session/load"):
             result = {"sessionId": "fixture-image-session"}
         elif method == "session/prompt":
+            native_outcome.begin("fixture-image-session")
             content = message["params"]["prompt"]
             report = {"types": [row["type"] for row in content],
                       "pixels": [row["data"] for row in content if row["type"] == "image"],
@@ -38,6 +41,7 @@ def fake_agent():
                 "sessionId": "fixture-image-session", "update": {"sessionUpdate": "agent_message_chunk",
                 "content": {"type": "text", "text": json.dumps(report)}}}}), flush=True)
             result = {"stopReason": "end_turn"}
+            native_outcome.end("fixture-image-session")
         else:
             result = {}
         if "id" in message:
