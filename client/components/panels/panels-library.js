@@ -140,9 +140,8 @@
       '<div class="library-menu library-filter-menu" data-library-menu="filter" hidden><div class="library-menu-label">文件类型</div>' + [['all', '全部类型'], ...FILE_TYPES].map(([kind, label]) => '<button data-library-filter-kind="' + kind + '">' + esc(label) + '</button>').join('') + '</div></div>' +
       '<div class="library-view-toggle" role="group" aria-label="资料视图"><button class="library-icon-button" data-library-view="grid" aria-label="网格视图">' + icon('grid') + '</button><button class="library-icon-button" data-library-view="list" aria-label="列表视图">' + icon('list') + '</button></div>' +
       '<label class="library-search">' + icon('search') + '<input type="search" data-library-search placeholder="搜索资料库" aria-label="搜索资料库" autocomplete="off"></label>' +
-      '<div class="library-menu-wrap library-create-wrap"><button class="library-create" data-library-menu-toggle="create" aria-expanded="false">新建 ' + icon('chevron') + '</button>' + createMenuMarkup('create') + '</div>' +
-      '<div class="library-menu-wrap"><button class="library-icon-button" data-library-menu-toggle="options" aria-label="资料库设置" aria-expanded="false">' + icon('settings') + '</button><div class="library-menu library-options-menu" data-library-menu="options" hidden>' +
-      '<div class="library-menu-label">管理</div><button data-library-trash>' + icon('trash') + '<span>回收站</span></button></div></div></div></header>' +
+      '<button type="button" class="library-trash-button" data-library-trash>' + icon('trash') + '<span data-library-trash-label></span></button>' +
+      '<div class="library-menu-wrap library-create-wrap"><button class="library-create" data-library-menu-toggle="create" aria-expanded="false">新建 ' + icon('chevron') + '</button>' + createMenuMarkup('create') + '</div></div></header>' +
       '<nav class="library-tabs" role="tablist" aria-label="资料分类">' + TABS.map(([key, label]) => '<button role="tab" data-library-scope="' + key + '">' + label + '</button>').join('') + '</nav>' +
       '<div class="library-trash-nav" hidden><button data-library-root>' + icon('back') + '返回资料库</button><button data-library-empty-trash class="library-danger">清空回收站</button></div>' +
       '<div class="library-breadcrumb" data-library-breadcrumb hidden></div><div class="library-list-head" data-library-list-head hidden><label class="library-row-select library-list-select"><input type="checkbox" data-library-select-all aria-label="选择全部资料"></label><span>名称</span><span class="library-source-heading">&#26469;&#28304;</span><span data-library-date-heading>修改日期</span><span>大小</span><span></span></div>' +
@@ -157,7 +156,7 @@
       '<button type="button" data-library-batch-share>' + esc(tx('批量分享')) + '</button>' +
       '<button type="button" class="library-danger" data-library-batch-delete>' + esc(tx('批量删除')) + '</button>' +
       '<button type="button" data-library-batch-clear>' + esc(tx('取消选择')) + '</button>';
-    root.querySelector('[data-library-list-head]').after(batchToolbar);
+    root.querySelector('[data-library-list-head]').before(batchToolbar);
     uploadInput = root.querySelector('[data-library-upload]');
     root.addEventListener('click', onClick);
     root.addEventListener('change', onChange);
@@ -918,6 +917,11 @@
     // Keep the toolbar create entry available inside folders. Only the empty
     // state's center CTA is suppressed for folder views.
     root.querySelector('.library-create-wrap').hidden = trash;
+    const trashButton = root.querySelector('[data-library-trash]');
+    trashButton.hidden = trash;
+    trashButton.title = tx('回收站');
+    trashButton.setAttribute('aria-label', tx('回收站'));
+    trashButton.querySelector('[data-library-trash-label]').textContent = tx('回收站');
     updateCreateAvailability();
     root.querySelector('[data-library-empty-trash]').disabled = state.trashCount < 1 || state.busy;
     root.querySelector('[data-library-date-heading]').textContent = trash ? '删除日期' : '修改日期';

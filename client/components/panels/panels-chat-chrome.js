@@ -87,7 +87,7 @@
 
   function mountSummary() {
     const panel = root?.querySelector('[data-chat-summary-pop]');
-    // Escape the scrolling chat column without reserving any layout width.
+    // Keep the summary outside the scrollport; wide columns reserve its space in CSS.
     if (panel && panel.parentElement !== root) root.append(panel);
   }
 

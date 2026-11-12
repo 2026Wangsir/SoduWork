@@ -30,7 +30,8 @@ def runner_environment(task: str, ref: str, cli: str, work_root: str = "") -> di
         # Electron-as-Node flag and Codex home). ACP model injection requires
         # managed credentials, so leave its shell/login environment untouched.
         native = prof if prof and not prof.get("acp_key") else {}
-        return local_base._env_for(native, {"local_workspace_root": work_root}, runtime_ref=ref)
+        return local_base._env_for(native, {"local_workspace_root": work_root},
+                                   runtime_ref=ref, require_model=False)
 
     if prof is None:
         raise ValueError("原执行会话的底座不可用")

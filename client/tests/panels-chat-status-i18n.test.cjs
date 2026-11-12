@@ -99,6 +99,58 @@ test('system notices localize capability failures and envelopes without rewritin
   assert.equal(status.notice(denied), denied);
 });
 
+test('quota admission notices translate the complete Hub reason and follow locale changes', () => {
+  const status = require('../components/panels/panels-chat-status');
+  const reasons = [
+    '试用已结束，联系管理员分配套餐后即可继续',
+    '当前模型的额度已用完，可以选择其他可用模型或联系管理员调整额度',
+    '当前套餐未包含此模型，请选择套餐内的模型或联系管理员',
+    '当前 AI 额度已用完，联系管理员调整后即可继续',
+  ];
+  for (const locale of ['en-US', 'zh-CN', 'en-US']) {
+    loadI18n(locale);
+    for (const reason of reasons) {
+      if (locale === 'zh-CN') assert.equal(status.notice(reason), reason);
+      else {
+        assert.doesNotMatch(status.notice(reason), /[\u4e00-\u9fff]/);
+        assert.doesNotMatch(status.notice('这一轮没发出去（' + reason + '）'), /[\u4e00-\u9fff]/);
+      }
+    }
+    assert.equal(status.notice('客户原话：试用已结束，请保留此消息'), '客户原话：试用已结束，请保留此消息');
+  }
+});
+
+test('model interruption notices translate their system envelope and safe diagnostics without translating provider text', () => {
+  const events = require('../main/pi-session/event-stream');
+  const status = require('../components/panels/panels-chat-status');
+  const denied = events.statusText({ settled: true, lastStopReason: 'error', lastAssistantError: 'HTTP 403' });
+  const transient = events.statusText({ settled: true, lastStopReason: 'error', lastAssistantError: 'HTTP 503', modelRetry: { attempt: 2 } });
+  const providerText = '客户原话：保存 $&';
+  const unknown = events.statusText({ settled: true, lastStopReason: 'error', lastAssistantError: providerText });
+  const i18n = loadI18n('en-US');
+  const refusal = status.notice(denied), retry = status.notice(transient);
+  assert.ok(refusal.includes(i18n.translateText('model.detail.模型服务拒绝了当前凭据或模型权限')));
+  assert.match(refusal, /HTTP 403/);
+  assert.match(retry, /HTTP 503/);
+  assert.match(retry, /Automatically retried 2 times/);
+  assert.ok(status.notice(unknown).includes(providerText), 'preserves unknown provider text');
+  assert.equal(status.notice('客户原话：保存 $&'), providerText);
+  for (const raw of ['HTTP 400', 'HTTP 401', 'HTTP 404', 'HTTP 429',
+    JSON.stringify({ error: { code: '1113', message: 'billing_required' } }),
+    JSON.stringify({ error: { code: 'insufficient_balance' } }),
+    'HTTP 400 context_length_exceeded', 'HTTP 400 image input is not supported',
+    JSON.stringify({ detail: { code: 'TOKEN_QUOTA_EXCEEDED' } })]) {
+    const notice = events.statusText({ settled: true, lastStopReason: 'error', lastAssistantError: raw });
+    assert.doesNotMatch(status.notice(notice), /[\u4e00-\u9fff]/, raw);
+  }
+  const empty = events.statusText({ settled: true, lastStopReason: 'error', lastAssistantError: '' });
+  assert.doesNotMatch(status.notice(empty), /[\u4e00-\u9fff]/);
+  assert.doesNotMatch(status.notice(denied), /[\u4e00-\u9fff]/);
+  loadI18n('zh-CN');
+  assert.equal(status.notice(denied), denied);
+  assert.equal(status.notice(transient), transient);
+});
+
 const EXPECT = {
   'ja-JP': { pending: 'ご要望を理解しています…', explain: '結果を分かりやすくまとめています…', busy: '処理中' },
   'ko-KR': { pending: '요청을 이해하는 중…', explain: '결과를 명확히 정리하는 중…', busy: '처리 중' },

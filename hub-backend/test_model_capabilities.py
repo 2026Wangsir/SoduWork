@@ -314,9 +314,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(definition["limit"], {"context": 128000, "output": 32768})
         self.assertEqual(definition["modalities"]["input"], ["text", "image"])
         with tempfile.TemporaryDirectory(prefix="soduwork-pi-config-") as folder:
-            with patch.object(local_base.os.path, "expanduser", return_value=folder):
-                local_base._write_pi_models(llm["base"], llm["model"], context_window=128000, llm=llm)
-            content = (Path(folder) / ".pi/agent/models.json").read_text(encoding="utf-8")
+            with patch.object(local_base, "_data_root", return_value=folder):
+                env = local_base._env_for(local_base._PROFILES["pi"], {"llm": llm}, "model-capabilities")
+            content = (Path(env["PI_CODING_AGENT_DIR"]) / "models.json").read_text(encoding="utf-8")
             definition = json.loads(content)["providers"]["company"]["models"][0]
             self.assertEqual(definition["maxTokens"], 32768)
             self.assertEqual(definition["input"], ["text", "image"])

@@ -17,30 +17,34 @@ function setup(t) {
     { type: 'message', id: 'msg-1', message: { role: 'user', content: 'saved by Alice' } },
     { type: 'message', id: 'msg-2', message: { role: 'assistant', content: [{ type: 'text', text: 'local answer' }] } },
   ].map(row => JSON.stringify(row)).join('\n'));
-  const row = { id: 'one', title: 'History', path: file, adapterId: 'pi', count: 2, at: 1 };
+  const row = { id: 'one', title: 'History', path: file, adapterId: 'pi', count: 2, at: 1,
+    creator: { account: 'one', hub: identity().hub } };
   const store = createStore(path.join(root, 'replicas.sqlite'));
   const flags = new Map();
-  let live = null;
+  let live = null, current = identity();
   const session = { archivedConversation: async idApp => row,
     historyEntry: async () => fs.existsSync(file) ? { ok: true, entry: row } : { ok: false, notFound: true },
     findBySessionId: () => live, setArchived: (_app, id, value) => flags.set(id, value),
     forgetRunner: async () => ({ ok: false, notFound: true }) };
-  let currentIdentity = identity();
-  const identityOf = () => currentIdentity;
+  const identityOf = () => current;
   const history = create({ app, session, store, identityOf });
   t.after(async () => { await history.close(); fs.rmSync(root, { recursive: true, force: true }); });
   return { root, file, app, row, session, store, history, flags, identityOf,
-    set identity(value) { currentIdentity = value; }, set live(value) { live = value; } };
+    set identity(value) { current = value; }, set live(value) { live = value; },
+    switch(value) { current = value; } };
 }
 test('shared local reader opens native text without starting any account runtime', async t => {
   const f = setup(t);
-  const rows = await f.history.projectRows([{ ...f.row, workOwner: 'another-account' }]);
+  const rows = await f.history.projectRows([f.row]);
   assert.equal(rows.length, 1);
   const view = await f.history.open('one');
   assert.equal(view.localReplica, true);
   assert.deepEqual(view.snapshot().messages.map(row => row.text), ['saved by Alice', 'local answer']);
   assert.equal(view.snapshot().messages[1].blocks[0].text, 'local answer');
   assert.equal((await view.send('should not execute')).accepted, false);
+  f.switch(identity('two'));
+  assert.equal((await f.history.projectRows([f.row])).length, 0);
+  assert.equal(await f.history.open('one'), null);
 });
 test('logout during a protected native transcript page cancels the read before returning local content', async t => {
   const f = setup(t);
@@ -53,7 +57,7 @@ test('logout during a protected native transcript page cancels the read before r
   f.session.historyEntry = async () => { entered(); return new Promise(resolve => { release = () => resolve({ ok: true, entry: f.row }); }); };
   const pending = f.history.read(f.row.id);
   await waiting; f.identity = null; release();
-  await assert.rejects(pending, /账号已切换/);
+  await assert.rejects(pending, /账号(?:或服务)?已切换/);
 });
 
 test('cached pages reject same-account Hub or device changes while allowing same-connection renewal', async t => {
@@ -71,7 +75,7 @@ test('cached pages reject same-account Hub or device changes while allowing same
     const pending = f.history.read(copy.id);
     await waiting; f.identity = next; release();
     if (allowed) assert.equal((await pending).items[0].text, 'Private synthetic content');
-    else await assert.rejects(pending, /账号已切换/);
+    else await assert.rejects(pending, /账号(?:或服务)?已切换/);
   }
 });
 test('protected local actions reject account changes during resolution before confirmation or revision replies', async t => {
@@ -93,9 +97,10 @@ test('protected local actions reject account changes during resolution before co
     };
     const pending = action(operation, copy.id, options);
     await waiting; f.identity = identity('two'); release();
-    await assert.rejects(pending, /账号已切换/);
-    assert.equal((await resolve(copy.id)).deleted, false);
-    assert.equal((await resolve(copy.id)).archived, true);
+    await assert.rejects(pending, /账号(?:或服务)?已切换/);
+    assert.equal(await resolve(copy.id), null);
+    assert.equal((await f.store.get(copy.id)).deleted, false);
+    assert.equal((await f.store.get(copy.id)).archived, true);
   }
 });
 test('expired credentials cannot read a protected cached copy even with a remembered local owner', async t => {
@@ -107,7 +112,7 @@ test('expired credentials cannot read a protected cached copy even with a rememb
   t.after(() => { auth.localOwner = prior; });
   f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
   assert.deepEqual((await f.history.list()).items, []);
-  await assert.rejects(f.history.read(copy.id), /失效|登录/);
+  await assert.rejects(f.history.read(copy.id), /不存在/);
 });
 test('multi-page native indexing removes protected rows collected before an account change', async t => {
   const f = setup(t), first = identity();
@@ -120,7 +125,7 @@ test('multi-page native indexing removes protected rows collected before an acco
     f.identity = identity('two');
     return { items: [], next: null };
   };
-  assert.deepEqual(await f.history.indexedRows(false, 2), []);
+  await assert.rejects(f.history.indexedRows(false, 2), /账号(?:或服务)?已切换/);
 });
 test('deleted protected receipts remain private across account, Hub and signout changes', async t => {
   const f = setup(t), owner = identity();
@@ -132,7 +137,7 @@ test('deleted protected receipts remain private across account, Hub and signout 
   for (const other of [identity('two'), { ...owner, hub: 'https://another.invalid' }, null]) {
     f.identity = other;
     assert.deepEqual((await f.history.list()).items, []);
-    await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /账号|登录/);
+    await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /不存在/);
   }
   f.identity = owner;
   const receipt = await remote({ action: 'read', id: copy.id }, async () => {});
@@ -142,12 +147,12 @@ test('deleted protected receipts remain private across account, Hub and signout 
   await f.history.projectRows([f.row]);
   await f.history.lifecycle(f.row.id, 'delete');
   f.identity = identity('two');
-  assert.equal((await remote({ action: 'read', id: f.row.id }, async () => {})).conversation.deleted, true,
-    'ordinary device-local deletion receipts keep their existing sharing boundary');
+  await assert.rejects(remote({ action: 'read', id: f.row.id }, async () => {}), /不存在/,
+    'ordinary deletion receipts cannot disclose the previous account history');
   const resolve = f.history.resolve.bind(f.history);
   f.identity = owner;
   f.history.resolve = async id => { const row = await resolve(id); f.identity = identity('two'); return row; };
-  await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /账号已切换/);
+  await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /账号(?:或服务)?已切换/);
 });
 for (const operation of ['archive', 'restore', 'delete']) {
   test(`a late protected ${operation} commit cannot publish or return its payload to the next account`, async t => {
@@ -165,25 +170,27 @@ for (const operation of ['archive', 'restore', 'delete']) {
     const action = require('../main/pi-session/local-history-actions.cjs').create({ ...f,
       BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: {
         send: (_event, payload) => deliveries.push({ identity: f.identityOf(), payload }) } }] } });
-    await assert.rejects(action(operation, copy.id, { confirmed: true }), /账号已切换/);
+    await assert.rejects(action(operation, copy.id, { confirmed: true }), /账号(?:或服务)?已切换/);
     assert.ok(deliveries.every(item => item.identity.session === owner.session), 'only the original account receives authorized notifications');
-    const retained = await f.history.resolve(copy.id);
+    assert.equal(await f.history.resolve(copy.id), null);
+    const retained = await f.store.get(copy.id);
     assert.equal(retained.deleted, operation === 'delete');
     assert.equal(retained.archived, operation === 'archive');
     assert.deepEqual((await f.history.list()).items, []);
   });
 }
-test('ordinary local lifecycle completion survives signout without granting execution', async t => {
+test('ordinary local lifecycle cannot publish completion after signout', async t => {
   const f = setup(t), deliveries = [], mutate = f.store.lifecycle.bind(f.store);
   f.store.lifecycle = async (...args) => { const result = await mutate(...args); f.identity = null; return result; };
   const action = require('../main/pi-session/local-history-actions.cjs').create({ ...f,
     BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: (_event, payload) => deliveries.push(payload) } }] } });
-  const result = await action('archive', f.row.id);
-  assert.equal(result.ok, true);
-  assert.equal(result.conversation.archived, true);
-  assert.equal(deliveries[0].presence.id, f.row.id);
+  await assert.rejects(action('archive', f.row.id), /账号(?:或服务)?已切换/);
+  assert.equal(deliveries.length, 0);
+  const retained = await f.store.get(f.row.id);
+  assert.equal(retained.archived, true, 'an accepted local mutation is retained without publishing to a new actor');
+  assert.equal(await f.history.resolve(f.row.id), null);
   const access = require('../main/conversation/history-access');
-  assert.throws(() => access.assertOwner(f.app, f.row.id, access.actor(f.app, null), result.conversation), /登录/);
+  assert.throws(() => access.assertOwner(f.app, f.row.id, access.actor(f.app, null), retained), /登录/);
 });
 test('legacy outbox recovery preserves sparse positions with bounded batches before metadata-only sync', async t => {
   const f = setup(t), original = f.store.cache.bind(f.store); let writes = 0;
@@ -235,7 +242,7 @@ test('active local execution remains protected from archive or delete', async t 
   await assert.rejects(action('delete', 'one', { confirmed: true }), /还在执行/);
   assert.equal((await f.history.resolve('one')).deleted, false);
 });
-test('downloaded cloud copies stay account-owned and late refresh cannot revive an owner deletion', async t => {
+test('downloaded cloud copy remains with its account and late refresh cannot revive its deletion', async t => {
   const f = setup(t);
   const handle = { snapshot: () => ({ messages: [{ role: 'assistant', text: 'saved cloud answer' }] }),
     historyRow: () => ({ id: 'remote-one', cloud: true, remoteProjection: true, adapterId: 'codex-harness', title: 'Cloud result' }) };
@@ -244,11 +251,11 @@ test('downloaded cloud copies stay account-owned and late refresh cannot revive 
   assert.ok(copy.id.startsWith('copy-'));
   assert.equal(copy.cloud, false);
   assert.equal((await f.history.read(copy.id)).items[0].text, 'saved cloud answer');
-  f.identity = identity('two');
-  assert.deepEqual((await f.history.list()).items, []);
-  await assert.rejects(f.history.read(copy.id), /账号|归属/);
-  await assert.rejects(f.history.lifecycle(copy.id, 'delete', identity('two')), /账号|归属/);
-  f.identity = identity();
+  await assert.rejects(f.history.lifecycle(copy.id, 'delete', identity('two')), /账号/);
+  f.switch(identity('two'));
+  assert.equal((await f.history.list()).items.length, 0);
+  await assert.rejects(f.history.read(copy.id), /不存在/);
+  f.switch(identity());
   await f.history.lifecycle(copy.id, 'delete', identity());
   await f.history.capture(handle, identity());
   assert.equal((await f.history.list()).items.length, 0);
@@ -286,7 +293,10 @@ test('archived task copies keep executable origins out of cold recent history un
   assert.ok((await bridge.archivedHistory()).chats.some(row => row.id === copy.id));
   await f.history.lifecycle(copy.id, 'restore', who);
   const restored = await bridge.history();
-  assert.equal(restored.chats.filter(row => row.taskId === 'task-one').length, 1);
+  const restoredTask = restored.chats.filter(row => row.taskId === 'task-one');
+  assert.equal(restoredTask.length, 2, 'restoring the local transcript also restores access to its independent cloud original');
+  assert.ok(restoredTask.some(row => row.id === copy.id && row.cached));
+  assert.ok(restoredTask.some(row => row.cloud && row.id !== copy.id));
   assert.ok(restored.lifecycle.some(row => row.id === origin.id && !row.archived && row.lifecycleRevision > 0));
   assert.equal((await f.history.read(copy.id)).items[0].text, 'retained');
   await f.history.lifecycle(copy.id, 'delete', who);
@@ -350,4 +360,42 @@ test('large cloud snapshots are cached in bounded batches without losing their t
   messages.splice(2);
   await f.history.capture(handle, identity());
   assert.equal((await f.history.read(copy.id)).items.length, 2);
+});
+
+test('verified same-account native history remains readable and manageable offline without execution authority', async t => {
+  const f = setup(t), first = identity(), auth = require('../main/device-auth'), previous = auth.localOwner;
+  await f.history.projectRows([f.row]);
+  auth.localOwner = () => require('../main/platform-connections/runtime.cjs').scope(first);
+  t.after(() => { auth.localOwner = previous; });
+  f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
+  const view = await f.history.open(f.row.id);
+  assert.equal(view.snapshot().messages[0].text, 'saved by Alice');
+  assert.equal((await view.send('must not execute')).accepted, false);
+  assert.equal((await f.history.lifecycle(f.row.id, 'archive')).conversation.archived, true);
+  assert.equal((await f.history.lifecycle(f.row.id, 'restore')).conversation.archived, false);
+  f.identity = { ...f.identityOf(), hub: 'https://another.invalid' };
+  assert.equal(await f.history.open(f.row.id), null);
+  assert.equal(await f.history.lifecycle(f.row.id, 'delete'), null);
+  assert.equal((await f.store.get(f.row.id)).deleted, false);
+});
+
+test('catalog scope retains persisted protection without disclosing protected IDs after credential expiry', async t => {
+  const f = setup(t), first = identity(), auth = require('../main/device-auth'), previous = auth.localOwner;
+  const scope = require('../main/platform-connections/runtime.cjs').scope(first);
+  const signals = [{ historyProtection: 'account' }, { acceptanceReview: true }, { requirementContext: { private: 'context' } },
+    { taskId: 'private-task' }, { taskRef: 'private-ref' }, { activeTaskId: 'private-active' },
+    { taskIds: ['private-task'] }, { taskBindings: [{ taskId: 'private-task' }] }];
+  await f.history.register(signals.map((signal, index) => ({ id: 'protected-catalog-' + index,
+    creator: f.row.creator, workOwner: scope, title: 'Private protected title', ...signal })));
+  const authorized = await f.history.page({ limit: 20 });
+  assert.equal(authorized.chats.length, signals.length);
+  assert.equal(authorized.localCatalog.items.length, signals.length);
+  assert.ok(!JSON.stringify(authorized.localCatalog).includes('private-'));
+  auth.localOwner = () => scope;
+  t.after(() => { auth.localOwner = previous; });
+  f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
+  const denied = await f.history.page({ limit: 20 });
+  assert.deepEqual(denied.chats, []);
+  assert.deepEqual(denied.localCatalog.items, [], 'Catalog IDs and aliases obey the full row protection boundary');
+  assert.equal((await f.store.list({ limit: 20 })).items.length, signals.length, 'Filtering does not delete protected records');
 });

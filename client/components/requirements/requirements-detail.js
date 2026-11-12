@@ -509,6 +509,7 @@
       root?.querySelector('[data-rq-extension-list]')?.replaceChildren();
     }
     const evidenceOpen = root?.querySelector('[data-rq-execution]')?.open === true;
+    const instructionsOpen = root?.querySelector('[data-rq-dispatch-instructions]')?.open === true;
     const previousTrace = root?.querySelector('[data-rq-trace]');
     const preserveTrace = evidenceOpen && !editing && task.canViewExecution !== false;
     if (previousTrace && !preserveTrace) {
@@ -615,6 +616,9 @@
       (pendingUploads.length ? pendingUploads.length + ' 个材料未上传，可直接重试。' : '') + '</p>' +
       '<button type="button" data-rq-retry-files' + (pendingUploads.length ? '' : ' hidden') + '>重试上传</button></section>');
     bindApprovalCard(approvalItem, ctx);
+    const instructionsRequest = seq, instructionsTaskId = task.id;
+    global.RequirementDispatchInstructions?.mount(root, task,
+      () => instructionsRequest === seq && task?.id === instructionsTaskId && task.canViewExecution !== false, instructionsOpen);
     const footer = root.querySelector('.rq-detail-footer');
     if (footer) { footer.innerHTML = actions; footer.hidden = !actions; }
     const assignee = editing && root.querySelector('[name="assigneeUserId"]');
@@ -759,7 +763,7 @@
       (artifact ? '<button type="button" data-rq-artifact>查看交付链接 <span aria-hidden="true">↗</span></button>' : '') +
       '<button type="button" data-rq-export-summary' + (summaryExport?.request === seq ? ' disabled aria-busy="true"' : '') + '>导出验收摘要</button>' +
       '<span data-rq-export-status role="status" aria-live="polite">' + (summaryExport?.request === seq ? '正在导出验收摘要…' : '') + '</span></div>' +
-      '<div class="rq-delivery-sections"><details class="rq-evidence" data-rq-execution><summary><span><b>执行记录与交付证据</b><small>查看执行过程和可验证成果</small></span><i aria-hidden="true"></i></summary><div data-rq-trace></div></details>' +
+      '<div class="rq-delivery-sections">' + (global.RequirementDispatchInstructions?.shell() || '') + '<details class="rq-evidence" data-rq-execution><summary><span><b>执行记录与交付证据</b><small>查看执行过程和可验证成果</small></span><i aria-hidden="true"></i></summary><div data-rq-trace></div></details>' +
       (progress.length ? '<details class="rq-evidence rq-history-panel"><summary><span><b>历史进展</b><small>' + progress.length + ' 条记录</small></span><i aria-hidden="true"></i></summary><ol class="rq-history">' +
         progress.map(row => '<li><div data-user-content>' + esc(row.text || row.content || '') + '</div><time>' +
           esc(row.at ? new Date(row.at).toLocaleString() : '') + '</time></li>').join('') + '</ol></details>' : '') + '</div></section>';

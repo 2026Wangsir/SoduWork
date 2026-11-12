@@ -55,8 +55,8 @@ if (typeof electron === 'string') {
   }
   async function enter(selector, text) {
     await click(selector);
-    for (const type of ['keyDown', 'keyUp'])
-      win.webContents.sendInputEvent({ type, keyCode: 'A', modifiers: ['control'] });
+    // Use the native edit action; Control+A is not Select All on macOS.
+    win.webContents.selectAll();
     await until(`(() => { const input = document.querySelector(${JSON.stringify(selector)});
       return input === document.activeElement && input.selectionStart === 0 && input.selectionEnd === input.value.length; })()`);
     if (text) await win.webContents.insertText(text);
@@ -137,9 +137,9 @@ if (typeof electron === 'string') {
           assert.equal(await js('document.querySelectorAll(".is-hidden-item").length'), 0);
           assert.equal(await js('document.querySelector("[data-library-content]").textContent.includes("已隐藏")'), false);
         }
-        await click('[data-library-menu-toggle=options]');
         assert.equal(await js('document.querySelector("[data-library-hidden-files]")'), null);
-        assert.equal(await js('document.querySelector("[data-library-menu=options]").textContent.trim()'), '管理回收站');
+        assert.equal(await js('document.querySelector("[data-library-menu=options]")'), null);
+        assert.equal(await js('document.querySelector("[data-library-trash]").textContent.trim()'), '回收站');
         await snapshot(`saved-files-${storage}-${preference}`);
         await click('[data-library-trash]'); await loaded();
         assert.deepEqual(await ids(), ['saved-trash']);

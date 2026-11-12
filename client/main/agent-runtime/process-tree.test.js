@@ -238,12 +238,10 @@ test('cleanup retry still rejects live processes and unavailable snapshots', asy
 
 test('real isolated Node descendants are reclaimed after their parent crashes', { timeout: 45000 }, async t => {
   if (process.platform === 'win32') {
-    // libuv assigns every spawned child to a kill-on-close job object: when a
-    // killed parent's handles close, the OS reaps the whole tree before an
-    // orphan can exist (runner probe: aliveAfterRootKill=false). Reclaim
-    // semantics stay covered by the injected-snapshot tests above on every
-    // platform; the end-to-end orphan scenario only exists on POSIX.
-    return t.skip('Windows child processes cannot outlive a killed libuv-spawned parent');
+    // This Node-only fixture is reaped by libuv on Windows. Native children
+    // such as Git Bash can escape that job; windows-process-job.test.cjs
+    // covers them with a job that retains every descendant.
+    return t.skip('POSIX reparenting fixture; native Windows job tested separately');
   }
   const worker = 'setInterval(() => {}, 1000)';
   const source = 'const {spawn}=require("node:child_process");' +

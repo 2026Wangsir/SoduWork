@@ -215,6 +215,10 @@
         if (original) opts = {...opts, chatId: original, preferredConversation: true};
       }
       const selection = _taskExecutionConfig(task, opts), config = selection.config;
+      if (['task-dispatch', 'requirement-session'].includes(opts.source) && Object.hasOwn(opts, 'brief')) {
+        config.dispatchInstructions = {note: String(opts.brief || ''),
+          submissionMode: opts.submissionMode || 'default'};
+      }
       const ec = config.executionContext, controlled = selection.controlled, kind = selection.adapterId;
       const info = ctx.sessionInfo();
       const hasExecutionReceipt = Boolean(task.workRouting?.conversationTurn?.conversationId);

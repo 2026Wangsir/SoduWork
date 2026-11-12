@@ -1,6 +1,28 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+test('application navigation waits for startup history then selects and acknowledges the exact original session', async () => {
+  const handlers = {}, listeners = {}, calls = [];
+  let finishHistory, selected = 'restored-last';
+  const historyReady = new Promise(resolve => { finishHistory = resolve; });
+  const workPreview = { composerHello() {}, onComposerSession(fn) { handlers.navigate = fn; }, onComposerPut() {},
+    onComposerSubmit() {}, onComposerMode() {}, composerNavigationResult: async result => calls.push(['receipt', result]) };
+  const native = { sessionInfo: () => ({ sessionId: selected }), enter: async (_text, id) => { calls.push(['open', id]); selected = id; return true; } };
+  const window = { __deskPanel: 'chatbar', soduWorkAPI: { workPreview }, NativeChat: native,
+    SoduWorkAppConversations: { ready: () => historyReady }, addEventListener: (key, fn) => { listeners[key] = fn; } };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../components/panels/chatbar-embed.js'), 'utf8'), {
+    window, NativeChat: native, document: { readyState: 'loading', addEventListener() {} },
+    setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout, Promise,
+  });
+  const pending = handlers.navigate({ sessionId: 'original-app-session', navigationId: 'request-1' });
+  await Promise.resolve(); assert.deepEqual(calls, []);
+  listeners['soduwork-chatbar-ready'](); await Promise.resolve(); assert.deepEqual(calls, []);
+  finishHistory(); await pending;
+  assert.deepEqual(calls.map(row => row[0]), ['open', 'receipt']);
+  assert.equal(calls[0][1], 'original-app-session'); assert.equal(calls[1][1].ok, true);
+  await handlers.navigate({ sessionId: 'original-app-session', navigationId: 'request-2' });
+  assert.equal(calls.filter(row => row[0] === 'open').length, 1, 'already-selected live session does not reopen');
+});
 test('an early H5 submission waits for desk identity hydration and then sends once without consuming composer draft', async () => {
   const handlers = {}, listeners = {}, calls = [];
   const workPreview = { composerHello() {}, onComposerSession() {}, onComposerPut() {},

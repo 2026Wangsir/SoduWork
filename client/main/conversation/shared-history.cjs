@@ -8,10 +8,17 @@ function create({ app, session, identityOf = () => require('./requirement-contex
   path.join(app.getPath('userData'), 'conversation-replicas', 'history.sqlite')) }) {
   const observed = new Map();
   let closed = false, closing;
-  const localReader = require('../app-readonly-history.cjs').create({ app, session, localOnly: true,
-    access: { actor: () => access.actor(app, identityOf()),
-      // The outer reader fences protected pages; ordinary archives stay offline-readable.
-      assertCurrent() {}, assertOwner: access.assertReadable } });
+  const scoped = require('./history-scope.cjs').create({ app, store, identityOf });
+  const localReader = require('../app-readonly-history.cjs').create({ app,
+    session: new Proxy(session, { get: (target, key) => key === 'archivedConversation'
+      ? (_app, id) => store.get(id) : target[key] }), localOnly: true,
+    access: { actor: () => scoped.actor(), assertCurrent: (_app, actor) => scoped.guard(actor), assertOwner: access.assertReadable } });
+  function currentActor(captured) {
+    scoped.guard(captured);
+    const current = scoped.actor();
+    if (captured.readScope) access.assertCurrent(app, captured, current.identity);
+    return current;
+  }
   const isNative = row => row && !row.accountProjection && !row.remoteProjection && !row.cloud;
   async function register(rows) {
     const result = [];
@@ -32,10 +39,10 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     const registered = await register(native);
     const byId = new Map();
     for (const row of registered) for (const id of [row.id, ...row.historyAliasIds]) byId.set(id, row);
-    return access.visible(app, rows.map(row => byId.get(row.id) || row), identityOf())
-      .filter(row => !row.deleted && (row.archived === true) === archived);
+    const actor = scoped.actor();
+    return rows.map(row => byId.get(row.id) || row).filter(row => !row.deleted && (row.archived === true) === archived && scoped.readable(row, actor));
   }
-  async function resolve(id) {
+  async function resolveRaw(id) {
     let row = await store.get(id);
     if (row) return row;
     if (/^(?:acct-|cloud-execution:|task-execution:)/.test(id)) return null;
@@ -48,9 +55,15 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     if (!isNative(native)) return null;
     return (await register([native]))[0];
   }
+  async function resolve(id, captured = scoped.actor()) {
+    const row = await resolveRaw(id);
+    const current = currentActor(captured);
+    return row && scoped.readable(row, current) ? row : null;
+  }
   async function lifecycle(id, action, identity) {
-    const captured = access.actor(app, identity || identityOf());
-    const row = await resolve(id);
+    const captured = scoped.actor();
+    if (identity && access.readScope(identity) !== captured.readScope) throw Error('账号或服务已切换，请重新读取会话');
+    const row = await resolve(id, captured);
     if (!row) return null;
     if (!isLocalIdentity(row, id)) return null;
     access.assertLocalCurrent(app, captured, row, identityOf());
@@ -58,8 +71,43 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     for (const alias of [row.id, ...row.historyAliasIds]) {
       if (session.findBySessionId(alias)?.inFlight?.()) throw Error('这条会话还在执行，完成或停止后再操作');
     }
-    const who = captured.identity;
-    return store.lifecycle(row.id, action, { account: accountId(who), hub: who?.hub, device: who?.clientId });
+    scoped.guard(captured);
+    const result = await store.lifecycle(row.id, action, { account: accountId(captured.identity),
+      hub: captured.identity?.hub, device: captured.identity?.clientId });
+    scoped.guard(captured); return result;
+  }
+  async function accountDisplayLinks(items, identity) {
+    if (!identity?.clientId || !identity?.session || !accountId(identity)) return [];
+    const account = accountId(identity);
+    let hub;
+    try { hub = new URL(identity.hub).origin; } catch (_) { return []; }
+    const sources = new Map();
+    for (const item of items || []) {
+      if (!item?.id || item.deleted || item.sourceClientId !== identity.clientId || !item.sourceSessionId) continue;
+      const id = String(item.sourceSessionId);
+      if (!sources.has(id)) sources.set(id, []);
+      sources.get(id).push(String(item.id));
+    }
+    const ids = [...sources.keys()], links = [], captured = access.actor(app, identity);
+    for (let offset = 0; offset < ids.length; offset += 200) {
+      const rows = await store.nativeRows(ids.slice(offset, offset + 200));
+      for (const row of rows) {
+        if (!isNative(row) || row.cached || row.deleted) continue;
+        // A display join uses the same original Hub/account provenance as the
+        // archive read boundary, plus existing execution-owner conflict checks.
+        if (row.creator?.account !== account) continue;
+        try { if (new URL(row.creator.hub).origin !== hub) continue; }
+        catch (_) { continue; }
+        try { access.assertOwner(app, row.id, captured, row); }
+        catch (_) { continue; }
+        for (const alias of [row.id, ...(row.historyAliasIds || [])])
+          for (const accountId of sources.get(alias) || []) links.push([accountId, row.id]);
+      }
+      // This is metadata-only reconciliation, never a native SDK/archive scan.
+      // Yield between batches even when a large directory matches local history.
+      if (offset + 200 < ids.length) await new Promise(resolve => setImmediate(resolve));
+    }
+    return links;
   }
   async function remoteLifecycle(rows, identity = require('./requirement-context').cachedIdentity(app)) {
     const remote = rows.filter(row => row.cloud || row.remoteProjection || row.accountProjection);
@@ -100,16 +148,16 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     }
     return [...states.values()];
   }
-  async function read(id, options = {}) {
-    const captured = access.actor(app, identityOf());
-    const row = await resolve(id);
+  async function read(id, options = {}, captured = scoped.actor()) {
+    const row = await resolve(id, captured);
     if (!row || row.deleted) throw Error('这条会话已经不存在了');
     access.assertLocalCurrent(app, captured, row, identityOf());
-    access.assertReadable(app, row.id, captured, row);
+    access.assertReadable(app, row.id, currentActor(captured), row);
     const after = Number(options.after || 0);
     if (!Number.isSafeInteger(after) || after < 0) throw Error('Invalid local history cursor');
     if (row.cached) {
       const page = await store.messages(row.id, { after: after - 1, limit: options.limit || 100 });
+      if (!await resolve(row.id, captured)) throw Error('会话归属已变化，请重新打开');
       access.assertLocalCurrent(app, captured, row, identityOf());
       return { ...page, nextCursor: page.next == null ? null : page.next + 1, cursor: page.items.at(-1)?.position + 1 || after };
     }
@@ -122,6 +170,7 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     if (segment >= parts.length) throw Error('Invalid local history segment');
     const page = await localReader('conversations.read', { id: row.id, offset, after: offset,
       limit: options.limit || 100, segmentId: parts[segment] });
+    if (!await resolve(row.id, captured)) throw Error('会话归属已变化，请重新打开');
     access.assertLocalCurrent(app, captured, row, identityOf());
     const next = page.nextOffset ?? page.nextAfter;
     const cursor = segment * span + (page.cursor ?? offset + (page.items || []).length);
@@ -131,10 +180,18 @@ function create({ app, session, identityOf = () => require('./requirement-contex
       nextCursor: next != null ? segment * span + next : segment + 1 < parts.length ? (segment + 1) * span : null };
   }
   async function open(id) {
-    const row = await resolve(id);
+    const captured = scoped.actor(), row = await resolve(id, captured);
     if (!row || row.deleted) return null;
-    access.assertReadable(app, row.id, access.actor(app, identityOf()), row);
-    return require('./local-history-view.cjs').create({ row, read });
+    const view = await require('./local-history-view.cjs').create({ row,
+      read: (id, options) => read(id, options, captured) });
+    scoped.guard(captured);
+    for (const name of ['snapshot', 'uiSnapshot', 'historyRow']) {
+      const original = view[name];
+      view[name] = (...args) => { access.assertReadable(app, row.id, currentActor(captured), row); return original(...args); };
+    }
+    const load = view.loadHistory;
+    view.loadHistory = async (...args) => { scoped.guard(captured); await load(...args); scoped.guard(captured); };
+    return view;
   }
   async function preserveLegacyOutbox(job, identity) {
     const id = 'recovered-' + require('node:crypto').createHash('sha256').update(
@@ -229,6 +286,7 @@ function create({ app, session, identityOf = () => require('./requirement-contex
   }
   let refreshing, refreshedAt = 0;
   async function directory(after = 0, limit = 100) {
+    const captured = scoped.actor();
     // Coalesce simultaneous phone/sidebar scans. Native providers own their
     // indexes; directory responses contain metadata only and use keyset cursors.
     if (!refreshing && Date.now() - refreshedAt > 5000) refreshing = Promise.all([session.history(app, Number.MAX_SAFE_INTEGER),
@@ -237,23 +295,24 @@ function create({ app, session, identityOf = () => require('./requirement-contex
         refreshedAt = Date.now();
       }).finally(() => { refreshing = null; });
     await refreshing;
-    const page = await store.directory(after, limit), workspace = await store.workspace();
-    return { ...page, items: access.visible(app, page.items, identityOf()), workspace };
+    scoped.guard(captured);
+    return scoped.directory(after, limit, captured);
   }
-  return { resolve, read, open, register, projectRows, lifecycle, remoteLifecycle, capture, observe, store, directory, preserveLegacyOutbox,
-    async list(options) {
-      const page = await store.list(options);
-      return { ...page, items: access.visible(app, page.items, identityOf()) };
+  return { resolve, read, open, register, projectRows, lifecycle, remoteLifecycle, accountDisplayLinks, capture, observe, store, directory, preserveLegacyOutbox,
+    captureScope: () => scoped.actor(), guardScope: captured => scoped.guard(captured),
+    async indexedRow(id) {
+      const captured = scoped.actor(), row = await store.get(id);
+      scoped.guard(captured); return row && scoped.readable(row, captured) ? row : null;
     },
-    async page(options) {
-      const page = await store.page(options);
-      return { ...page, chats: await access.visibleAsync(app, page.chats, identityOf) };
-    },
+    list: options => scoped.list(options),
+    page: options => scoped.page(options),
+    lifecycleRows: () => scoped.lifecycleRows(),
     async indexedRows(archived, limit) {
+      const captured = scoped.actor();
       const items = []; let after;
       do {
-        const page = await store.list({ archived, after, limit: Math.min(200, Math.max(1, limit - items.length)) });
-        items.push(...access.visible(app, page.items, identityOf())); after = page.next;
+        const page = await scoped.list({ archived, after, limit: Math.min(200, Math.max(1, limit - items.length)) }, captured);
+        items.push(...page.items); after = page.next;
       } while (after && items.length < limit);
       return access.visible(app, items, identityOf());
     },

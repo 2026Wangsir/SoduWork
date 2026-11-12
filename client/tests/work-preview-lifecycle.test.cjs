@@ -4,7 +4,8 @@ const fs = require('node:fs'), vm = require('node:vm'), path = require('node:pat
 const source = fs.readFileSync(path.join(__dirname, '../main/work-preview.js'), 'utf8');
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-function fixture({ artifact, input, cleanup, location } = {}) {
+function fixture({ artifact, input, cleanup, location, app } = {}) {
+  let onViewMessage = () => {};
   const handlers = {}, views = [], states = [], immediates = [], windows = [], external = [], sender = new EventEmitter();
   sender.id = 11; sender.isDestroyed = () => !!sender.dead; sender.send = (...args) => states.push(args);
   const host = { focusOrder: [], isDestroyed: () => !!host.dead, getContentBounds: () => ({ width: 800, height: 600 }),
@@ -20,8 +21,9 @@ function fixture({ artifact, input, cleanup, location } = {}) {
         close: () => { wc.dead = true; this.webContents = undefined; wc.emit('destroyed'); },
         setWindowOpenHandler: fn => { wc.windowOpen = fn; },
         loadURL: url => { if (wc.dead) throw Error('Object has been destroyed'); wc.url = url; const d = deferred(); wc.loads.push(d); return d.promise; },
-        loadFile: async () => {},
+        loadFile: async file => { wc.file = file; }, send: (...args) => onViewMessage(wc, ...args),
         loads: [], executeJavaScriptInIsolatedWorld: () => wc.injection.promise });
+      wc.mainFrame = {};
       wc.injection = deferred();
     }
     setBackgroundColor() {}
@@ -54,15 +56,53 @@ function fixture({ artifact, input, cleanup, location } = {}) {
     require: name => name === './agent-runtime/pi-session-bridge' ? { get: () => session }
       : name === './conversation/artifact-runtime' ? { preview: () => artifact.promise, previewInput: () => input.promise, previewLocation: (ref, url) => location?.(ref, url) || '' }
       : requireModule(name) });
-  module.exports.install({ ipcMain: { handle: (name, fn) => { handlers[name] = fn; },
+  module.exports.install({ app, ipcMain: { handle: (name, fn) => { handlers[name] = fn; },
     on: (name, fn) => { handlers[name] = (event, payload) => { fn(event, payload); return event.returnValue; }; } }, WebContentsView: View,
     session: { fromPartition: () => ({ on: () => {}, closeAllConnections: async () => {}, clearData: async () => cleanup?.promise, clearAuthCache: async () => {} }) },
     BrowserWindow: Window, shell: { openExternal: async url => { external.push(url); } } });
   const call = (name, payload, source = sender) => handlers['work-preview-' + name]({ sender: source }, payload);
   const show = (patch = {}) => call('show', { tabId: 'tab', ref: 'session-a', url: 'https://fixture.test/a', bounds: { width: 400, height: 300 }, ...patch });
   const detached = (tabId, patch = {}) => call('show-detached', { tabId, url: 'https://fixture.test/app/' + tabId, label: tabId, ...patch });
-  return { call, show, detached, views, windows, states, sender, host, immediates, external, replaceSession(value) { session = value; }, changeCwd(value) { session.cwd = value; } };
+  return { onViewMessage: fn => { onViewMessage = fn; }, preview: module.exports, handlers, call, show, detached, views, windows, states, sender, host, immediates, external, replaceSession(value) { session = value; }, changeCwd(value) { session.cwd = value; } };
 }
+
+test('canonical application entry focuses an existing composer and reopens a closed window with the same session', async t => {
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'soduwork-app-window-entry-'));
+  const app = { getPath: () => root }, f = fixture({ app });
+  const store = require('../main/app-settings-store.cjs');
+  store.configure({ app, ownerOf: () => 'isolated-account' });
+  t.after(() => { f.call('destroy', ''); store.configure(undefined); fs.rmSync(root, { recursive: true, force: true }); });
+  const origin = { pluginId: 'local:app-entry', contributionId: 'main', origin: 'https://fixture.test' };
+  const payload = { tabId: 'app-local-app-entry-main', url: origin.origin + '/app', label: 'Application',
+    appBridge: { appId: 'plugin:' + origin.pluginId, contributionId: origin.contributionId,
+      origin: origin.origin, version: 1, capabilities: [] } };
+  const firstOpen = await f.detached(payload.tabId, payload); assert.equal(firstOpen.ok, true, JSON.stringify(firstOpen));
+  const first = f.windows[0], composer = f.views.at(-1).webContents;
+  const receipts = [];
+  f.onViewMessage((sender, channel, message) => {
+      if (channel !== 'app-composer-session') return;
+      receipts.push(message);
+      assert.equal(f.handlers['app-composer-navigation-result']({ sender: f.sender, senderFrame: {} },
+        { id: message.navigationId, sessionId: message.sessionId, ok: true }).ok, false, 'another renderer cannot acknowledge');
+      f.handlers['app-composer-navigation-result']({ sender, senderFrame: sender.mainFrame },
+        { id: message.navigationId, sessionId: message.sessionId, ok: true });
+  });
+  await f.preview.openAppConversation({ sender: f.sender }, origin, 'same-session', payload, () => {});
+  assert.equal(f.windows.length, 1); assert.equal(first.focused, true);
+  assert.equal(f.views.at(-1).webContents, composer, 'existing composer and its draft remain intact');
+  assert.deepEqual(receipts.map(row => row.sessionId), ['same-session']);
+  first.destroy();
+  // Observe the production reopen before acknowledging the newly created composer.
+  const pending = f.preview.openAppConversation({ sender: f.sender }, origin, 'same-session', payload, () => {});
+  await flush();
+  const next = f.views.at(-1).webContents;
+  assert.notEqual(next, composer);
+  await pending;
+  assert.equal(f.windows.length, 2); assert.deepEqual(receipts.map(row => row.sessionId), ['same-session', 'same-session']);
+  await assert.rejects(f.preview.openAppConversation({ sender: f.sender }, origin, 'same-session', payload,
+    () => {}, async () => { await Promise.resolve(); throw Error('indexed owner changed'); }), /indexed owner changed/);
+  assert.equal(receipts.length, 2, 'failed asynchronous ownership check sends no composer session navigation');
+});
 
 test('installed application pages open, invoke their bridge and reject a changed account', async t => {
   const store = require('../main/app-settings-store.cjs');

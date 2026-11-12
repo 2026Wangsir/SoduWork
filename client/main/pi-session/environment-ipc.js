@@ -212,12 +212,14 @@ function install({ app, ipcMain, session, identityOf, capabilityGrantsOf, _skill
       const local = options?.source === 'local';
       const account = options?.source === 'account';
       const profile = app.getPath('userData');
-      const captured = local ? null : access.actor(app);
-      if (account) access.assertCurrent(app, captured);
+      const captured = access.actor(app);
+      if (!captured.readScope) throw Error('请先登录 SoduWork 后查看会话');
+      access.assertCurrent(app, captured);
       const result = await session.history(app, local || account ? options : undefined);
       if (local) {
         if (app.getPath('userData') !== profile) throw Error('Local history workspace changed');
-      } else access.assertCurrent(app, captured);
+      }
+      access.assertCurrent(app, captured);
       const identity = require('../conversation/requirement-context').cachedIdentity(app);
       const rows = require('../conversation/work-conversation-cards').visibleHistory(app, result.chats || [], identity);
       return { ...result, chats: rows.map(row => conversationTitles.decorate(app,

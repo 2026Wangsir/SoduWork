@@ -151,8 +151,8 @@
 #settingsPanel .chk-inline:has(input:checked) { background: color-mix(in srgb, var(--settings-accent) 4%, var(--settings-paper)); border-color: color-mix(in srgb, var(--settings-accent) 20%, var(--settings-line)); }
 #settingsPanel .chk-inline:hover { border-color: color-mix(in srgb, var(--settings-accent) 40%, var(--settings-line)); }
 #settingsPanel .chk-inline input { width: 17px; height: 17px; margin: 0 2px 0 0; accent-color: var(--settings-accent); }
-#settingsPanel .seg { min-height: 42px; padding: 4px; gap: 3px; border: 1px solid var(--settings-line); border-radius: 11px; background: var(--settings-canvas); }
-#settingsPanel .seg button { min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; color: var(--settings-muted); font-size: var(--settings-text); }
+#settingsPanel .seg { flex-wrap: wrap; min-height: 42px; padding: 4px; gap: 3px; border: 1px solid var(--settings-line); border-radius: 11px; background: var(--settings-canvas); }
+#settingsPanel .seg button { flex: 1 0 auto; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; color: var(--settings-muted); font-size: var(--settings-text); }
 #settingsPanel .seg button.active { background: var(--settings-paper); color: var(--settings-accent); border-color: color-mix(in srgb, var(--settings-accent) 20%, var(--settings-line)); box-shadow: 0 1px 4px rgba(32, 52, 82, .07); }
 #settingsPanel .seg button:hover:not(.active) { background: color-mix(in srgb, var(--settings-accent) 5%, var(--settings-paper)); color: var(--ink); }
 #settingsPanel .settings-select-wrap { position: relative; display: block; min-width: 0; }

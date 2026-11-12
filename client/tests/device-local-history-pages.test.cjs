@@ -9,12 +9,14 @@ const { performance } = require('node:perf_hooks');
 const { createWorker } = require('../main/conversation/replica-store.cjs');
 const { create } = require('../main/conversation/shared-history.cjs');
 const { createPiSessionBridge } = require('../main/agent-runtime/pi-session-bridge');
+const { identity } = require('./helpers/platform-session-fixture.cjs');
 
 async function fixture(t, count = 123) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-local-pages-'));
   const app = { getPath: () => root };
   const counters = { native: 0, external: 0 };
-  let account = 'a';
+  let account = 'a', workspace;
+  const actor = () => account === 'a' ? identity() : identity('two');
   let discover = async () => ({ ok: true, chats: [] }), discoverArchived = discover;
   const bridge = createPiSessionBridge({ app, runnerAdapters: [], sessionModule: {
     open: async () => assert.fail('Listing local history cannot start a runtime'),
@@ -28,25 +30,29 @@ async function fixture(t, count = 123) {
       title: 'Account-only metadata', accountProjection: true, at: 100000 + i })) };
   } });
   const file = path.join(root, 'history.sqlite');
-  let store = createWorker(file), shared = create({ app, session: bridge, store, identityOf: () => require('./helpers/platform-session-fixture.cjs').identity(account === 'a' ? 'one' : 'two') });
+  let store = createWorker(file), shared = create({ app, session: bridge, store, identityOf: actor });
   bridge.setReplicaHistory(shared);
   for (let start = 0; start < count; start += 200) await shared.register(Array.from({ length: Math.min(200, count - start) }, (_, i) => ({
     id: 'local-' + String(start + i).padStart(5, '0'), historyAliasIds: ['native-' + (start + i)],
     adapterId: 'pi', title: 'Stored local conversation ' + (start + i), at: Math.floor((start + i) / 3), count: 2,
+    creator: { account: 'one', hub: identity().hub },
   })));
   t.after(async () => { await shared.close(); await bridge.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   return { app, bridge, counters, get store() { return store; },
     capture: (handle, identity) => shared.capture(handle, identity),
-    read: options => bridge.history(app, { source: 'local', ...options }),
+    read: async (options = {}) => {
+      const reply = await bridge.history(app, { source: 'local', ...(options.catalogRevision !== undefined ? { workspace } : {}), ...options });
+      workspace = reply.localCatalog?.workspace; return reply;
+    },
     discover(active, archived = async () => ({ ok: true, chats: [] })) { discover = active; discoverArchived = archived; },
-    switch(value) { account = value; },
+    switch(value) { account = value; workspace = undefined; },
     async restart() {
       await shared.close();
-      store = createWorker(file); shared = create({ app, session: bridge, store, identityOf: () => require('./helpers/platform-session-fixture.cjs').identity(account === 'a' ? 'one' : 'two') }); bridge.setReplicaHistory(shared);
+      store = createWorker(file); shared = create({ app, session: bridge, store, identityOf: actor }); bridge.setReplicaHistory(shared);
     } };
 }
 
-test('local metadata pages remain exhaustive across A to B to A and cold store reopen', async t => {
+test('local metadata pages restore only their account across A to B to A and cold store reopen', async t => {
   const f = await fixture(t);
   let workspace;
   for (const account of ['a', 'b', 'a']) {
@@ -56,14 +62,15 @@ test('local metadata pages remain exhaustive across A to B to A and cold store r
       const reply = await f.read({ limit: 17, after, catalogRevision: catalog?.revision });
       assert.equal(reply.ok, true);
       assert.ok(reply.chats.length <= 17);
-      if (!after) { catalog = reply.localCatalog; assert.equal(catalog.items.length, 123); }
+      if (!after) { catalog = reply.localCatalog; assert.equal(catalog.items.length, account === 'a' ? 123 : 0); }
       else assert.equal(Object.hasOwn(reply.localCatalog, 'items'), false);
       workspace ||= reply.localCatalog.workspace;
-      assert.equal(reply.localCatalog.workspace, workspace);
+      if (account === 'a') assert.equal(reply.localCatalog.workspace, workspace);
+      else assert.notEqual(reply.localCatalog.workspace, workspace);
       rows.push(...reply.chats); after = reply.next;
     } while (after);
-    assert.equal(rows.length, 123);
-    assert.equal(new Set(rows.map(row => row.id)).size, 123);
+    assert.equal(rows.length, account === 'a' ? 123 : 0);
+    assert.equal(new Set(rows.map(row => row.id)).size, rows.length);
     assert.ok(rows.every(row => row.localReplica === true && row.id.startsWith('local-')));
     assert.ok(catalog.items.every(row => !Object.hasOwn(row, 'title') && !Object.hasOwn(row, 'creator')));
     await f.restart();
@@ -84,6 +91,8 @@ test('native refresh discovers more than fifty real Pi archives and retains the 
   archiveState.setArchived(path.join(f.app.getPath('userData'), 'pi-agent'), 'saved-1', true);
   const segments = require('../main/conversation/runtime-segments');
   const owner = require('./helpers/platform-session-fixture.cjs').identity();
+  await f.store.register(Array.from({ length: 83 }, (_, i) => ({ id: 'saved-' + i,
+    archived: i === 1, creator: { account: 'one', hub: owner.hub }, workOwner: require('../main/platform-connections/runtime.cjs').scope(owner) })));
   await segments.save(f.app, { version: 1, id: 'saved-0', owner: segments.scope(owner), title: 'Canonical original title',
     cwd: folder, at: 10000, prefix: { messages: [], tools: [] },
     active: { sessionId: 'runner-canonical', adapterId: 'harness2', path: 'runner-canonical' },
@@ -116,7 +125,7 @@ test('native refresh discovers more than fifty real Pi archives and retains the 
   assert.match(retained.refreshError, /Native engine unavailable/);
 });
 
-test('main local history remains readable before login and across an auth change while default history stays fenced', async t => {
+test('main local history rejects anonymous reads and an account change during discovery', async t => {
   const f = await fixture(t, 42), handlers = new Map();
   const auth = require('../main/device-auth');
   const previous = Object.fromEntries(['identity', 'session', 'profiles', 'localOwner'].map(key => [key, auth[key]]));
@@ -126,18 +135,22 @@ test('main local history remains readable before login and across an auth change
     ipcMain: { handle: (name, fn) => handlers.set(name, fn) } });
   const read = options => handlers.get('pi-session-history')(null, options);
   const anonymous = await read({ source: 'local' });
-  assert.equal(anonymous.ok, true);
-  assert.equal(anonymous.chats.length, 42);
+  assert.equal(anonymous.ok, false);
+  assert.equal(anonymous.chats.length, 0);
   assert.equal((await read()).ok, false, 'remote/default requests still require an authenticated actor');
   let release;
+  const initial = identity();
+  auth.identity = () => initial; auth.session = () => initial.session;
+  auth.localOwner = () => require('../main/platform-connections/runtime.cjs').scope(initial);
   f.discover(() => new Promise(resolve => { release = resolve; }));
   const pending = read({ source: 'local', refresh: true });
   while (!release) await new Promise(resolve => setImmediate(resolve));
-  const identity = require('./helpers/platform-session-fixture.cjs').identity('two');
-  auth.identity = () => identity; auth.session = () => identity.session;
-  auth.localOwner = () => require('../platform-connections/runtime.cjs').scope(identity);
+  const nextIdentity = identity('two');
+  auth.identity = () => nextIdentity; auth.session = () => nextIdentity.session;
+  auth.localOwner = () => require('../main/platform-connections/runtime.cjs').scope(nextIdentity);
+  f.switch('b');
   release({ ok: true, chats: [] });
-  assert.equal((await pending).chats.length, 42, 'a new account cannot invalidate device-local metadata');
+  assert.equal((await pending).ok, false, 'a late reply cannot return the previous account catalog');
   const wrong = await read({ source: 'local', workspace: 'another-device-workspace' });
   assert.equal(wrong.ok, false);
   assert.equal(wrong.chats.length, 0);
@@ -212,7 +225,7 @@ test('local catalog retains aliases and lifecycle tombstones and advances for al
 test('downloaded source locators retain resolver precedence without becoming native lifecycle aliases', async t => {
   const f = await fixture(t, 0);
   const { identity } = require('./helpers/platform-session-fixture.cjs');
-  await f.store.register([{ id: 'native-direct', at: 1, historyAliasIds: ['explicit-source'] }]);
+  await f.store.register([{ id: 'native-direct', at: 1, historyAliasIds: ['explicit-source'], creator: { account: 'one', hub: identity().hub } }]);
   const capture = (actor, at, sourceSessionId) => f.capture({
     snapshot: () => ({ messages: [{ role: 'user', text: 'Synthetic downloaded history' }] }),
     historyRow: () => ({ id: 'account-original', title: 'Same title is not an alias', at,
@@ -223,9 +236,9 @@ test('downloaded source locators retain resolver precedence without becoming nat
   const first = await f.read();
   const canonical = alias => first.localCatalog.items.find(row => row.historyAliasIds.includes(alias))?.id;
   const origin = alias => first.localCatalog.items.find(row => row.originIds.includes(alias))?.id;
-  const newer = await f.store.get('account-original');
+  const newer = first.chats.find(row => row.cached);
   assert.equal(origin('account-original'), newer.id);
-  assert.equal(origin('source-native'), newer.id);
+  assert.equal(origin('source-native'), undefined, 'foreign account origin locators stay private');
   assert.equal(canonical('account-original'), undefined, 'an active local copy cannot shadow its executable account original');
   assert.equal(canonical('source-native'), undefined);
   assert.equal(canonical('explicit-source'), 'native-direct');
@@ -235,7 +248,7 @@ test('downloaded source locators retain resolver precedence without becoming nat
   await f.store.lifecycle(newer.id, 'delete');
   const deleted = await f.read({ catalogRevision: first.localCatalog.revision });
   const owner = deleted.localCatalog.items.find(row => row.originIds.includes('account-original'));
-  assert.equal(owner.id, (await f.store.get('account-original')).id);
+  assert.equal(owner.id, newer.id);
   assert.equal(owner.deleted, true, 'deleted source aliases obey the same resolver instead of reviving an older copy');
   assert.ok(deleted.localCatalog.items.every(row => !row.historyAliasIds.includes('account-original')),
     'deleting a local copy cannot hide or mutate its separately authorized account original');
@@ -250,7 +263,7 @@ test('real account directory and local replica remain separate through bridge, I
   const previous = Object.fromEntries(['identity', 'session', 'profiles', 'localOwner'].map(key => [key, auth[key]]));
   let current = actor, requests = 0, nativeLookups = 0;
   auth.identity = () => current; auth.session = () => current?.session || ''; auth.profiles = () => [];
-  auth.localOwner = () => current ? require('../platform-connections/runtime.cjs').scope(current) : '';
+  auth.localOwner = () => current ? require('../main/platform-connections/runtime.cjs').scope(current) : '';
   t.after(() => Object.assign(auth, previous));
   const sync = require('../main/conversation/account-sync').create({ app: f.app, store: { jobs: () => [] },
     identityOf: () => current, localIdentityOf: () => current,
@@ -302,7 +315,7 @@ test('real account directory and local replica remain separate through bridge, I
   current = null;
   assert.equal((await read({ source: 'account' })).ok, false);
   assert.equal(requests, 1, 'anonymous account reads fail before consulting the provider');
-  assert.equal((await read({ source: 'local' })).ok, true);
+  assert.equal((await read({ source: 'local' })).ok, false);
 });
 
 test('ten thousand local rows support bounded pages and concurrent metadata reads without transcript access', async t => {

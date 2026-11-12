@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const importer = require('./codex-import');
-const { scope, scopeMatches } = require('../platform-connections/runtime.cjs');
+const { scope, scopeMatches, legacyScope } = require('../platform-connections/runtime.cjs');
 const { redact } = require('./import-redaction');
 const { fetchWithDeviceAuthRetry } = require('../device-auth-request');
 const localMemory = require('./local-memory');
@@ -31,8 +31,19 @@ function binding(app, sessionId, identity) {
     // Legacy fingerprints bind Hub address, device registration, and account.
     // Use local enrollment history to verify same-account environment changes and migrate matching ownership.
     // Converge memory directories and bindings to the new fingerprint while rejecting cross-account access.
-    if (!scopeMatches(data.owner, identity, accountCandidates(app, identity)))
+    const candidates = accountCandidates(app, identity);
+    if (!scopeMatches(data.owner, identity, candidates))
       throw Error('这条会话属于另一个账号或服务，请切回原账号');
+    if (!data.hub) {
+      // Preserve the Hub proven by the old fingerprint before replacing it with
+      // an account-only owner. A previous enrollment may belong to another Hub.
+      const original = candidates.find(candidate => {
+        try { return legacyScope(candidate.hub, candidate.clientId, identity) === data.owner; }
+        catch (_) { return false; }
+      });
+      if (!original) throw Error('这条会话属于另一个账号或服务，请切回原账号');
+      data.hub = new URL(original.hub).origin;
+    }
     try { localMemory.migrateAccount(app, data.owner, owner); } catch (_) { /* Memory migration is best effort. */ }
     data.owner = owner;
     write(app, sessionId, data, true);
@@ -65,7 +76,7 @@ function write(app, sessionId, data, replace = false) {
 }
 function bind(app, sessionId, identity, selected, recordOwner = false) {
   if (!selected.length && !recordOwner) return;
-  write(app, sessionId, { owner: scope(identity), ids: ids(selected) });
+  write(app, sessionId, { owner: scope(identity), hub: new URL(identity.hub).origin, ids: ids(selected) });
 }
 
 function stableKey(scopeName, value) {

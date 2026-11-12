@@ -80,6 +80,7 @@ function fixture(t, options = {}) {
   };
   child.kill = () => { kills++; return true; };
   const host = createProcessHost(app, {
+    jobFactory: options.jobFactory || (async () => null),
     spawn: async (_entry, config) => { spawns++; spawnOptions = config;
       if (options.spawnGate) await options.spawnGate.promise; return child; },
     treeFactory: ({ pid }) => {
@@ -634,6 +635,28 @@ test('stopping an unused host prevents any future spawn', async t => {
   const f = fixture(t); await f.host.stop();
   await assert.rejects(f.host.start(), { code: 'RUNTIME_PROCESS_GONE' });
   assert.equal(f.spawns, 0); assert.equal(f.treeStarts, 0); assert.equal(f.treeStops, 0);
+});
+
+test('no tools initialize before native job ownership is ready, including late shutdown', async t => {
+  const gate = deferred(); let attaching = false, stops = 0;
+  const f = fixture(t, { jobFactory: () => { attaching = true; return gate.promise; } });
+  const starting = f.host.start(); starting.catch(() => {});
+  await until(() => attaching, 'native job attachment');
+  assert.ok(!f.operations.includes('initialize'));
+  const stopped = f.host.stop();
+  gate.resolve({ stop: async () => { stops++; } });
+  await assert.rejects(starting, /已退出/); await stopped;
+  assert.equal(stops, 1); assert.ok(!f.operations.includes('initialize'));
+});
+
+test('native job cleanup still runs after snapshot cleanup fails and remains retryable', async t => {
+  let stops = 0;
+  const f = fixture(t, { jobFactory: async () => ({ stop: async () => { stops++; } }),
+    cleanup: count => { if (count === 1) throw Error('snapshot unavailable'); return {}; } });
+  await f.host.start();
+  await assert.rejects(f.host.stop(), /snapshot unavailable/);
+  assert.equal(stops, 1);
+  await f.host.retryCleanup(); assert.equal(stops, 2);
 });
 
 test('shutdown has a bounded acknowledgement wait and concurrent disposal attempts share one cleanup', { timeout: 7000 }, async t => {

@@ -19,6 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 def fake_agent():
     from app.services.access_transition import CONTINUATION
+    from tests.opencode_peer_outcome import NativeOutcome
+    native_outcome = NativeOutcome()
     scenario, agent = sys.argv[-2:]
     lock = threading.Lock()
     prompt_id = None
@@ -38,8 +40,11 @@ def fake_agent():
         from urllib.request import url2pathname
         from urllib.parse import urlparse
         plugins = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])["plugin"]
-        source = Path(url2pathname(urlparse(plugins[-1]).path)).read_text(encoding="utf-8")
-        marker = re.search(r'const agentId = "([^"]+)";', source)[1]
+        markers = [match[1] for plugin in plugins
+                   if (match := re.search(r'const agentId = "([^"]+)";',
+                       Path(url2pathname(urlparse(plugin).path)).read_text(encoding="utf-8")))]
+        assert len(markers) == 1, "Exactly one native permission guard is required"
+        marker = markers[0]
         config["configOptions"] = [{"id": "mode", "options": [{"value": x} for x in [marker, "build", "plan"]]}]
     for raw in sys.stdin:
         message = json.loads(raw)
@@ -49,7 +54,9 @@ def fake_agent():
             update({"sessionUpdate": "tool_call_update", "toolCallId": "approval", "status": "failed",
                     "content": [{"type": "content", "content": {"type": "text", "text": "Permission request withdrawn"}}]})
             if scenario == "approval-end":
-                send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+                native_outcome.end("native-kept")
+                send({"jsonrpc": "2.0", "id": prompt_id, "result": {
+                    "stopReason": "end_turn"}})
             continue
         result = {}
         if method == "initialize":
@@ -72,6 +79,7 @@ def fake_agent():
                 send({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32000, "message": "Fixture rejects the new mode"}})
                 continue
         elif method == "session/prompt":
+            native_outcome.begin("native-kept")
             prompt_id = message["id"]
             text = params["prompt"][0]["text"]
             record({"prompt": text})

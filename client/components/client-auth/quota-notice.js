@@ -31,7 +31,9 @@
     setText(card.querySelector('[data-quota-guidance]'), value.guidance);
     setText(card.querySelector('[data-quota-summary]'), tx('额度详情'));
     const detail = card.querySelector('[data-quota-detail]');
-    const rows = [current?.planName || '', value.used, value.timing];
+    const planName = current?.planId === 'trial' && current?.planName === '试用'
+      ? tx('试用') : current?.planName || '';
+    const rows = [planName, value.used, value.timing];
     for (const model of (current?.models || []).slice(0, 100)) {
       const remaining = model.remaining === null ? tx('不限额') :
         tx('剩余 {tokens} Tokens').replace('{tokens}', new Intl.NumberFormat(locale()).format(model.remaining || 0));

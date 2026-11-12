@@ -35,6 +35,14 @@ Direct development uses local configuration and data; keep it separate from real
 
 API documentation: **http://127.0.0.1:9080/docs**. Health check: `GET /healthz`.
 
+## Managed Pi execution
+
+Managed Pi execution binds each Runner execution record to its own configuration and session directory under the Runner data root. Startup and follow-up turns use the same explicit path, independent of inherited desktop Pi settings or the operating system home-directory lookup. Model files contain an environment-variable reference for the credential; missing model configuration or failed file publication stops execution before Pi starts. Personal Pi and desktop-local model files are not modified. On upgrade, only the exact native session identified by the Runner record and matching workspace can be copied into the private directory; its original file remains unchanged. Established follow-up turns require an existing session rather than silently starting a new one.
+
+After a Runner restart, recovery terminals bind the same owned history without restoring model credentials or changing its model file. A new managed turn still requires its own model authorization.
+
+To verify this path with a real Runner and Pi subprocess against a disposable authenticated Hub and loopback model, install the client dependencies and run `python3 e2e_pi_dispatch_config.py --output /absolute/evidence/directory` from the backend test environment. The check covers dispatch, follow-up, output files, native terminal recovery after restart, and preservation of personal model configuration. It does not exercise a production model or native desktop UI.
+
 ## Offline quality gate
 
 Use the dedicated test environment, not a production service environment:
@@ -50,6 +58,19 @@ The manifest in `quality_manifest.py` registers checks and their profiles. Unreg
 
 Smoke checks live in [`smoke/`](smoke/). To run one directly, use its module from the `hub-backend/` directory, for example `python3 -m smoke.smoke_capabilities`. The quality gate selects the appropriate registered modules. Unit tests and `tests/` integration helpers keep their existing locations.
 
+## Harness² planning recovery
+
+Harness² completes seven tool-free planning stages before native execution. If a
+complete provider response explicitly reaches its output-token limit, the whole
+turn permits one retry of that same stage with at most twice its initial token
+allowance, capped at 16,384 tokens and the configured model limit. Both attempts
+retain their reported usage and share the existing turn deadline and token budget.
+The client receives a retry progress message. Successful recovery headroom is reused
+for later stages of the same kind within the configured cap, without more retries.
+Partial plans are discarded; broken
+streams, HTTP failures and native execution are not retried by this recovery path.
+Persistent truncation or a lower configured cap still fails before execution.
+
 ## Database configuration
 
 Set `DATABASE_URL` in private configuration when overriding the SQLite default:
@@ -61,6 +82,10 @@ Set `DATABASE_URL` in private configuration when overriding the SQLite default:
 | Docker self-hosting | Run `python3 ops/self-host/deploy.py up` from the repository root; it generates independent credentials |
 
 The PostgreSQL value is a placeholder. Use a dedicated database and a minimally privileged account. Never commit environment files or credentials. See [self-hosting](../ops/self-host/README.md) for backups and deployment.
+
+## OpenCode turn completion
+
+Native and ACP OpenCode executions preserve the current turn's provider finish reason. An output-token limit is reported as incomplete even when partial text exists and the native process exits successfully; existing progress and the session remain available for manual continuation. The ACP adapter observes only native session/turn identifiers and stop reasons through an invocation-local plugin, and rejects missing completion evidence without retrying tools or changing permissions. Run `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode` for isolated loopback-provider acceptance using an explicitly selected installed binary.
 
 ## API and trust boundaries
 
@@ -95,6 +120,12 @@ The second command creates and tears down an isolated local PostgreSQL instance.
 
 See [release scope](../docs/release-scope.en.md) for distribution boundaries.
 
+## OpenCode model selection on resume
+
+Managed native OpenCode turns pass the current model explicitly. ACP turns select the exact advertised model before prompting, using the existing session ID and history. Updating the injected default alone does not change the model retained by a native session. Missing routes or an unconfirmed model change stop the turn; the adapter does not restore old credentials, rename models, or create a replacement session.
+
+Run `SODUWORK_TEST_OPENCODE_BIN=/absolute/path/to/opencode python3 -m unittest test_opencode_native_model_selection` with the backend test dependencies to verify native and ACP model changes against loopback endpoints. The test uses isolated native state and synthetic credentials, and checks retained history, model IDs, and credential rotation over three turns. It does not exercise a production provider or desktop UI.
+
 ## Requirement automation drafts
 
 An authorized manager of an unarchived requirement can copy its public content into an independent automation draft. Opening or canceling the form creates nothing. Saving always creates a disabled schedule and never changes the source requirement, its version, or its existing automation link. Later schedule edits and enabling are independent of the requirement.
@@ -102,3 +133,9 @@ An authorized manager of an unarchived requirement can copy its public content i
 `POST /api/v1/schedules` accepts `sourceRequirement: {id, requirementVersion}` and a stable `creationRequestId` for this path. Hub checks current management access, archive state and the expected version, then stores a server-derived `source_requirement` snapshot of the source ID, public title and version. The response exposes these three fields as `sourceRequirement`; ordinary schedule edits cannot replace them, and provenance grants no additional task access. No execution routing, credentials or local model references are copied.
 
 Repeating the same creation request for the same account and device returns its existing schedule. Reusing its ID with different content returns 409. This also recovers a lost response after the source changes. Migration `0088_schedule_requirement_source` adds an empty JSON default for existing schedules; it does not infer historical sources or rewrite old links.
+
+## Managed ACP state directories
+
+Codex Harness, Qwen, Kimi and DeepSeek Harness use private state directories under the Runner data root. If a directory cannot be created because of permissions, a conflicting file or storage failure, preparation rejects the turn before launching an executor. The client receives an actionable diagnostic without personal paths or filesystem exception contents. Inherited personal state remains untouched; repairing the directory allows a new dispatch through the normal admission checks.
+
+`python3 -m unittest test_acp_home_isolation` checks real file collisions, injected permission failures, and Runner admission through a real subprocess/ACP bridge with a synthetic vendor. It verifies that failed preparation launches no executor and that a repaired directory permits execution. This does not establish real-provider or native-platform acceptance.

@@ -135,15 +135,15 @@ test('periodic reads use the renewed session directly while retaining the same a
   f.setIdentity(renewed); await f.advance(120000);
   assert.deepEqual(sessions, [original.session, renewed.session]);
 });
-test('message consumers share one folder snapshot only after its specific capability is confirmed', async t => {
+test('message consumers share in-flight snapshots and revalidate explicit reads after capability confirmation', async t => {
   const f = fixture(t, async () => ({ok: true, folder: 'received', items: [], nextCursor: '', revision: 'current'}));
   const read = () => f.cache.read('team-messages-received', f.scope());
   await assert.rejects(read(), error => error.code === 'DOMAIN_POLL_FALLBACK'); assert.equal(f.calls(), 0);
   f.confirm(true); await Promise.all(Array.from({length: 8}, read)); assert.equal(f.calls(), 1);
-  await f.advance(60000); await read(); assert.equal(f.calls(), 1);
-  f.wake.get('team-messages')(); await settle(); await f.advance(1000); assert.equal(f.calls(), 2);
+  await f.advance(60000); await read(); assert.equal(f.calls(), 2);
+  f.wake.get('team-messages')(); await settle(); await f.advance(1000); assert.equal(f.calls(), 3);
   f.confirm(false); await assert.rejects(read(), error => error.code === 'DOMAIN_POLL_FALLBACK');
-  await f.advance(120000); assert.equal(f.calls(), 2, 'capability loss also stops unconditional background message reads');
+  await f.advance(120000); assert.equal(f.calls(), 3, 'capability loss also stops unconditional background message reads');
 });
 test('cached transports retain HTTP status and structured failure details, including non-JSON proxies', async t => {
   const body = {detail: {code: 'SERVICE_BUSY', message: 'Busy', retryable: true}};
@@ -163,4 +163,83 @@ test('only a current HTTP response or transport failure reports reachability, ne
   const http = fixture(t, async () => new Response('{}', {status: 503}));
   const httpStates = [], readHttp = () => http.cache.read('conversation-projects', http.scope(), value => httpStates.push(value));
   await assert.rejects(readHttp()); await assert.rejects(readHttp()); assert.deepEqual(httpStates, [true]);
+});
+
+
+test('notification read-through shares concurrent reads and preserves failure and invalidation backoff', async t => {
+  for (const domain of ['team-messages-received', 'team-messages-sent']) {
+    let failure = false, storm = false;
+    const f = fixture(t, async () => {
+      if (failure) throw Error('offline');
+      if (storm) await f.cache.invalidate(domain, f.scope());
+      return {ok: true, items: [], revision: String(f.calls())};
+    });
+    f.confirm(true);
+    const read = () => f.cache.read(domain, f.scope());
+    await Promise.all(Array.from({length: 20}, read));
+    assert.equal(f.calls(), 1, 'parallel windows share one authenticated response');
+    await read();
+    assert.equal(f.calls(), 2, 'a later explicit read revalidates authorization even within TTL');
+    failure = true;
+    await assert.rejects(read(), /offline/);
+    for (let i = 0; i < 20; i++) await assert.rejects(read(), /offline/);
+    assert.equal(f.calls(), 3, 'fresh reads cannot bypass transport-error backoff');
+    failure = false; storm = true;
+    await f.advance(5000);
+    assert.equal(f.calls(), 5, 'a storm gets only one bounded trailing read');
+    for (let i = 0; i < 20; i++) await read();
+    assert.equal(f.calls(), 5, 'the short dirty-generation backoff also applies to notification reads');
+  }
+});
+
+
+test('notification revalidation wakes consumers only for a changed response, without a refresh loop', async t => {
+  let revision = 'original';
+  const f = fixture(t, async () => ({ok: true, items: [], revision}));
+  f.confirm(true);
+  const read = () => f.cache.read('team-messages-received', f.scope());
+  await read(); await f.advance(50);
+  assert.equal(f.changes.length, 0);
+  revision = 'outside'; await read(); await f.advance(50);
+  assert.equal(f.changes.length, 1);
+  assert.equal(f.changes[0][0], 'team-messages-received');
+  await read(); await f.advance(50); // The consumer responding to that wake.
+  assert.equal(f.changes.length, 1, 'unchanged authenticated data emits no additional wake');
+  assert.equal(f.calls(), 3);
+});
+
+
+test('notification revision ignores freshly signed preview tickets but still stores the latest response', async t => {
+  for (const domain of ['team-messages-received', 'team-messages-sent']) {
+    let revision = 'original';
+    const f = fixture(t, async () => ({ok: true, revision, items: [{id: 'website',
+      website: {previewUrl: 'https://fixture.invalid/preview?ticket=signed-' + f.calls()}}]}));
+    f.confirm(true);
+    const read = () => f.cache.read(domain, f.scope());
+    assert.ok((await read()).items[0].website.previewUrl.endsWith('signed-1'));
+    assert.ok((await read()).items[0].website.previewUrl.endsWith('signed-2'));
+    await f.advance(50);
+    assert.equal(f.changes.length, 0, 'a rotated ticket with the same inbox revision must not trigger another refresh');
+    revision = 'read-or-company-changed';
+    await read(); await f.advance(50);
+    assert.equal(f.changes.length, 1, 'authorization and receipt revisions still wake consumers');
+    await read(); await f.advance(50);
+    assert.equal(f.changes.length, 1, 'the wake consumer cannot restart the signed-ticket refresh loop');
+  }
+});
+
+test('notification responses without valid revisions retain body change detection', async t => {
+  for (const revision of [undefined, null, '', ' ', 0, 17, {}, []]) {
+    let currentRevision = revision;
+    const f = fixture(t, async () => ({ok: true, revision: currentRevision,
+      items: [{id: 'website', website: {previewUrl: 'https://fixture.invalid/?ticket=' + f.calls()}}]}));
+    f.confirm(true);
+    const read = () => f.cache.read('team-messages-received', f.scope());
+    await read(); await read(); await f.advance(50);
+    assert.equal(f.changes.length, 1, 'absent or malformed revisions cannot conceal changed rows');
+    currentRevision = 'valid'; await read(); await f.advance(50);
+    assert.equal(f.changes.length, 2, 'adding a valid revision retains body comparison');
+    currentRevision = revision; await read(); await f.advance(50);
+    assert.equal(f.changes.length, 3, 'losing the valid revision retains body comparison');
+  }
 });

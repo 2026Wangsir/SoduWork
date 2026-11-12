@@ -109,7 +109,25 @@ function historyRow(item, identity) {
   };
 }
 
-function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, retryMs = 5000,
+function linkCloudHistory(rows) {
+  // Both directories are already authenticated. A source locator becomes a
+  // cloud alias only with matching connection and original-device provenance.
+  const sources = new Map();
+  for (const row of rows) {
+    if (!row?.accountProjection || !row.owner || !row.sourceClientId || !row.sourceSessionId || row.archived || row.deleted) continue;
+    const key = JSON.stringify([row.owner, row.sourceClientId, row.sourceSessionId]);
+    if (!sources.has(key)) sources.set(key, []);
+    sources.get(key).push(row.id);
+  }
+  return rows.map(row => {
+    if (!row?.cloud || !row.owner || !row.ownerClientId || row.archived || row.deleted) return row;
+    const aliases = [row.id, ...(row.historyAliasIds || [])].flatMap(id =>
+      sources.get(JSON.stringify([row.owner, row.ownerClientId, id])) || []);
+    return aliases.length ? { ...row, historyAliasIds: [...new Set([...(row.historyAliasIds || []), ...aliases])] } : row;
+  });
+}
+
+function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, resolveDisplayLinks, retryMs = 5000,
   fetch = fetchWithDeviceAuthRetry, now = () => Date.now(), realtime = false,
   discovery = require('../native-discovery.cjs'), refreshOptions = {}, metadataOnly = false, preserveLegacyOutbox }) {
   const bound = new Map();
@@ -263,7 +281,7 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
   }
 
   function directoryAliases(item) {
-    return [...new Set([item?.id, item?.sourceSessionId,
+    return [...new Set([item?.id, item?.sourceClientId === directoryClientId ? item?.sourceSessionId : '',
       ...(Array.isArray(item?.historyAliasIds) ? item.historyAliasIds : []),
       ...(Array.isArray(item?.aliasIds) ? item.aliasIds : [])].filter(Boolean).map(value => String(value)))];
   }
@@ -738,7 +756,8 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
 
   function directoryIdentity(item) {
     const source = String(item?.sourceSessionId || '').trim();
-    return source ? 'source:' + source : 'account:' + String(item?.id || '');
+    const device = String(item?.sourceClientId || '').trim();
+    return source && device ? JSON.stringify(['source', device, source]) : JSON.stringify(['account', item?.id]);
   }
 
   function directoryVersion(item) {
@@ -771,8 +790,8 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
         .filter(Boolean).map(String))];
       const revision = Math.max(...group.map(item => Number(item.revision || 0)), 0);
       const lifecycleRevision = Math.max(...group.map(item => Number(item.lifecycleRevision || 0)), 0);
-      // A cloud tombstone or archive is authoritative for the shared source
-      // identity, even if another device still reports stale active metadata.
+      // Lifecycle flags apply only to this exact device/source identity.
+      // A different device can hold an independent copy with the same source ID.
       return { ...winner,
         archived: group.some(item => item.archived === true),
         deleted: group.some(item => item.deleted === true),
@@ -791,8 +810,14 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
     if (closed || generation !== historyGeneration || captured !== historyScope || captured !== directoryScope(await current()))
       return { ok: false, chats: [], lifecycle: [] };
     const values = collapseDirectoryRows([...accountRows.values()], identity);
+    let displayLinks = new Map();
+    if (source === 'account' && resolveDisplayLinks) {
+      try { displayLinks = new Map(await resolveDisplayLinks(values, identity)); }
+      catch (_) { /* An unavailable local index must not hide account history. */ }
+    }
     const rows = await Promise.all(values.map(item => {
-      if (source === 'account') return historyRow(item, identity);
+      if (source === 'account') return { ...historyRow(item, identity),
+        ...(displayLinks.has(item.id) ? { displayNativeId: displayLinks.get(item.id) } : {}) };
       // Concurrent callers share the authorized directory load, not its view.
       const cached = projectionSource === 'account' ? null : projections?.get(String(item.id));
       return cached?.item === item ? cached.presence : projectedRow(item, identity);
@@ -1137,4 +1162,4 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
     }, jobs: () => store.jobs() };
 }
 
-module.exports = { create };
+module.exports = { create, linkCloudHistory };

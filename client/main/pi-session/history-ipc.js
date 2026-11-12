@@ -64,6 +64,14 @@ async function trashWithRecovery(shell, filePath) {
 }
 
 function install({ app, ipcMain, session, BrowserWindow, dialog, shell, cloudHistory, accountHistory, sharedHistory, trash = trashWithRecovery }) {
+  if (sharedHistory) {
+    const importHistory = require('../conversation/import-local-history.cjs').create({ app, session,
+      history: sharedHistory, dialog, BrowserWindow });
+    ipcMain.handle('pi-session-history-import', async event => {
+      try { return await importHistory(event); }
+      catch (error) { return { ok: false, reason: String(error?.message || error) }; }
+    });
+  }
   const localAction = sharedHistory ? require('./local-history-actions.cjs').create({
     app, session, history: sharedHistory, BrowserWindow, shell, trash }) : async () => null;
   const { authorize } = require('./history-lifecycle.cjs').create({ app, session, accountHistory, BrowserWindow });

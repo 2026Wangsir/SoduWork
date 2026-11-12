@@ -242,9 +242,10 @@ test('real Pi first requirement opens the same work archive, persists its bindin
   const ordinaryOptions = { ...options, chatId: ordinary.getSessionId() };
   const unowned = await current.open(ordinaryOptions);
   assert.equal(unowned.ok, false);
-  // Main migrates a native ownerless archive to its first authenticated reader,
-  // but migration must not turn an unrelated conversation into this task.
-  assert.match(unowned.reason, /这条会话不是该需求的协作会话/);
+  // Direct open cannot claim an ownerless archive. A separate explicit import
+  // must not grant task execution authority to the original conversation.
+  assert.match(unowned.reason, /无法确认这条会话属于当前账号/);
+  assert.equal(unowned.ref, undefined);
   assert.deepEqual(fs.readFileSync(ordinary.getSessionFile()), ordinaryBefore);
 
   // Native SDK archives do not persist the application's account ownership.

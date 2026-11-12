@@ -173,6 +173,7 @@
   let _busy = false;        // Session initialization is in progress.
   let _goalActionPending = '';
   let _viewEpoch = 0;         // Invalidate pending open operations when switching conversations.
+  let _entryRequest = 0;      // An app redirect keeps the live view but supersedes older navigation preflights.
   let _openingEpoch = -1;
   let _openingTask = null;
   // An archive/runtime open must always reach a terminal UI state.  The
@@ -685,9 +686,20 @@
     if (input) input.focus();
   }
   async function enter(first, chatId, options) {
+    const entryRequest = ++_entryRequest;
     _rememberConversationDraft();
     if (!first && !chatId && !_ref && _sessionId) chatId = _sessionId;
     const launchOptions = { ...(options || {}) };
+    if (!first && chatId && !launchOptions.taskRef && !launchOptions.taskSession && !launchOptions.requireTaskBinding && _api()?.openApplication) {
+      const capturedEpoch = _viewEpoch;
+      const result = await _api().openApplication(String(chatId)).catch(error => ({ ok: false, reason: error.message }));
+      if (capturedEpoch !== _viewEpoch || entryRequest !== _entryRequest) return false;
+      if (!result?.ok || result.handled) {
+        if (!result?.ok) global.petSay?.(result?.reason || '应用会话暂时无法打开');
+        return false;
+      }
+    }
+
     // Repaint the last known transcript while the native handle is reattached.
     // Local and cloud handles are both re-attachable, so the loading skeleton
     // should only be used when this conversation has never been rendered here.

@@ -26,14 +26,18 @@ try:
     from .acp_process import close_process, ProcessCleanupError, OwnedProcessGroup
     from . import runtime_images
     from . import opencode_runtime_config
+    from . import opencode_turn_outcome
     from . import qwen_runtime
+    from . import opencode_model_selection
 except ImportError:  # direct script entry used by source Runner
     from acp_access import BridgeAccess, AccessError
     from acp_transition import Transition
     from acp_process import close_process, ProcessCleanupError, OwnedProcessGroup
     import runtime_images
     import opencode_runtime_config
+    import opencode_turn_outcome
     import qwen_runtime
+    import opencode_model_selection
 
 _PROTOCOL = 1
 _MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -209,6 +213,7 @@ class AcpBridge:
         self.stderr_head: list[str] = []
         self.stderr_tail: list[str] = []
         self.transition = Transition(self)
+        self.outcome = None
 
     def start(self) -> None:
         flags = ({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
@@ -222,6 +227,8 @@ class AcpBridge:
                 opencode_runtime_config.prepare_environment(agent_env)
             except OSError as exc:
                 raise BridgeError("OpenCode 受管配置目录无法创建，请检查 Runner 数据目录权限。") from exc
+            self.outcome = opencode_turn_outcome.Observer()
+            agent_env = self.outcome.environment(agent_env)
         try:
             self.proc = subprocess.Popen(
                 self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -257,6 +264,8 @@ class AcpBridge:
         assert self.proc and self.proc.stderr
         for raw in self.proc.stderr:
             line = raw.strip()
+            if self.outcome and self.outcome.consume(line):
+                continue
             if line:
                 if len(self.stderr_head) < 5:
                     self.stderr_head.append(line[:500])
@@ -668,15 +677,27 @@ class AcpBridge:
                 qwen_runtime.apply_model(self, session_config)
             except RuntimeError as exc:
                 raise BridgeError(str(exc)) from exc
+        if self.agent_name == "opencode":
+            try:
+                opencode_model_selection.apply_model(self, session_config)
+            except RuntimeError as exc:
+                raise BridgeError(str(exc)) from exc
         self.access.apply(self, session_config)
         _emit({"type": "session", "sessionID": self.session_id})
         _emit({"type": "step_start"})
         while True:
+            if self.outcome:
+                self.outcome.begin(self.session_id)
             result = self.request("session/prompt", {
                 "sessionId": self.session_id,
                 "prompt": content,
             })
             self._flush_message()
+            if self.outcome and result.get("stopReason") in (None, "", "end_turn"):
+                native_reason = self.outcome.finish()
+                _emit({"type": "step_finish", "part": {"reason": native_reason}})
+                if native_reason in {"length", "max_tokens"}:
+                    result = {**result, "stopReason": "max_tokens"}
             if not self.transition.complete(result):
                 break
             continuation = self.transition.reconfigure(session_config)
@@ -709,6 +730,8 @@ class AcpBridge:
                     errors.append(exc)
         finally:
             self.access.close()
+            if self.outcome:
+                self.outcome.close()
         if errors:
             raise BridgeError("ACP cleanup failed: " + str(errors[0])) from errors[0]
 
@@ -758,7 +781,7 @@ def main() -> int:
         args.session, allow_terminal=args.terminal)
     try:
         return bridge.run(prompt)
-    except (BridgeError, AccessError) as exc:
+    except (BridgeError, AccessError, opencode_turn_outcome.OutcomeError) as exc:
         message = _friendly_bridge_error(bridge.agent_name, str(exc))
         _emit({"error": {"name": "AcpBridgeError", "message": message}})
         return 2

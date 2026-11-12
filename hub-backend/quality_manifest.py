@@ -49,6 +49,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_agent_install_recovery.py",
     "test_agent_platform_installation.py",
     "test_requirement_projection.py",
+    "test_native_execution_choice.py",
     "test_acceptance_summary.py",
     # The four other maintenance suites have their own release entries below.
     # Run every case under its module deadline rather than repeat all five in
@@ -329,6 +330,7 @@ RELEASE_SMOKES = tuple(sorted((
     "smoke/smoke_ws_frames.py",
     "smoke/smoke_zero_route.py",
     "test_acp_error_messages.py",
+    "test_acp_home_isolation.py",
     "test_cloud_agent_inventory.py",
     "test_codex_runtime_home.py",
     "test_conversation_execution_switch.py",
@@ -359,7 +361,9 @@ RELEASE_SMOKES = tuple(sorted((
     "test_harness2_platforms.py",
     "test_harness2_regressions.py",
     "test_managed_agent_download.py",
+    "test_opencode_turn_outcome.py",
     "test_opencode_runtime_config.py",
+    "test_pi_runtime_config.py",
     "test_email_auth.py",
     "test_legal_publications.py",
     "test_email_account_migration.py",
@@ -378,6 +382,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_requirement_edit_policy.py",
     "test_requirement_project_selection.py",
     "test_task_trace_lifecycle.py",
+    "test_opencode_model_selection.py",
 )))
 
 # These remain offline, but need a real browser, a local listener or longer-lived

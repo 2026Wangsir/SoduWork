@@ -24,43 +24,40 @@ function fixture(t) {
       fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); return file;
     } };
 }
-test('local history remains visible across accounts while execution ownership stays strict', t => {
+test('local history follows the current account and rejects conflicting ownership', t => {
   const f = fixture(t), id = 'pre-rename';
   const previous = crypto.createHash('sha256').update('soduwork-account\0one').digest('hex').slice(0, 32);
   f.write('session-memory-bindings', id, { owner: previous, ids: [] });
-  const rows = [{ id, workOwner: previous }];
+  const rows = [{ id, workOwner: previous, creator: { account: 'one', hub: identity().hub } }];
   assert.deepEqual(access.visible(f.app, rows).map(row => row.id), [id]);
   assert.doesNotThrow(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]));
   f.switch(identity('two'));
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), [id]);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
   f.switch(identity());
   f.write('requirement-session-context', id, { version: 1, owner: scope(identity('two')) });
-  // Requirement metadata changes the read boundary without transferring execution ownership.
-  assert.deepEqual(access.visible(f.app, rows), []);
-  assert.throws(() => access.assertReadable(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
 });
-test('local history visibility survives account switch, expiry and signout without granting execution', t => {
-  const f = fixture(t), rows = ['alice', 'bob', 'unbound'].map(id => ({ id, count: 1 }));
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice', 'bob', 'unbound']);
+test('owned history survives expiry but stays isolated across accounts and signout', t => {
+  const f = fixture(t), rows = ['alice', 'bob', 'unbound'].map(id => ({ id, count: 1,
+    ...(id === 'unbound' ? {} : { creator: { account: id === 'alice' ? 'one' : 'two', hub: identity().hub } }) }));
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice']);
   f.switch(identity('two'));
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice', 'bob', 'unbound']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['bob']);
   assert.throws(() => access.assertOwner(f.app, 'alice'), /当前账号/);
   f.switch(identity());
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice', 'bob', 'unbound']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice']);
   f.expire();
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice', 'bob', 'unbound']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice']);
   f.switch(null);
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['alice', 'bob', 'unbound']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, 'alice'), /请先登录/);
 });
 test('local read does not claim execution ownership and cloud flag alone is not authority', t => {
   const f = fixture(t);
-  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }]).map(row => row.id), ['alice']);
   f.write('requirement-session-context', 'alice', { version: 1, owner: scope(identity('two')) });
-  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }, { id: 'unknown', cloud: true }]), []);
-  assert.throws(() => access.assertReadable(f.app, 'alice', access.actor(f.app), { id: 'alice' }), /当前账号/);
+  assert.deepEqual(access.visible(f.app, [{ id: 'alice' }, { id: 'unknown', cloud: true }]).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, 'alice'), /当前账号/);
   f.write('conversation-handoffs', 'remote', { sessionId: 'remote', owner: connectionScope(identity()), entryKind: 'cloud' });
   assert.equal(access.visible(f.app, [{ id: 'remote', cloud: true }]).length, 1);
@@ -85,19 +82,20 @@ test('account projections require the exact authenticated connection and source 
   f.switch(identity());
   assert.equal(access.visible(f.app, [row]).length, 1);
 });
-test('a legacy archive is bound to the first authenticated account that opens it', t => {
+test('opening an unknown legacy archive never claims its ownership', t => {
   const f = fixture(t), captured = access.actor(f.app);
   const archive = path.join(f.root, 'pi-agent', 'sessions', 'project', 'legacy.jsonl');
   fs.mkdirSync(path.dirname(archive), { recursive: true });
   fs.writeFileSync(archive, '{"type":"session","id":"legacy"}\n{"type":"message"}\n');
-  assert.doesNotThrow(() => access.assertOwner(f.app, 'legacy', captured,
-    { id: 'legacy', path: archive, count: 1 }, { allowLegacy: true }));
+  assert.throws(() => access.assertOwner(f.app, 'legacy', captured,
+    { id: 'legacy', path: archive, count: 1 }, { allowLegacy: true }), /当前账号/);
   assert.throws(() => {
     f.switch(identity('two'));
     access.assertOwner(f.app, 'legacy', access.actor(f.app), { id: 'legacy' });
   }, /当前账号/);
   f.switch(identity());
-  assert.doesNotThrow(() => access.assertOwner(f.app, 'legacy', access.actor(f.app), { id: 'legacy' }));
+  assert.throws(() => access.assertOwner(f.app, 'legacy', access.actor(f.app), { id: 'legacy' }), /当前账号/);
+  assert.equal(fs.existsSync(path.join(f.root, 'conversation-history-owners')), false);
 });
 test('legacy migration never claims an ownerless runner row', t => {
   const f = fixture(t);
@@ -110,11 +108,11 @@ test('listing an ownerless archive never assigns it to the current account', t =
   fs.mkdirSync(path.dirname(archive), { recursive: true });
   fs.writeFileSync(archive, '{"type":"session","id":"legacy-list"}\n');
   const rows = [{ id: 'legacy-list', path: archive, count: 1, cwd: f.root }];
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['legacy-list']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, 'legacy-list', access.actor(f.app), rows[0]), /当前账号/);
   assert.equal(fs.existsSync(path.join(f.root, 'conversation-history-owners')), false);
   f.switch(identity('two'));
-  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), ['legacy-list']);
+  assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
 });
 test('a legacy owner sidecar never follows a symbolic link', t => {
   const f = fixture(t), directory = path.join(f.root, 'conversation-history-owners');
@@ -137,14 +135,16 @@ test('legacy account lifecycle IPC stays strict when no device replica service i
       archiveHistory: async () => { calls.push('archive'); return { ok: true }; },
       restoreHistory: async () => { calls.push('restore'); return { ok: true }; },
       permanentlyDeleteHistory: async () => { calls.push('delete'); return { ok: true }; },
-      archivedHistory: async () => ({ ok: true, chats: [{ id: 'alice' }, { id: 'bob' }] }) } });
+      archivedHistory: async () => ({ ok: true, chats: [
+        { id: 'alice', creator: { account: 'one', hub: identity().hub } },
+        { id: 'bob', creator: { account: 'two', hub: identity().hub } }] }) } });
   f.switch(identity('two'));
   for (const name of ['rename', 'archive', 'restore', 'delete', 'permanent-delete']) {
     const result = await handlers.get('pi-session-history-' + name)({}, 'alice', 'stolen');
     assert.equal(result.ok, false, name); assert.match(result.reason, /当前账号/);
   }
   assert.deepEqual(calls, []);
-  assert.deepEqual((await handlers.get('pi-session-history-archived')()).chats.map(row => row.id), ['alice', 'bob']);
+  assert.deepEqual((await handlers.get('pi-session-history-archived')()).chats.map(row => row.id), ['bob']);
   f.switch(identity());
   assert.equal((await handlers.get('pi-session-history-archive')({}, 'alice')).ok, true);
   assert.deepEqual(calls, ['archive']);

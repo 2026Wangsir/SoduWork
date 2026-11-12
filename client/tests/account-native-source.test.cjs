@@ -11,7 +11,8 @@ function setup(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'account-source-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const app = { getPath: () => dir }, actor = identity();
-  const native = { id: 'native', title: 'Requirement', adapterId: 'pi', workOwner: scope(actor) };
+  const native = { id: 'native', title: 'Requirement', adapterId: 'pi', workOwner: scope(actor),
+    creator: { account: 'one', hub: actor.hub } };
   return { app, identity: actor, item: { id: 'account-copy', sourceSessionId: native.id, sourceClientId: actor.clientId },
     native, session: { findBySessionId: () => ({ historyRow: () => native }) } };
 }
@@ -36,7 +37,7 @@ test('an account alias probes native archives without reentering the external ac
   f.session.archivedConversation = async () => null;
   assert.equal(await resolve(f), null, 'a remote-only archive must remain accessible');
   f.session.archivedConversation = async () => ({ ...f.native, workOwner: scope(identity('two')) });
-  await assert.rejects(resolve(f), /当前账号/);
+  await assert.rejects(resolve(f), /账号/);
 });
 
 test('runtime segments resolve to their stable public identity after rework or an Agent switch', async t => {
@@ -91,7 +92,7 @@ test('passive-view recovery preserves device and archive ownership boundaries', 
     } };
   assert.equal(await resolve({ ...f, item: { ...f.item, sourceClientId: 'another-device' } }), null);
   assert.equal(lookups, 0, 'foreign-device projections must not probe local execution archives');
-  await assert.rejects(resolve(f), /当前账号/);
+  await assert.rejects(resolve(f), /账号/);
   assert.equal(lookups, 1);
 });
 
@@ -139,7 +140,7 @@ test('account history canonicalizes both fresh and cached rows while keeping for
   assert.equal(calls, 1);
 });
 
-test('account history collapses device projections that share one source session', async t => {
+test('account history keeps another device source independent even when its source ID and title match', async t => {
   const f = setup(t);
   const duplicate = { ...f.item, id: 'account-old-device', sourceClientId: 'another-device', title: 'Requirement' };
   let calls = 0;
@@ -151,10 +152,28 @@ test('account history collapses device projections that share one source session
   t.after(() => sync.close());
   const result = await sync.history();
   assert.equal(calls, 1);
-  assert.deepEqual(result.chats.map(row => row.id), ['native']);
-  assert.deepEqual(result.chats[0].historyAliasIds, ['native', 'account-copy', 'account-old-device']);
-  assert.equal(result.lifecycle.length, 1);
-  assert.deepEqual(result.lifecycle[0].historyAliasIds, ['account-copy', 'native', 'account-old-device']);
+  assert.deepEqual(result.chats.map(row => row.id), ['native', 'account-old-device']);
+  assert.deepEqual(result.chats[0].historyAliasIds, ['native', 'account-copy']);
+  assert.equal(result.lifecycle.length, 2);
+  assert.deepEqual(result.lifecycle[0].historyAliasIds, ['account-copy', 'native']);
+  assert.deepEqual(result.lifecycle[1].historyAliasIds, ['account-old-device']);
+});
+
+test('account directory aliases require the exact source device and never alias foreign native IDs', async t => {
+  const f = setup(t);
+  const sync = require('../main/conversation/account-sync').create({ app: f.app,
+    identityOf: () => f.identity, store: { jobs: () => [] },
+    fetch: async (_identity, url) => ({ ok: true, json: async () => url.includes('/source') ? {} : {
+      items: [{ ...f.item, id: 'owned-new', revision: 2 }, { ...f.item, id: 'owned-old', revision: 1 },
+        { id: 'foreign', sourceClientId: 'another-device', sourceSessionId: 'foreign-native' }], hasMore: false,
+    } }),
+  });
+  t.after(() => sync.close());
+  const result = await sync.history({ source: 'account' });
+  assert.deepEqual(result.chats.map(row => row.id), ['owned-new', 'foreign']);
+  assert.deepEqual(result.chats[0].historyAliasIds, ['owned-new', 'owned-old']);
+  assert.equal(await sync.row('foreign-native'), null);
+  assert.equal((await sync.row('foreign')).id, 'foreign');
 });
 
 test('source aliases resolve to the current device account record when Hub has a stale duplicate', async t => {
@@ -166,4 +185,20 @@ test('source aliases resolve to the current device account record when Hub has a
   t.after(() => sync.close());
   await sync.history();
   assert.equal((await sync.row('native')).id, 'account-copy');
+});
+
+test('native source promotion requires verified original Hub provenance', async t => {
+  const f = setup(t);
+  await assert.rejects(resolve({ ...f, identity: { ...f.identity, hub: 'https://another.invalid' } }), /账号或服务/);
+  delete f.native.creator;
+  await assert.rejects(resolve(f), error => error.code === 'HISTORY_HUB_MISSING');
+  delete f.native.workOwner;
+  await assert.rejects(resolve(f), error => error.code === 'HISTORY_OWNER_MISSING');
+});
+
+test('a cached copy never becomes an executable source even with a native-looking adapter', async t => {
+  const f = setup(t);
+  Object.assign(f.native, { cached: true, localReplica: true,
+    source: { id: 'remote-origin', account: 'one', hub: f.identity.hub } });
+  assert.equal(await resolve(f), null);
 });

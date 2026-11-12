@@ -100,11 +100,25 @@ test('plugin-center launch waits for asynchronous selection before the first sen
  assert.match(source,/selectionSeq !== _pluginSelectSeq/);
  assert.match(source,/_pluginSelectTask = selection\.catch/);
 });
-test('pending plugin send is invalidated when the visible conversation changes',()=>{
+test('pending plugin send is fenced to its original view, account and execution selection before preparation',()=>{
  const source=read('components/panels/panels-compose.js');
+ const entry=source.slice(source.indexOf('async function _enterChat('),source.indexOf('async function _openRequirementPicker('));
+ const preparation=entry.slice(entry.indexOf('const viewSeq = _composeViewSeq;'));
+ const warmup=entry.indexOf('await global.ComposeModelPicker?.ready?.()');
+ assert.ok(warmup >= 0, 'the local first send waits for model preparation');
+ const beforeAwait=entry.slice(0,warmup);
  assert.match(source,/let _composeViewSeq = 0/);
- assert.match(source,/const viewSeq = _composeViewSeq/);
- assert.match(source,/if \(viewSeq !== _composeViewSeq\) return false/);
+ // Behavioral navigation/account races are exercised by compose-first-send-race.test.cjs.
+ // Keep the source contract here: identity and execution selection precede warmup.
+ assert.match(beforeAwait,/const viewSeq = _composeViewSeq/);
+ assert.match(beforeAwait,/const ownerScope = global\.SoduWorkAPI\?\.taskStorageKey\?\.\('ops'\) \|\| ''/);
+ assert.match(beforeAwait,/const adapterId = global\.ComposeRuntime\?\.value\?\.\(\) \|\| 'pi'/);
+ assert.match(beforeAwait,/const executionRevision = global\.ComposeExecution\?\.revision\?\.\(\)/);
+ assert.match(beforeAwait,/const currentEntry = \(\) => viewSeq === _composeViewSeq &&\s*ownerScope === \(global\.SoduWorkAPI\?\.taskStorageKey\?\.\('ops'\) \|\| ''\)/);
+ assert.match(beforeAwait,/const current = \(\) => currentEntry\(\) &&/);
+ assert.match(preparation,/await global\.ComposeModelPicker\?\.ready\?\.\(\);\s*if \(!current\(\)\) return false/);
+ assert.match(preparation,/await _capabilityPromise\.catch\(\(\) => \{\}\);\s*if \(!current\(\)\) return false/);
+ assert.match(preparation,/await _pluginSelectTask;\s*await global\.ComposeRuntime\?\.ready\?\.\(\);\s*if \(!current\(\)\) return false/);
  assert.match(source,/_composeViewSeq \+= 1/);
 });
 test('delete action is visible in the chat menu and preserves the existing delete handler',()=>{

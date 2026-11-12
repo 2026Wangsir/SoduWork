@@ -75,7 +75,9 @@ function fixture(options = {}) {
       if (name === '../conversation/history-access') {
         const actual = require(path.join(__dirname, '../main/pi-session', name));
         return { ...actual,
-          actor(app, identity) { return actual.actor(app, identity === undefined ? cachedIdentity() : identity); } };
+          actor(app, identity) { return actual.actor(app, identity === undefined ? cachedIdentity() : identity); },
+          assertCurrent(app, captured, identity) { return actual.assertCurrent(app, captured,
+            identity === undefined ? cachedIdentity() : identity); } };
       }
       if (name === '../conversation/acceptance-session' && options.acceptance) return options.acceptance;
       if (name === '../conversation/account-native-source.cjs') return require('../main/conversation/account-native-source.cjs');
@@ -112,7 +114,7 @@ test('a downloaded transcript cannot shadow the cloud original on repeated deskt
     localReplica: !remote, passiveCloudView: remote, snapshot: () => ({ messages: [{role: 'assistant', text: 'CLOUD-OK'}] }),
     close: async () => true });
   const f = fixture({ app, session: bridge,
-    sharedHistory: { resolve: async id => store.get(id), open: async id => { localReads++; return view(store.get(id).id, false); } },
+    sharedHistory: { store, resolve: async id => store.get(id), open: async id => { localReads++; return view(store.get(id).id, false); } },
     cloudHandoff: { isRemote: id => id === original, observe() {}, reopen: async id => { remoteReads++; return view(id, true); } },
     openReply: handle => ({ ok: true, sessionId: handle.sessionId, cloud: handle.passiveCloudView, messages: handle.snapshot().messages }),
   });
@@ -152,7 +154,7 @@ test('a downloaded account transcript cannot intercept authenticated original op
   store.register([{ id: copy, cached: true, source: { id: original }, historyAliasIds: ['explicit-native-alias'] }]);
   let current = actor, localReads = 0, accountReads = 0;
   const f = fixture({ app, cachedIdentity: () => current, identityOf: async () => current,
-    sharedHistory: { resolve: async id => store.get(id), open: async id => {
+    sharedHistory: { store, resolve: async id => current ? store.get(id) : null, open: async id => {
       localReads++; return { sessionId: id, localReplica: true };
     } },
     accountSync: { isAccountConversation: id => id === original,
@@ -167,6 +169,9 @@ test('a downloaded account transcript cannot intercept authenticated original op
   assert.equal(reply.adapterId, 'account-sync'); assert.equal(localReads, 0); assert.equal(accountReads, 1);
   current = null;
   assert.equal((await f.open({ chatId: original })).ok, false);
+  for (const id of [copy, 'explicit-native-alias']) assert.equal((await f.open({ chatId: id })).ok, false,
+    'Explicit logout cannot open a retained account-owned copy');
+  current = actor;
   for (const id of [copy, 'explicit-native-alias']) {
     const local = await f.open({ chatId: id });
     assert.equal(local.ok, true, local.reason); assert.equal(local.sessionId, copy); assert.equal(local.localReplica, true);
@@ -180,6 +185,7 @@ test('owned local history remains readable offline without starting a runtime or
       workOwner: require('../main/platform-connections/runtime.cjs').scope(automationIdentity()) };
     const projection = { sessionId: local.id, localReplica: true, readOnly: true };
     const f = fixture({ identityOf: unavailable, sharedHistory: {
+      store: { get: async id => id === local.id ? local : null },
       resolve: async id => id === local.id ? local : null, open: async () => projection,
     }, openReply: handle => ({ ok: true, readOnly: handle.readOnly }) });
     assert.equal((await f.open({ chatId: local.id })).readOnly, true);
@@ -265,7 +271,7 @@ test('direct expected identity rejects a same-account connection switch during p
   } });
   const result = await f.openExpected({}, owner);
   assert.equal(result.ok, false);
-  assert.match(result.reason, /连接环境已切换/);
+  assert.match(result.reason, /连接环境已切换|账号已切换/);
   assert.equal(f.calls.length, 0, 'an expected connection remains fixed through preparation');
   assert.equal(f.rendererGrants(), 0);
 });
@@ -278,7 +284,7 @@ test('direct expected identity closes a runtime if the same account changes conn
     memoryAttach: async () => { current = { ...owner, hub: 'http://other-fixture.invalid' }; } });
   const result = await f.openExpected({}, owner);
   assert.equal(result.ok, false);
-  assert.match(result.reason, /连接环境已切换/);
+  assert.match(result.reason, /连接环境已切换|账号已切换/);
   assert.equal(closes, 1);
   assert.equal(f.rendererGrants(), 0);
   assert.equal(f.viewAttachments(), 0);
@@ -332,7 +338,8 @@ test('opening a synchronized local alias reattaches the native runtime without a
   const identity = automationIdentity();
   let projections = 0;
   const live = { ref: 'native-ref', sessionId: 'native-session', cwd: os.tmpdir(),
-    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity) }) };
+    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity),
+      creator: { account: 'owner', hub: identity.hub } }) };
   const f = fixture({ live, identityOf: async () => identity, accountSync: {
     isAccountConversation: id => id === 'account-copy',
     row: async () => ({ id: 'account-copy', sourceClientId: identity.clientId, sourceSessionId: live.sessionId }),
@@ -348,7 +355,8 @@ test('opening a synchronized local alias reattaches the native runtime without a
 test('an alias restored before the history cache is ready still opens the native conversation', async () => {
   const identity = automationIdentity();
   const live = { ref: 'native-ref', sessionId: 'native-session', cwd: os.tmpdir(),
-    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity) }) };
+    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity),
+      creator: { account: 'owner', hub: identity.hub } }) };
   const f = fixture({ live, identityOf: async () => identity, accountSync: {
     isAccountConversation: () => false,
     openProjection: async () => ({ historyRow: () => ({ id: 'account-copy',
@@ -457,16 +465,19 @@ test('an account switch while an archived runtime is opening closes it before an
   assert.equal(closes, 1, 'the old-account runtime must be closed before it can be attached');
 });
 
-test('an ownerless native archive binds on the first direct open', async t => {
+test('an ownerless native archive cannot be claimed by direct open', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-history-legacy-open-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const archive = { id: 'legacy-open', path: path.join(root, 'legacy-open.jsonl'), cwd: root,
     adapterId: 'pi', count: 1 };
   fs.writeFileSync(archive.path, JSON.stringify({ type: 'session', id: archive.id }) + '\n');
+  const original = fs.readFileSync(archive.path);
   const f = fixture({ app: { getPath: () => root }, archive });
   const result = await f.open({ chatId: archive.id });
-  assert.equal(result.ok, true, result.reason);
-  assert.equal(f.calls.length, 1);
+  assert.equal(result.ok, false); assert.match(result.reason, /无法确认.*当前账号/);
+  assert.equal(f.calls.length, 0);
+  assert.equal(fs.existsSync(path.join(root, 'conversation-history-owners')), false);
+  assert.deepEqual(fs.readFileSync(archive.path), original, 'Direct open preserves the unowned original for explicit import');
 });
 
 test('an account switch during archived setup closes the runtime before renderer grants or attachment', async t => {
@@ -572,7 +583,7 @@ test('a same-account connection switch while cloud reopen is pending closes it b
   resolveRemote(remote);
   const result = await opening;
   assert.equal(result.ok, false);
-  assert.match(result.reason, /账号或服务已切换/);
+  assert.match(result.reason, /账号或服务已切换|账号已切换/);
   assert.equal(closes, 1);
   assert.equal(attachedViews, 0, 'an old-connection cloud view must not attach');
   assert.equal(f.viewAttachments(), 0);
