@@ -27,6 +27,11 @@ def prepare_environment(env: dict, data_root: str | None = None) -> None:
     root = Path(data_root or runner_data_root())
     config_home = root / "agents" / "opencode" / "config"
     config_home.mkdir(parents=True, exist_ok=True)
+    # Explicit native overrides bypass XDG_CONFIG_HOME. Managed turns must not
+    # merge personal providers, plugins, or settings into their injected config.
+    for key in list(env):
+        if key.upper() in {"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"}:
+            del env[key]
     env["XDG_CONFIG_HOME"] = str(config_home)
 
 

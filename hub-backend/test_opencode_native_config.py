@@ -18,6 +18,15 @@ from app.services import acp_bridge, local_base
 @unittest.skipUnless(os.environ.get("SODUWORK_TEST_OPENCODE_BIN"), "Requires an explicitly selected installed OpenCode")
 class OpenCodeNativeConfigTests(unittest.TestCase):
     def test_native_start_and_resume_ignore_invalid_personal_config(self):
+        self.check_config()
+
+    def test_native_and_acp_ignore_explicit_personal_config_overrides(self):
+        for override in ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"):
+            for native in (False, True):
+                with self.subTest(override=override, native=native):
+                    self.check_config(override=override, native=native)
+
+    def check_config(self, *, override="", native=False):
         executable = Path(os.environ["SODUWORK_TEST_OPENCODE_BIN"]).resolve()
         self.assertTrue(executable.is_file())
         calls = []
@@ -58,7 +67,7 @@ class OpenCodeNativeConfigTests(unittest.TestCase):
                 personal.parent.mkdir(parents=True)
                 original = b"not JSON: PRIVATE-FIXTURE"
                 personal.write_bytes(original)
-                # Preserve HOME but never read real auth/database/provider state.
+                # Preserve synthetic HOME; never read real auth/database/provider state.
                 allowed = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
                            "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"}
                 clean = {key: value for key, value in os.environ.items() if key.upper() in allowed}
@@ -66,6 +75,9 @@ class OpenCodeNativeConfigTests(unittest.TestCase):
                     target = root / key
                     target.mkdir()
                     clean[key] = str(target)
+                home = root / "home"
+                home.mkdir()
+                clean["HOME"] = clean["USERPROFILE"] = str(home)
                 clean.update({
                     "SODUWORK_DATA_ROOT": str(root / "runner"),
                     "XDG_CONFIG_HOME": str(personal.parent.parent),
@@ -76,6 +88,9 @@ class OpenCodeNativeConfigTests(unittest.TestCase):
                     "PYTHONUTF8": "1",
                     "PYTHONDONTWRITEBYTECODE": "1",
                 })
+                inherited = ({override: str(personal if override == "OPENCODE_CONFIG" else personal.parent)}
+                             if override else {})
+                clean.update(inherited)
                 cfg = {"llm": {"base": f"http://127.0.0.1:{server.server_port}/v1",
                                "key": "fixture-key", "model": "fixture", "kind": "openai-compat"}}
                 with patch.dict(os.environ, clean, clear=True):
@@ -87,14 +102,20 @@ class OpenCodeNativeConfigTests(unittest.TestCase):
                             "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"})
                 command = [sys.executable, str(Path(acp_bridge.__file__)), "--cwd", str(work),
                            "--agent-name", "opencode"]
+                if native:
+                    command = [str(executable), "run", "--format", "json", "--thinking", "--dir", str(work)]
+                    suffix = []
+                else:
+                    suffix = ["--", str(executable), "acp"]
                 # Emulate an already-running parent using the old environment.
-                old_parent = {**env, "XDG_CONFIG_HOME": str(personal.parent.parent)}
-                first = self.run_turn([*command, "--", str(executable), "acp"], old_parent)
-                sid = next((row.get("sessionID") for row in first if row.get("type") == "session"), "")
+                old_parent = ({**env, "XDG_CONFIG_HOME": str(personal.parent.parent), **inherited}
+                              if not native else env)
+                first = self.run_turn([*command, *suffix], old_parent)
+                sid = next((row.get("sessionID") for row in first if native or row.get("type") == "session"), "")
                 self.assertTrue(sid.startswith("ses_"))
-                second = self.run_turn([*command, "--session", sid, "--", str(executable), "acp"], env)
+                second = self.run_turn([*command, "--session", sid, *suffix], env)
                 self.assertEqual(next((row.get("sessionID") for row in second
-                                       if row.get("type") == "session"), ""), sid)
+                                       if native or row.get("type") == "session"), ""), sid)
                 for events in (first, second):
                     self.assertTrue(any(row.get("type") == "text" and
                                         row.get("part", {}).get("text") == "OK" for row in events))
