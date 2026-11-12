@@ -45,12 +45,13 @@ if (typeof electron === 'string') {
       const mark=icon.querySelector('.agent-monogram,svg'),bounds=icon.getBoundingClientRect(),m=mark?.getBoundingClientRect();
       const range=document.createRange();if(mark)range.selectNodeContents(mark);const text=mark?.tagName==='SPAN'?range.getBoundingClientRect():m;
       return {actual:signature(icon),expected:signature(expected),visible:icon.checkVisibility(),
+        unobscured:icon.contains(document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2)),
         bounds:{width:bounds.width,height:bounds.height},fits:!!text&&text.left>=bounds.left-1&&text.right<=bounds.right+1&&text.top>=bounds.top-1&&text.bottom<=bounds.bottom+1};
     })()`);
     report.checks.push({ surface, selector, id, ...result });
     try {
       assert.equal(result.error, undefined); assert.deepEqual(result.actual, result.expected);
-      assert.equal(result.visible, true); assert.equal(result.fits, true);
+      assert.equal(result.visible, true); assert.equal(result.fits, true); assert.equal(result.unobscured, true);
       assert.notEqual(result.actual.mark, '•');
     } catch (_) { report.failures.push({ surface, selector, id, result }); }
   }
@@ -93,7 +94,9 @@ if (typeof electron === 'string') {
         soduWorkAPI.conversationSession.runtimes=async()=>brandReply();
         soduWorkAPI.conversationSession.conversationRuntimes=async()=>brandReply();
         window.dispatchEvent(new Event('agent-runtimes-changed'));void 0`);
-      for (const [width, zoom] of [[1400, 1], [500, 1.25]]) {
+      // The full workspace includes its sidebar; keep it at a desktop width.
+      // The standalone conversation fixture also exercises a narrow composer.
+      for (const [width, zoom] of [[1400, 1], [chat ? 500 : 1000, 1.25]]) {
         win.setSize(width, 950); win.webContents.setZoomFactor(zoom); await sleep(120);
         await click(trigger);
         await until(`document.querySelector(${JSON.stringify(popup)})?.checkVisibility() && document.querySelector(${JSON.stringify(popup)}).querySelectorAll('[data-runtime]').length===4`);
