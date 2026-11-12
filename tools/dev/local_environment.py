@@ -120,6 +120,11 @@ def check_dependencies() -> tuple[str, str]:
     return node, npm
 
 
+def check_desktop_session() -> None:
+    if sys.platform.startswith('linux') and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+        raise StartupError("Desktop startup requires a graphical Linux session. Use start.py without --desktop on a server.")
+
+
 def dependency_report(*, desktop: bool = False) -> None:
     """Read-only prerequisite check; never initialize an instance or install software."""
     node, npm = check_dependencies()
@@ -127,8 +132,7 @@ def dependency_report(*, desktop: bool = False) -> None:
     print(f"Node.js: {subprocess.check_output([node, '--version'], text=True, **spawn_options()).strip()}")
     print(f"npm: {npm}\nPlatform: {platform.system()} {platform.machine()}")
     if desktop:
-        if sys.platform.startswith('linux') and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
-            raise StartupError("Desktop startup requires a graphical Linux session. Use start.py without --desktop on a server.")
+        check_desktop_session()
         print("Desktop: Electron will be installed in this instance's private application directory.")
     print("Prerequisites are ready. First-time setup needs internet access; no files were changed.")
 
@@ -271,8 +275,7 @@ def electron_binary(client: Path) -> Path:
 def prepare_desktop(state: Path, log: Path) -> Path:
     """Install only in the launcher's generated copy, leaving the checkout untouched."""
     node, npm = check_dependencies()
-    if sys.platform.startswith('linux') and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
-        raise StartupError("Desktop startup requires a graphical Linux session. Use start.py without --desktop on a server.")
+    check_desktop_session()
     client = state / 'application/client'
     stamp = state / 'desktop-dependencies.sha256'
     wanted = hashlib.sha256((client / 'package-lock.json').read_bytes()).hexdigest()

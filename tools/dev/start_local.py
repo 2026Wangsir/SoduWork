@@ -18,7 +18,7 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 import webbrowser
 
-from .local_environment import (ROOT, StartupError, check_dependencies, dependency_report,
+from .local_environment import (ROOT, StartupError, check_dependencies, check_desktop_session, dependency_report,
                                 prepare, prepare_desktop, spawn_options, stop_child, wait_child)
 
 
@@ -394,6 +394,8 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         check_source_checkout(ROOT)
+        if args.desktop:
+            check_desktop_session()
         if args.check:
             dependency_report(desktop=args.desktop)
             return 0
