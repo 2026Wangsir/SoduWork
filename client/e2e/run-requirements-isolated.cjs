@@ -13,7 +13,7 @@ const report = {ok: false, scope: 'Isolated HTTP/SQLite and production Electron 
 fs.mkdirSync(output, {recursive: true});
 (async () => {
   for (const spec of wanted) {
-    if (!['requirements-workspace', 'requirements-integration', 'project-conversation', 'requirements-acceptance-live', 'requirements-delivery-rework'].includes(spec)) throw Error('Unsupported suite');
+    if (!['requirements-workspace', 'requirements-integration', 'project-conversation', 'requirements-acceptance-live', 'requirements-delivery-rework', 'requirements-acceptance-preflight'].includes(spec)) throw Error('Unsupported suite');
     const dir = path.join(output, spec); fs.mkdirSync(dir, {recursive: true});
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-collab-e2e-'));
     const probe = net.createServer();
@@ -21,7 +21,8 @@ fs.mkdirSync(output, {recursive: true});
     const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
     const hub = 'http://127.0.0.1:' + port;
     let logs = '';
-    const module = ['requirements-acceptance-live', 'requirements-delivery-rework'].includes(spec) ? 'tests.acceptance_browser_server:app' : 'tests.unified_requirements_browser_server:app';
+    const module = ['requirements-acceptance-live', 'requirements-delivery-rework', 'requirements-acceptance-preflight'].includes(spec)
+      ? 'tests.acceptance_browser_server:app' : 'tests.unified_requirements_browser_server:app';
     const server = spawn(python, ['-m', 'uvicorn', module, '--host', '127.0.0.1', '--port', String(port)],
       {cwd: backend, windowsHide: true, env: {...process.env, SODUWORK_COLLAB_E2E_ROOT: temporary}, stdio: ['ignore', 'pipe', 'pipe']});
     server.on('error', error => {logs += error.stack;});

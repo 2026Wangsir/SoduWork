@@ -58,11 +58,38 @@ function fixture({ artifact, input, cleanup, location } = {}) {
     on: (name, fn) => { handlers[name] = (event, payload) => { fn(event, payload); return event.returnValue; }; } }, WebContentsView: View,
     session: { fromPartition: () => ({ on: () => {}, closeAllConnections: async () => {}, clearData: async () => cleanup?.promise, clearAuthCache: async () => {} }) },
     BrowserWindow: Window, shell: { openExternal: async url => { external.push(url); } } });
-  const call = (name, payload) => handlers['work-preview-' + name]({ sender }, payload);
+  const call = (name, payload, source = sender) => handlers['work-preview-' + name]({ sender: source }, payload);
   const show = (patch = {}) => call('show', { tabId: 'tab', ref: 'session-a', url: 'https://fixture.test/a', bounds: { width: 400, height: 300 }, ...patch });
   const detached = (tabId, patch = {}) => call('show-detached', { tabId, url: 'https://fixture.test/app/' + tabId, label: tabId, ...patch });
   return { call, show, detached, views, windows, states, sender, host, immediates, external, replaceSession(value) { session = value; }, changeCwd(value) { session.cwd = value; } };
 }
+
+test('installed application pages open, invoke their bridge and reject a changed account', async t => {
+  const store = require('../main/app-settings-store.cjs');
+  let account = 'preview-account-a';
+  store.configure({ ownerOf: () => account });
+  t.after(() => store.configure(undefined));
+  const f = fixture(); t.after(() => f.call('destroy', ''));
+  const appBridge = { appId: 'plugin:local:preview-fixture', contributionId: 'main',
+    version: 1, origin: 'https://fixture.test', capabilities: ['context.read'] };
+  const opened = await f.show({ appBridge });
+  assert.equal(opened.ok, true, opened.reason);
+  const contents = f.views[0].originalContents;
+  const request = f.call('app-request', { id: 'context-1', method: 'context.get' }, contents);
+  const forwarded = f.states.find(([name]) => name === 'work-preview-app-request');
+  assert.equal(forwarded?.[1].appId, appBridge.appId);
+  assert.equal(f.call('app-authorize', 'context-1').ok, true);
+  f.call('app-response', { id: 'context-1', result: { ok: true, value: 'available' } });
+  assert.equal((await request).value, 'available');
+  account = 'preview-account-b';
+  const denied = await f.call('app-request', { id: 'context-2', method: 'context.get' }, contents);
+  assert.equal(denied.ok, false);
+  assert.match(denied.reason, /account changed/i);
+  const reopened = await f.show({ appBridge });
+  assert.equal(reopened.ok, true, reopened.reason);
+  assert.equal(contents.dead, true, 'reopening must replace the previous account page');
+  assert.equal(f.views.length, 2);
+});
 
 test('preview state distinguishes the displayed local file from its HTTP loading and external-browser URL', async t => {
   const artifact = deferred(), internal = 'http://127.0.0.1:9876/index.html';

@@ -312,6 +312,7 @@ function _bind(el) {
     if (global.ComposeSkills) {
       ctx._skillPicker = ComposeSkills.create({
         host: el.querySelector('.nbox'), input,
+        onOpen: () => _loadChatSkills(true),
         onChange: names => {
           el.dataset.skillCount = String(names.length);
           ChatTools.paintSendButton(el, ctx._runtimeBusy(), ctx._messageAttachments, ctx._stopState, _canStop(), ctx._sendState);

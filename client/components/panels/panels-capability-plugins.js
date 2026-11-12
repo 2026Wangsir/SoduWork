@@ -61,6 +61,9 @@
     global.SoduWorkPluginPresentation.isWorkspaceApp(item));
   function count() { return (catalog.items || []).filter(item => !isWorkspaceApp(item)).length; }
   function managedCount() {
+    if (global.SoduWorkPluginPresentation?.managedPlugins) {
+      return global.SoduWorkPluginPresentation.managedPlugins(catalog).length;
+    }
     return new Set((catalog.items || []).filter(item => item && item.pluginId && !isWorkspaceApp(item) && (item.personal || item.installed || item.permissions?.canEdit === true))
       .map(item => item.pluginId)).size; }
   function marketCount() { return (catalog.items || []).filter(item => !item.personal && item.listed !== false && !isWorkspaceApp(item)).length; }
@@ -146,6 +149,10 @@
     const category = global.SoduWorkCapabilityDirectory
       ? global.SoduWorkCapabilityDirectory.categoryFor(item, catalog).name : '';
     const source = item.builtIn ? 'SoduWork 内置' : item.personal ? '个人插件' : '企业插件';
+    const publication = item.creatorPublication;
+    const receipt = publication?.submission, company = publication?.company;
+    const publicationLabel = receipt && (global.SoduWorkPluginPublication?.submissionLabel?.(receipt) ||
+      trustName(receipt.trustState, receipt.enabled, receipt.reviewDecision)[0]);
     const platformReady = !global.SoduWorkPlatformConnections || global.SoduWorkPlatformConnections.ready(item);
     const canUse = platformReady && life.code === 'ready' && !readiness.runtimeBlocked && !taskOnly &&
       (item.personal || item.installed) && (item.entrypoints || {}).conversation !== false &&
@@ -162,8 +169,14 @@
         '</b></span>' +
       '<span class="cap-plugin-desc">' + displayCopy(item, 'description') + '</span>' +
       '<span class="cap-plugin-meta"><em>' + h(source) + '</em>' +
+        (publication ? '<i>·</i><em data-user-content>v' + h(item.version) + '</em>' : '') +
         (category ? '<i>·</i><em class="cap-plugin-category">' + h(category) + '</em>' : '') + '</span></span>' +
-      '</button><div class="cap-plugin-side"><span class="cap-plugin-card-status is-' + h(!platformReady || readiness.runtimeBlocked ? 'warning' : life.tone) + '">' +
+      '</button>' + (receipt ? '<div class="cap-plugin-publication"><button type="button" class="btn-mini" data-plugin-submission="' +
+        h(receipt.pluginId) + '" data-plugin-draft="' + h(item.pluginId) + '" data-plugin-submission-version="' + h(receipt.versionId || receipt.version) + '">' +
+        systemCopy('我的申请') + ' · <span data-user-content>v' + h(receipt.version) + '</span> · ' + systemCopy(publicationLabel) + '</button>' +
+        (company ? '<button type="button" class="btn-mini" data-plugin="' + h(company.pluginId) + '">' +
+          systemCopy('企业插件') + ' · <span data-user-content>v' + h(company.version) + '</span></button>' : '') + '</div>' : '') +
+      '<div class="cap-plugin-side"><span class="cap-plugin-card-status is-' + h(!platformReady || readiness.runtimeBlocked ? 'warning' : life.tone) + '">' +
         h(!platformReady ? '待连接账号' : readiness.runtimeBlocked ? '暂不可用' : life.label) + '</span>' +
       '<span class="cap-plugin-card-actions"><button type="button" class="btn-mini" data-plugin="' + h(item.pluginId) + '">详情</button>' +
       (canUse ? '<button type="button" class="btn-mini cap-plugin-use" data-plugin-use="' + h(item.pluginId) + '">立即使用</button>' :
@@ -186,6 +199,7 @@
     const focusId = focused && focused.id;
     const focusSource = focused && focused.dataset.pluginSource;
     const focusPlugin = focused && (focused.dataset.plugin || focused.dataset.pluginUse);
+    const focusSubmission = focused && focused.dataset.pluginSubmission;
     const focusAction = focused && (focused.dataset.pluginUse ? 'data-plugin-use' : 'data-plugin');
     const focusClass = focused && focused.className;
     const scroll = content.scrollTop;
@@ -216,6 +230,8 @@
     else if (focusSource) content.querySelector('[data-plugin-source="' + focusSource + '"]')?.focus({ preventScroll: true });
     else if (focusPlugin) Array.from(content.querySelectorAll('[' + focusAction + ']')).find(button =>
       button.getAttribute(focusAction) === focusPlugin && button.className === focusClass)?.focus({ preventScroll: true });
+    else if (focusSubmission) Array.from(content.querySelectorAll('[data-plugin-submission]')).find(button =>
+      button.dataset.pluginSubmission === focusSubmission)?.focus({ preventScroll: true });
     const retry = content.querySelector('#capPluginRemoteRetry');
     if (retry) retry.addEventListener('click', async function () {
       this.disabled = true; this.textContent = '正在重试…';
@@ -230,6 +246,13 @@
         openDetail((catalog.items || []).find(x => x.pluginId === button.dataset.plugin), ctx);
       });
     });
+    content.querySelectorAll('[data-plugin-submission]').forEach(button => button.addEventListener('click', () => {
+      const receipt = (catalog.submissions || []).find(row => row.pluginId === button.dataset.pluginSubmission &&
+        (row.versionId || row.version) === button.dataset.pluginSubmissionVersion);
+      const personal = global.SoduWorkPluginPresentation.managedPlugins(catalog).find(row =>
+        row.pluginId === button.dataset.pluginDraft && row.creatorPublication?.submission === receipt);
+      if (receipt && personal) openSubmission(receipt, ctx, undefined, personal.pluginId);
+    }));
     content.querySelectorAll('[data-plugin-use]').forEach(function (button) {
       button.addEventListener('click', function () {
         const item = (catalog.items || []).find(x => x.pluginId === button.dataset.pluginUse);
@@ -237,9 +260,9 @@
       });
     });
   }
-  function openSubmission(item, ctx, onBack) {
+  function openSubmission(item, ctx, onBack, localPluginId) {
     return global.SoduWorkPluginPublication.openSubmission(item, ctx, {
-      items: catalog.items || [], trustName, sourceName, choosePackage, openDetail, onBack,
+      items: catalog.items || [], trustName, sourceName, choosePackage, openDetail, onBack, localPluginId,
     });
   }
   function openById(pluginId, ctx) {

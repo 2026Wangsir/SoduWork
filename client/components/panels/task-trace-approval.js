@@ -107,12 +107,19 @@
       assertCurrent();
       if (global.Requirements && (!latest || global.Requirements.stage(latest) !== 'reviewing' || latest.reviewedAt || latest.canViewExecution === false))
         throw new Error('需求状态或验收权限已变化，请刷新后重试');
-      if (mode === 'auto' && global.SoduWorkAPI?.getAcceptanceContext) {
+      if (mode === 'auto') {
+        const translated = message => global.SoduWorkI18n?.translateText?.(message) || message;
+        if (typeof global.SoduWorkAPI?.getAcceptanceContext !== 'function')
+          throw new Error(translated('暂时无法读取验收条件，请刷新后重试'));
         const context = await global.SoduWorkAPI.getAcceptanceContext(id);
         assertCurrent();
         if (context?.readiness?.requiresHumanConfirmation === true ||
             (context?.artifact?.kind === 'manual' && context?.artifact?.manifest?.manual === true))
           throw new Error('本轮没有可自动核验的交付物，请使用手动验收确认实际结果');
+        // Use the approval's frozen criteria, not a mutable task field. Fail
+        // before navigation; runtime and Hub guards still recheck on send.
+        if (!Array.isArray(context?.criteria) || !context.criteria.length || !context.artifactVersionId)
+          throw new Error(translated('自动验收需要明确的验收标准和固定交付版本，请先补齐或选择手动验收'));
       }
       const capabilityResult = currentTeamCapability();
       const capability = capabilityResult && typeof capabilityResult.then === 'function'

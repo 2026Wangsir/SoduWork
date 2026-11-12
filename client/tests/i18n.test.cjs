@@ -19,6 +19,21 @@ test('device and account history controls retain all four locale translations', 
     assert.deepEqual(keys.map(key => c.api.t('workspace.history.' + key)), values);
   }
 });
+test('company visibility copy distinguishes related people in all supported locales', () => {
+  const c = client();
+  const phrases = ['同公司可见', '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。',
+    '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。', '仓库成员可见',
+    '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。'];
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    const translated = phrases.map(text => c.api.translateText(text));
+    assert.notEqual(translated[1],translated[2]);
+    for (const [index,text] of translated.entries()) {
+      if (locale === 'zh-CN') assert.equal(text,phrases[index]);
+      else assert.notEqual(text,phrases[index]);
+    }
+  }
+});
 test('personal action scope guidance follows every supported locale', () => {
   const c = client();
   const phrases = ['“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。',
@@ -431,6 +446,20 @@ test('server message descriptors switch locale without translating interpolated 
     api.setLocale(locale);
     assert.equal(api.t('notification.task_assignment', 'legacy fallback', params), expected[locale]);
     assert.notEqual(api.t('agent.auth.required', 'untranslated'), 'untranslated');
+  }
+});
+
+test('publication notices translate in every shipped locale while retaining exact plugin names and versions', () => {
+  const { api } = client(), params = { name: '保存 {version}', version: '2.0.0-beta' };
+  for (const locale of ['en-US', 'ja-JP', 'ko-KR', 'zh-CN']) {
+    api.setLocale(locale);
+    for (const key of ['notification.plugin_unpublished', 'notification.plugin_version_revoked']) {
+      const text = api.t(key, 'missing', params);
+      assert.notEqual(text, 'missing');
+      assert.ok(text.includes(params.name), locale + ' preserves business text');
+      if (key.endsWith('revoked')) assert.ok(text.includes(params.version));
+    }
+    if (locale !== 'zh-CN') assert.notEqual(api.translateText('发布状态更新'), '发布状态更新');
   }
 });
 

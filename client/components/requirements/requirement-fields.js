@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
   const esc = value => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const wired = new WeakSet(), composing = new WeakSet();
+  const wired = new WeakSet(), composing = new WeakSet(), visibilityWired = new WeakSet();
   const sectionPaths = {
     content: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     criteria: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
@@ -104,19 +104,42 @@
       editor.querySelector('[data-rq-tag-input]').focus();
     });
   }
+  function visibilityDescription(value, scope) {
+    if (scope === 'repository') return '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。';
+    if (scope === 'organization') value = 'organization';
+    return value === 'organization' ? '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。' :
+      '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。';
+  }
+  function visibilityHint(value, id, scope) {
+    return '<span class="rq-visibility-hint" id="' + esc(id) + '">' + visibilityDescription(value, scope) + '</span>';
+  }
+  function bindVisibility(root) {
+    if (!root?.addEventListener || visibilityWired.has(root)) return;
+    visibilityWired.add(root);
+    root.addEventListener('change', event => {
+      const select = event.target.closest('[data-rq-visibility]');
+      if (!select || select.disabled) return;
+      const hint = root.querySelector('#' + select.getAttribute('aria-describedby'));
+      if (hint) {
+        const text = visibilityDescription(select.value);
+        hint.textContent = global.SoduWorkI18n?.translateText?.(text) || text;
+      }
+    });
+  }
   function html(draft, options) {
     const kinds = global.Requirements?.kinds || { requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' };
     return '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpKind">类型</label>' +
       '<select id="cpKind">' + Object.entries(kinds).map(([key, label]) => '<option value="' + key + '"' +
         (draft.kind === key ? ' selected' : '') + '>' + esc(label) + '</option>').join('') + '</select>' +
-      '<label class="cp-k cp-k2" for="cpVisibility">可见范围</label><select id="cpVisibility">' +
+      '<label class="cp-k cp-k2" for="cpVisibility">可见范围</label><select id="cpVisibility" data-rq-visibility aria-describedby="cpVisibilityHint">' +
       '<option value="related"' + (draft.visibility !== 'organization' ? ' selected' : '') + '>仅相关人</option>' +
-      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>团队可见</option></select></div>' +
+      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>同公司可见</option></select></div>' +
+      visibilityHint(draft.visibility, 'cpVisibilityHint') +
       '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTagsInput">标签</label>' +
       tagHtml(draft.tags, {id: 'cpTags'}) + '</div>' +
       (options?.saveOnly ? '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTriage">加入阶段</label><select id="cpTriage">' +
         [['intake', '收集箱'], ['clarifying', '收集箱 · 待补充'], ['ready', '待开始']].map(([key,label]) => '<option value="' + key + '"' +
           ((draft.triageStage || options.triageStage || 'intake') === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div>' : '');
   }
-  global.RequirementFields = { html, tagHtml, bindTags, readTags, validateTags, normalizeTags, sectionIcon };
+  global.RequirementFields = { html, tagHtml, bindTags, readTags, validateTags, normalizeTags, sectionIcon, visibilityHint, bindVisibility };
 })(window);

@@ -86,6 +86,7 @@
     '请输入有效的邮箱地址。': 'Enter a valid email address.', '请输入有效的邮箱或账号。': 'Enter a valid email or account.',
     '请先获取有效的邮箱验证码。': 'Request a valid email code first.', '请输入 6 位验证码。': 'Enter the 6-digit code.',
     '请输入密码。': 'Enter a password.', '密码长度不足，请按要求重新填写。': 'The password is too short. Enter it again as required.',
+    '密码需为 {min} 至 {max} 个字符。': 'Use {min} to {max} characters for your password.',
     '两次输入的密码不一致。': 'The passwords do not match.', '请阅读并同意用户协议和隐私政策。': 'Read and agree to the terms and privacy policy.',
     '密码已重置，请用新密码登录。': 'Password reset. Sign in with the new password.', '验证成功，正在进入工作区…': 'Verified. Opening your workspace…',
     '首次使用？可选填写显示名': 'First time? Add a display name (optional)', '显示名': 'Display name', '登录并继续': 'Sign in and continue',

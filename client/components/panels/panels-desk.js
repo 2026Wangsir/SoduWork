@@ -447,7 +447,7 @@ function _noticePresentation(n) {
   let text = String(legal && globalThis.LegalUpdates ? LegalUpdates.noticeText(n.legalUpdate) : translated).replace(/^[\s\u23f0\u21bb\u2705\ud83d\udce5]+/u, '').trim();
   if (mate && n.bodyText == null && n.senderName && text.startsWith(n.senderName + '：')) text = text.slice(n.senderName.length + 1).trim();
   const report = !mate && text.match(/^(日报已生成|周报已生成)[：:]\s*([\s\S]*)$/);
-  const labels = { task: '任务动态', remind: '提醒', recur: '循环任务', system: '系统通知', notice: '工作通知', mate_receipt: '消息回执' };
+  const labels = { task: '任务动态', remind: '提醒', recur: '循环任务', system: '系统通知', notice: '工作通知', mate_receipt: '消息回执', plugin_lifecycle: '发布状态更新' };
   let title = esc(legal ? (globalThis.SoduWorkI18n?.translateText?.('系统消息') || '系统消息') : report ? report[1] : labels[n.kind] || '工作通知');
   if (n.kind === 'mate_receipt') {
     const status = { accepted: '已发送', delivered: '已送达', read: '已读' }[n.receiptStatus] || '消息回执';
@@ -456,6 +456,9 @@ function _noticePresentation(n) {
   if (mate) {
     const person = _noticeFolder === 'sent' ? n.recipientName : n.senderName;
     title = person ? '<span>' + (_noticeFolder === 'sent' ? '发送给' : '来自') + '</span> <span data-user-content>' + esc(person) + '</span>' : '同事消息';
+  }
+  if (n.kind === 'plugin_lifecycle' && _noticeFolder === 'sent' && n.recipientName) {
+    title += ' · <span data-user-content>' + esc(n.recipientName) + '</span>';
   }
   const icon = mate ? '<svg class="np-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H4l1.6-4A8 8 0 1 1 20 11.5Z"/><path d="M8 10h8M8 14h5"/></svg>' : report ? '<svg class="np-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 7h6M9 11h6M9 15h3"/></svg>' : _nkIcon(legal ? 'system' : n.kind);
   return { text: report ? report[2] : text, title, icon, mate, report: !!report };
@@ -514,7 +517,7 @@ function _renderNoticePanel() {
         '<span class="np-ico" aria-hidden="true">' + view.icon + '</span><div class="np-copy' + (expanded ? ' is-expanded' : '') + '"><div class="np-message-head"><h3 class="np-subject">' + view.title + '</h3>' +
         '<div class="np-message-meta">' + (isUnread ? '<span class="np-unread-dot" title="未读" aria-label="未读"></span>' : '') + '<time class="np-time">' + tm + '</time>' +
         (n.sentStatus && _noticeFolder === 'sent' ? '<span class="np-delivery np-' + esc(n.sentStatus) + '">' + (n.sentStatus === 'read' ? '已读' : n.sentStatus === 'delivered' ? '已送达' : '已发送') + '</span>' : '') + '</div></div>' +
-        '<div class="np-txt' + (long ? ' is-long' : '') + '"' + (view.mate ? ' data-user-content' : '') + '>' + esc(view.text) + '</div>' +
+        '<div class="np-txt' + (long ? ' is-long' : '') + '"' + (view.mate || n.textMessage ? ' data-user-content' : '') + '>' + esc(view.text) + '</div>' +
         (n.kind === 'legal_update' ? '<button type="button" class="np-preview" data-legal-update>' + esc(globalThis.SoduWorkI18n?.translateText?.('查看更新') || '查看更新') + '</button>' : '') +
         (long ? '<button type="button" class="np-expand" data-notice-expand="' + esc(key) + '" aria-expanded="' + expanded + '">' + (expanded ? '收起全文' : '展开全文') + '</button>' : '') +
         (files.length ? '<div class="np-files" data-notice-file-scope="' + esc(_syncNoticeScope()) + '">' + files.map(file => {

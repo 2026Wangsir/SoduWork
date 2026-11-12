@@ -143,6 +143,16 @@ async function setup(options = {}) {
   await js('fixture.open(' + JSON.stringify(options.open || {}) + ').then(()=>true)');
   await until('Boolean(document.querySelector("#cpCreate"))', 'actual requirement form');
 }
+async function englishDraft(stage = 'intake') {
+  await setup({ open: { triageStage: stage, text: 'Help me design a login page', proposal: {
+    title: 'Design a login page', note: 'Keep the original requirement text.', checklist: ['Deliver a working preview'],
+  } } });
+  for (const file of JSON.parse(fs.readFileSync(path.join(client, 'core/locales/manifest.json'), 'utf8'))
+    .map(file => 'core/locales/' + file).concat(['core/i18n-dom.js', 'core/i18n.js'])) {
+    await js(fs.readFileSync(path.join(client, file), 'utf8') + '\n;void 0;');
+  }
+  await js(`SoduWorkI18n.setLocale('en-US')`); await frame();
+}
 async function addFiles(names) {
   await js(`(() => {const data=new DataTransfer();for(const name of ${JSON.stringify(names)})data.items.add(new File(['fixture material'],name,{type:'text/plain'}));
     const input=document.querySelector('#wesAttachInput');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
@@ -160,6 +170,27 @@ app.whenReady().then(async () => {
     report.network.push(request.url); callback({ cancel: true });
   });
   buildPage();
+  await runCase('english-requirement-form', async () => {
+    await englishDraft(); await shot('english-form');
+    assert.doesNotMatch(await js('document.querySelector("#workEntryLayer").innerText'), /[\u4e00-\u9fff]/);
+    const original = await js('ComposeDraft.capture().draft');
+    for (const value of ['zh-CN', 'ja-JP', 'ko-KR', 'en-US']) {
+      await js(`SoduWorkI18n.setLocale(${JSON.stringify(value)})`); await frame();
+      assert.deepEqual(await js('ComposeDraft.capture().draft'), original, 'locale changes preserve the draft');
+    }
+    assert.doesNotMatch(await js('document.querySelector("#workEntryLayer").innerText'), /[\u4e00-\u9fff]/);
+  });
+  for (const stage of ['intake', 'ready']) await runCase('english-requirement-receipt-' + stage, async () => {
+    await englishDraft(stage); await click('#cpCreate');
+    await until('Boolean(document.querySelector("dialog.wes-result-dialog:modal"))');
+    await frame(); await shot('english-receipt-' + stage);
+    assert.doesNotMatch(await js('document.querySelector(".wes-result-dialog").innerText'), /[\u4e00-\u9fff]/);
+    assert.equal(await js('fixture.creates[0].task.title'), 'Design a login page');
+    assert.equal(await js('fixture.creates[0].task.note'), 'Keep the original requirement text.');
+    await button('View details');
+    await until('fixture.details.length===1');
+    assert.equal(await js('fixture.details[0].hadModal'), false);
+  });
   await runCase('success-intake-closes-form-and-opens-detail', async () => {
     await setup(); await click('#cpCreate');
     await assertDialog('需求已创建');

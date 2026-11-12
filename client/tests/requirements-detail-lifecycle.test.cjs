@@ -1079,6 +1079,58 @@ test('untouched form defaults are not unsaved edits and reverting a draft remove
   assert.notEqual(f.active().querySelector('[data-rq-confirm]').hidden, false);
 });
 
+test('imported visibility follows the explicit repository scope without rewriting its stored value', async () => {
+  for (const [provider,visibilityScope,visibility,label,description] of [
+    ['github','organization','organization','同公司可见','同公司成员可查看需求内容'],
+    ['gitlab','repository','related','仓库成员可见','仓库成员可查看需求内容'],
+  ]) {
+    const writes = [];
+    const base = {...task('imported'),origin:provider+'_issue',visibility,canEditRequirement:true,readOnly:false,
+      requirementVersion:2,repositoryIssue:{provider,visibilityScope}};
+    const f = fixture({getTask:async()=>base,patchTask:async(id,patch)=>{
+      writes.push(patch);return {...base,...patch,requirementVersion:3};
+    }});
+    await f.api.open('imported');
+    assert.ok(f.content().innerHTML.includes('<dd>'+label+'</dd>'));
+    assert.ok(f.content().innerHTML.includes(description));
+    const form = editForm(f,'imported',assigneeSelect(''));
+    form.elements.visibility = {value:visibility,disabled:true};
+    f.click('[data-rq-edit]');
+    assert.match(f.content().innerHTML,/name="visibility"[^>]*disabled data-rq-locked/);
+    assert.match(f.content().innerHTML,new RegExp('<option value="'+visibility+'" selected>'+label+'</option>'));
+    form.elements.note.value = 'Updated background';
+    f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+    assert.equal(writes.length,1);assert.equal(Object.hasOwn(writes[0],'visibility'),false);
+    assert.ok(f.content().innerHTML.includes(description));
+  }
+});
+
+test('visibility edits retain organization and related values while explaining the selected audience', async () => {
+  for (const [before,after] of [['related','organization'],['organization','related']]) {
+    const writes = [];
+    const base = {...task('visibility'),origin:'gitlab_issue',repositoryIssue:{provider:'gitlab'},
+      canEditRequirement:true,readOnly:false,requirementVersion:3,visibility:before};
+    const f = fixture({getTask:async()=>base,patchTask:async(id,patch)=>{
+      writes.push({id,patch});return {...base,...patch,requirementVersion:4};
+    }});
+    await f.api.open('visibility');
+    assert.match(f.content().innerHTML,/同公司可见|仅相关人可见/);
+    const form = editForm(f,'visibility',assigneeSelect(''));
+    form.elements.visibility = {value:before};
+    f.click('[data-rq-edit]');
+    assert.match(f.content().innerHTML,/name="visibility"[^>]*aria-describedby="rqVisibilityHint"/);
+    assert.match(f.content().innerHTML,/value="organization"[^>]*>同公司可见/);
+    assert.doesNotMatch(f.content().innerHTML,/name="visibility"[^>]*disabled|仓库成员可见/);
+    form.elements.visibility.value = after;
+    f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+    assert.equal(writes.length,1);assert.equal(writes[0].patch.visibility,after);
+    assert.equal(writes[0].patch.requirementVersion,3);
+    const description = after === 'organization' ? '同公司成员可查看需求内容' : '仅相关人可查看需求内容';
+    assert.ok(f.content().innerHTML.includes(description));
+    assert.doesNotMatch(f.content().innerHTML,/团队可见/);
+  }
+});
+
 test('saving reports progress, blocks duplicate submission and closes without discard after success', async () => {
   const pending = deferred(); let writes = 0, reads = 0, refreshes = 0;
   const f = fixture({getTask: async id => {reads++; return {...task(id),canEditRequirement:true};},

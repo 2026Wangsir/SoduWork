@@ -700,6 +700,7 @@
      */
     _wiredBox = box;
     global.RequirementFields?.bindTags(box);
+    global.RequirementFields?.bindVisibility?.(box);
 
     box.addEventListener('click', (e) => {
       const sb = e.target.closest('[data-selbtn]');

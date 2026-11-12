@@ -120,3 +120,83 @@ test('opening the new-conversation entry restores its picked skill draft without
   assert.deepEqual(Array.from(f.global._skillPicker.selected()), []);
   f.finish();
 });
+
+
+test('mounted chat skill picker discovers a later import without losing its saved selection', async () => {
+  const f = fixture(), host = element(), children = [];
+  host.appendChild = child => children.push(child);
+  let catalog = [{ name: 'existing', selectable: true }], requests = [];
+  f.global.soduWorkAPI = { conversationSession: { capabilities: async options => {
+    requests.push(options); return { ok: true, policyOk: true, skills: catalog };
+  } } };
+  vm.runInNewContext(read('chat-composer-bindings.js'), f.global);
+  f.ctx._skillLoadSeq = 0; f.ctx._sessionOptions = {};
+  const bindings = f.global.ChatComposerBindings.create(f.ctx);
+  f.ctx._skillPicker = f.global.ComposeSkills.create({ input: f.input, host,
+    onOpen: () => bindings._loadChatSkills(true) });
+  await bindings._loadChatSkills(false);
+  f.ctx._skillPicker.restore(['existing']);
+  catalog = [...catalog, { name: 'imported-skill', selectable: true, installed: true }];
+  f.input.value = '#imported'; f.input.selectionStart = f.input.value.length;
+  f.input.dispatchEvent(new Event('input'));
+  await new Promise(resolve => setImmediate(resolve));
+  const menu = children[1];
+  assert.match(menu.innerHTML, /data-skill-name="imported-skill"/);
+  assert.equal(requests.length, 2); assert.equal(requests[1].force, true);
+  assert.deepEqual(Array.from(f.ctx._skillPicker.selected()), ['existing']);
+  assert.equal(f.input.value, '#imported');
+  f.input.dispatchEvent(new Event('input'));
+  assert.equal(requests.length, 2, 'typing within the open palette does not issue repeated refreshes');
+  menu.dispatchEvent({type:'click', target:{closest:()=>({dataset:{skillName:'imported-skill'}})}});
+  assert.deepEqual(Array.from(f.ctx._skillPicker.selected()), ['existing', 'imported-skill']);
+  f.finish();
+});
+
+test('a late skill refresh cannot reopen a dismissed palette or overwrite a newer catalog', async () => {
+  const f = fixture(), host = element(), children = [], pending = [];
+  host.appendChild = child => children.push(child);
+  f.global.soduWorkAPI = { conversationSession: { capabilities: () => new Promise(resolve => pending.push(resolve)) } };
+  vm.runInNewContext(read('chat-composer-bindings.js'), f.global);
+  f.ctx._skillLoadSeq = 0; f.ctx._sessionOptions = {};
+  const bindings = f.global.ChatComposerBindings.create(f.ctx);
+  f.ctx._skillPicker = f.global.ComposeSkills.create({ input: f.input, host,
+    onOpen: () => bindings._loadChatSkills(true) });
+  f.input.value = '#'; f.input.selectionStart = 1; f.input.dispatchEvent(new Event('input'));
+  f.ctx._skillPicker.close();
+  pending[0]({ok:true,policyOk:true,skills:[{name:'old',selectable:true}]});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(children[1].classList.contains('show'), false);
+  f.input.dispatchEvent(new Event('input')); f.ctx._skillPicker.close();
+  f.input.dispatchEvent(new Event('input'));
+  pending[2]({ok:true,policyOk:true,skills:[{name:'new',selectable:true}]});
+  await new Promise(resolve => setImmediate(resolve));
+  pending[1]({ok:true,policyOk:true,skills:[{name:'stale',selectable:true}]});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(children[1].innerHTML, /data-skill-name="new"/);
+  assert.doesNotMatch(children[1].innerHTML, /data-skill-name="stale"/);
+  f.finish();
+});
+
+
+for (const selected of [[], ['office'], ['browser', 'office']]) {
+  test('new-composer skill refresh preserves capability choices and filters unavailable tools: '+selected.join(','), async () => {
+    const source = read('panels-compose.js');
+    const loader = source.slice(source.indexOf('  function _loadCapabilities('), source.indexOf('  function _renderCapabilities()'));
+    const rows = [
+      {id:'computer',selectable:true,deviceGranted:true,selected:true},
+      {id:'office',selectable:true,deviceGranted:true,selected:false},
+      {id:'browser',selectable:false,deviceGranted:true,selected:true},
+    ];
+    const state = { _capLoading:false, _capabilityRequestKey:'same', _capabilityRetryKey:'',
+      _skillIconSeq:0, _pickedModel:'', _requestedCapabilities:null, _pickedCapabilities:new Set(selected),
+      _skillPicker:{setLoading(){},setItems(){}}, _capabilityKey:()=> 'same',
+      _capabilities:[], _skills:[], _capabilityPromise:null,
+      _renderCapabilities(){}, _enrichSkillIcons(){}, _awaitCapability:p=>p,
+      document:{getElementById:()=>null},
+      global:{soduWorkAPI:{conversationSession:{capabilities:async()=>({ok:true,items:rows,skills:[]})}}} };
+    vm.runInNewContext(loader, state);
+    await state._loadCapabilities(true, {preserveSelection:true});
+    assert.deepEqual(Array.from(state._pickedCapabilities), selected.filter(id=>id!=='browser'));
+    assert.equal(state._pickedCapabilities.has('computer'), false, 'opening the skill picker cannot reenable an unselected tool');
+  });
+}
