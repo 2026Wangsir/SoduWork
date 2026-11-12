@@ -129,6 +129,7 @@ html[data-desk-panel="workspace"][data-workspace-layout="utility"] .ws-resizer{d
   color:var(--ws-list-ink);font-size:14.5px;line-height:1;font-weight:420;
   transition:background-color .14s ease,color .14s ease;position:relative}
 .ws-nav-item svg{width:15px;height:15px;flex:0 0 15px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.ws-nav-item .ws-settings-icon{width:20px;height:20px;flex:0 0 20px}
 .ws-nav-item:hover{background:color-mix(in srgb,var(--bg-3) 72%,transparent);color:var(--ink-2)}
 .ws-nav-item.active{background:var(--ws-active);color:color-mix(in srgb,var(--accent) 68%,var(--ink-3));font-weight:470}
 .ws-nav-item.active:before{content:"";position:absolute;left:0;width:2px;height:16px;border-radius:0 3px 3px 0;background:var(--accent)}

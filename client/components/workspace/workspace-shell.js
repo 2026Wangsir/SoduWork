@@ -166,6 +166,23 @@
   const CONVERSATION_KEYS = new Set(['create', 'pichat']);
 
   const icon = (key) => '<svg viewBox="0 0 24 24">' + (ICONS[key] || ICONS.history) + '</svg>';
+  /* Personal navigation uses a lighter, consistently sized outline set.
+     Inherit its ink from the menu so themes and selection keep the same geometry. */
+  const SETTINGS_MENU_ICONS = {
+    account: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="2.75"/><path d="M6 18.5V18a6 6 0 0 1 12 0v.5"/>',
+    usage: '<path d="M5.5 18.5a9 9 0 1 1 13 0M12 3v2M3 12h2M19 12h2M13.25 10.75 17 7"/><circle cx="12" cy="12" r="1.75"/>',
+    agents: '<rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 3v4M2 11v4M22 11v4M9 16h6M8.5 11.5v1M15.5 11.5v1"/>',
+    models: '<path d="m12 3 9 4.5-9 4.5-9-4.5ZM3 12l9 4.5 9-4.5M3 16.5l9 4.5 9-4.5"/>',
+    cloud: '<path d="M7.25 18.5H6.5a4 4 0 1 1 .2-8 5.75 5.75 0 0 1 11.2-1.75A4.9 4.9 0 0 1 17 18.5Z"/>',
+    codeacct: '<circle cx="8" cy="16" r="4.5"/><path d="m11.25 12.75 9-9M17.5 6.5 20 9M14.5 9.5 17 12"/>',
+    archive: '<rect x="3.5" y="3.5" width="17" height="4.5" rx="1.5"/><path d="M5 8v10.5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8M9.5 12h5"/>',
+    shortcuts: '<rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6.5 9h1M11.5 9h1M16.5 9h1M6.5 12h1M11.5 12h1M16.5 12h1M7.5 15.5h9"/>',
+    skin: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.25 5.25l1.5 1.5M17.25 17.25l1.5 1.5M5.25 18.75l1.5-1.5M17.25 6.75l1.5-1.5"/>',
+    settings: '<path d="M10 3h4l.6 2.2 1.7 1 2.2-.6 2 3.4-1.6 1.6v2.8l1.6 1.6-2 3.4-2.2-.6-1.7 1L14 21h-4l-.6-2.2-1.7-1-2.2.6-2-3.4 1.6-1.6v-2.8L3.5 9l2-3.4 2.2.6 1.7-1Z"/><circle cx="12" cy="12" r="3"/>',
+  };
+  const menuIcon = (key) => SETTINGS_MENU_ICONS[key]
+    ? '<svg class="ws-settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' + SETTINGS_MENU_ICONS[key] + '</svg>'
+    : icon(key);
   const APP_PAGE_GIFT_MARKUP = '<g stroke="none"><rect x="5" y="12.75" width="14" height="7.5" rx="1.5" fill="#7c5cf0"/><rect x="3.75" y="9.5" width="16.5" height="3.9" rx="1.4" fill="#4f8df7"/><path d="M11.25 13.4v7.4a.75.75 0 0 0 1.5 0v-7.4Z" fill="#ffffff" opacity=".85"/><rect x="5.35" y="4.35" width="3.2" height="3.2" rx=".9" fill="#f59e0b"/><rect x="10.55" y="2.6" width="2.9" height="2.9" rx=".8" fill="#ec4899"/><circle cx="17.35" cy="5.6" r="1.6" fill="#22d3ee"/></g><path d="M12 7.25V5.9" stroke="#7c5cf0" stroke-width="1.5" stroke-linecap="round"/>';
   /* Neutral states are genuine open line drawings, paired with the approved
      full-color artwork. Keep the same subject, scale and center in both states. */
@@ -251,7 +268,7 @@
     return groups.map(([label, items, group]) => {
       const shown = items.filter((key) => key !== 'team' || teamAllowed());
       if (!shown.length) return '';
-      const children = shown.map((key) => '<button class="ws-nav-item" data-view="' + key + '">' + icon(key) +
+      const children = shown.map((key) => '<button class="ws-nav-item" data-view="' + key + '">' + menuIcon(key) +
         navLabelHtml(key) + (key === 'history' ? '<em id="wsApprovalBadge" title="待我确认"></em>' : '') +
         '</button>').join('');
       if (group === 'collaboration') return '<div class="ws-nav-group">' +
