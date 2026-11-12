@@ -346,6 +346,23 @@ def launch_desktop(state: Path, client: Path, env: dict, base: str, output) -> s
         # macOS resolves the user's default Keychain through HOME. Isolate the
         # application profile, not the native desktop's operating-system home.
         desktop_env['HOME'] = str(Path.home())
+    elif sys.platform.startswith('linux'):
+        # Secret Service and desktop integration belong to the user's login
+        # session. Keep only the application profile isolated; the service's
+        # synthetic HOME/XDG paths must not select a different keyring.
+        desktop_env['HOME'] = str(Path.home())
+        for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
+                    'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS'):
+            desktop_env.pop(key, None)
+            if key in os.environ:
+                desktop_env[key] = os.environ[key]
+        # Electron uses these to select the secure-storage and display backends.
+        # Do not inherit unrelated credentials or force Wayland on X11 sessions.
+        for key in ('XDG_CURRENT_DESKTOP', 'DESKTOP_SESSION', 'XDG_SESSION_TYPE',
+                    'XDG_SESSION_DESKTOP', 'KDE_SESSION_VERSION', 'KDE_FULL_SESSION',
+                    'GNOME_DESKTOP_SESSION_ID'):
+            if key in os.environ:
+                desktop_env[key] = os.environ[key]
     desktop_env.update(SODUWORK_USER_DATA=str(profile), VIRTUAL_ENV=str(state / 'venv'),
                        SODUWORK_SOURCE_SESSION='1')
     bin_dir = state / 'venv' / ('Scripts' if os.name == 'nt' else 'bin')

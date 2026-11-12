@@ -2,6 +2,7 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const endpoint = require('../main/hub-endpoint.cjs');
+const { createSafeStorage } = require('./helpers/device-safe-storage-fixture.cjs');
 const production = endpoint.PRODUCTION_HUB;
 function appAt(profile, packaged = false, appData = path.dirname(profile)) {
   return { isPackaged: packaged, getPath: name => name === 'userData' ? profile : appData };
@@ -38,11 +39,7 @@ test('main identity isolates legacy Hub credentials until explicit selection, in
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = appAt(root, true), handlers = new Map(), requests = [];
   const auth = require('../main/device-auth');
-  auth.install({ app, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, safeStorage: {
-    isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'dpapi',
-    encryptString: value => Buffer.from('encrypted:' + value),
-    decryptString: value => value.toString().replace(/^encrypted:/, ''),
-  } });
+  auth.install({ app, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, safeStorage: createSafeStorage() });
   const originalFetch = global.fetch;
   global.fetch = async (url, options) => { requests.push({ url, options }); return { ok: true, status: 200,
     text: async () => JSON.stringify({ authState: 'pending', activationRequired: true }) }; };

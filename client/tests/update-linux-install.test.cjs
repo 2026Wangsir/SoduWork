@@ -59,8 +59,8 @@ test('plan：产物后缀决定目标管理器，本机登记缺失一律回落 
     which: (args) => ({ error: null, stdout: '/usr/bin/' + args[0] + '\n', stderr: '' }),
   }) });
   assert.equal(deb.kind, 'managed');
-  assert.equal(deb.manager, 'dpkg');
-  assert.equal(deb.programPath, '/usr/bin/dpkg');
+  assert.equal(deb.manager, 'apt-get');
+  assert.equal(deb.programPath, '/usr/bin/apt-get');
   assert.equal(deb.pkexecPath, '/usr/bin/pkexec');
 
   const rpm = await linuxInstall.plan('SoduWork-1.2.13-linux-x64.rpm', { exec: execScript({
@@ -69,8 +69,8 @@ test('plan：产物后缀决定目标管理器，本机登记缺失一律回落 
     which: (args) => ({ error: null, stdout: '/usr/bin/' + args[0] + '\n', stderr: '' }),
   }) });
   assert.equal(rpm.kind, 'managed');
-  assert.equal(rpm.manager, 'rpm');
-  assert.equal(rpm.programPath, '/usr/bin/rpm');
+  assert.equal(rpm.manager, 'dnf');
+  assert.equal(rpm.programPath, '/usr/bin/dnf');
 
   /* Select manual handling when dpkg exists but the app is not registered. */
   const unowned = await linuxInstall.plan('SoduWork-1.2.13-linux-x64.deb', { exec: execScript({
@@ -89,8 +89,65 @@ test('plan：产物后缀决定目标管理器，本机登记缺失一律回落 
   assert.deepEqual(noPkexec, { kind: 'manual' });
 });
 
+test('managed installation resolves new dependencies with the available distro package manager', async () => {
+  for (const manager of ['apt-get', 'dnf', 'yum', 'zypper']) {
+    const format = manager === 'apt-get' ? 'deb' : 'rpm';
+    const probes = [];
+    const result = await linuxInstall.plan('update.' + format, { exec: async (file, args, options) => {
+      assert.equal(options.timeout, 5000);
+      if (file !== 'which') return { stdout: 'install ok installed' };
+      probes.push(args[0]);
+      return args[0] === manager || args[0] === 'pkexec'
+        ? { stdout: '/usr/bin/' + args[0] } : { error: Error('unavailable'), stdout: '' };
+    } });
+    assert.equal(result.kind, 'managed');
+    assert.equal(result.manager, manager);
+    assert.equal(result.programPath, '/usr/bin/' + manager);
+    assert.ok(!probes.includes('rpm') && !probes.includes('dpkg'), 'never choose a dependency-blind installer');
+  }
+  for (const format of ['deb', 'rpm']) {
+    const plan = await linuxInstall.plan('update.' + format, { exec: async (file, args) => {
+      if (file !== 'which') return { stdout: 'install ok installed' };
+      return ['pkexec', 'dpkg', 'rpm'].includes(args[0]) ? { stdout: '/usr/bin/' + args[0] }
+        : { error: Error('unavailable') };
+    } });
+    assert.deepEqual(plan, { kind: 'manual' }, 'a registered package alone cannot resolve newly introduced dependencies');
+  }
+});
+
+test('package-manager operands remain literal and repository verification is not bypassed', async () => {
+  const expected = {
+    'apt-get': ['-y', '--no-remove', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'install', '--'],
+    dnf: ['-y', 'install', '--'], yum: ['-y', 'localinstall', '--'],
+    zypper: ['--non-interactive', 'install', '--'],
+  };
+  const installer = '/tmp/release with spaces;$(not-a-command).deb';
+  for (const [manager, args] of Object.entries(expected)) {
+    await linuxInstall.run({ manager, programPath: '/usr/bin/' + manager, pkexecPath: '/usr/bin/pkexec' }, installer, {
+      exec: async (file, actual, options) => {
+        assert.equal(file, '/usr/bin/pkexec');
+        assert.deepEqual(actual, ['/usr/bin/' + manager, ...args, installer]);
+        assert.notEqual(options.shell, true);
+        assert.ok(!actual.some(value => /nogpg|allow-unauthenticated|allow-unsigned|nodeps/.test(value)));
+        return { error: null };
+      },
+    });
+  }
+  assert.deepEqual(await linuxInstall.run({ manager: 'rpm' }, installer, {
+    exec: () => assert.fail('legacy dependency-blind plans must not be executed'),
+  }), { ok: false, fallback: true });
+});
+
+test('failed executable discovery never authorizes a stale or relative executable path', async () => {
+  for (const result of [{ error: Error('failed'), stdout: '/usr/bin/apt-get' }, { stdout: 'relative/apt-get' }]) {
+    const planned = await linuxInstall.plan('update.deb', { exec: async (file) =>
+      file === 'which' ? result : { stdout: 'install ok installed' } });
+    assert.deepEqual(planned, { kind: 'manual' });
+  }
+});
+
 test('run：pkexec 参数按管理器组装，失败语义区分授权拒绝与依赖错误', async () => {
-  const planInfo = { kind: 'managed', manager: 'dpkg', programPath: '/usr/bin/dpkg', pkexecPath: '/usr/bin/pkexec' };
+  const planInfo = { kind: 'managed', manager: 'apt-get', programPath: '/usr/bin/apt-get', pkexecPath: '/usr/bin/pkexec' };
   const ok = await linuxInstall.run(planInfo, '/tmp/SoduWork-1.2.13-linux-x64.deb', {
     exec: execScript({ '/usr/bin/pkexec': () => ({ error: null, stdout: '', stderr: '' }) }),
   });
@@ -98,18 +155,18 @@ test('run：pkexec 参数按管理器组装，失败语义区分授权拒绝与�
 
   const argExec = async (file, args, options) => {
     assert.equal(file, '/usr/bin/pkexec');
-    assert.deepEqual(args, ['/usr/bin/dpkg', '-i', '--force-confnew', '/tmp/SoduWork-1.2.13-linux-x64.deb']);
+    assert.deepEqual(args, ['/usr/bin/apt-get', '-y', '--no-remove', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'install', '--', '/tmp/SoduWork-1.2.13-linux-x64.deb']);
     assert.equal(options.timeout, 10 * 60 * 1000);
     return { error: null, stdout: '', stderr: '' };
   };
   await linuxInstall.run(planInfo, '/tmp/SoduWork-1.2.13-linux-x64.deb', { exec: argExec });
 
   const rpmArgs = async (file, args) => {
-    assert.deepEqual(args, ['/usr/bin/rpm', '-U', '/tmp/SoduWork-1.2.13-linux-x64.rpm']);
+    assert.deepEqual(args, ['/usr/bin/dnf', '-y', 'install', '--', '/tmp/SoduWork-1.2.13-linux-x64.rpm']);
     return { error: null, stdout: '', stderr: '' };
   };
   await linuxInstall.run(
-    { kind: 'managed', manager: 'rpm', programPath: '/usr/bin/rpm', pkexecPath: '/usr/bin/pkexec' },
+    { kind: 'managed', manager: 'dnf', programPath: '/usr/bin/dnf', pkexecPath: '/usr/bin/pkexec' },
     '/tmp/SoduWork-1.2.13-linux-x64.rpm', { exec: rpmArgs });
 
   const denied = await linuxInstall.run(planInfo, '/tmp/x.deb', {
@@ -160,7 +217,7 @@ function buildCtx(over = {}) {
 }
 
 const MANIFEST = { version: '1.2.13' };
-const PLAN = { kind: 'managed', manager: 'dpkg', programPath: '/usr/bin/dpkg', pkexecPath: '/usr/bin/pkexec' };
+const PLAN = { kind: 'managed', manager: 'apt-get', programPath: '/usr/bin/apt-get', pkexecPath: '/usr/bin/pkexec' };
 
 test('installManaged：与 Windows 相同的 installing→restarting 状态机与退出调度', async () => {
   const { ctx, sets, reports, scheduled, pendings, relaunches } = buildCtx({ exec: execScript({ '/usr/bin/pkexec': () => ({ error: null, stdout: '', stderr: '' }) }) });

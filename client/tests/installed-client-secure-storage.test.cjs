@@ -8,22 +8,24 @@ function fixture(t) {
   t.after(() => fs.rmSync(profile, { recursive: true, force: true }));
   return { profile, file: path.join(profile, 'acceptance-secure-storage.bin') };
 }
-function processProbe(profile, mode, key, available = true) {
+function processProbe(profile, mode, key, available = true, platform = 'win32', backend = 'gnome_libsecret', prefix = 'v11') {
   const safeStorage = {
     isEncryptionAvailable: () => available,
+    getSelectedStorageBackend: () => backend,
     encryptString(text) {
       const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
       const data = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-      return Buffer.concat([iv, cipher.getAuthTag(), data]);
+      return Buffer.concat([...(platform === 'linux' ? [Buffer.from(prefix)] : []), iv, cipher.getAuthTag(), data]);
     },
     decryptString(bytes) {
+      if (platform === 'linux') bytes = bytes.subarray(3);
       const cipher = crypto.createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
       cipher.setAuthTag(bytes.subarray(12, 28));
       return Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString('utf8');
     },
   };
   return vm.runInNewContext('(' + secureStorageProbe.toString() + ')(profile, mode)', {
-    profile, mode, process: { mainModule: { require: name => name === 'electron' ? { safeStorage } : require(name) } },
+    profile, mode, process: { platform, mainModule: { require: name => name === 'electron' ? { safeStorage } : require(name) } },
   });
 }
 test('separate restart and upgrade processes must decrypt the original ciphertext', t => {
@@ -64,4 +66,34 @@ test('secure-storage probe rejects profiles outside the acceptance namespace', t
   assert.throws(() => processProbe(path.dirname(f.profile), 'write', key), /isolated acceptance profile/);
   assert.throws(() => processProbe(f.profile, 'other', key), /Invalid.*mode/);
   assert.equal(fs.existsSync(f.file), false);
+});
+
+test('Linux acceptance rejects plaintext and unknown backends even when encryption reports available', t => {
+  const f = fixture(t), key = crypto.randomBytes(32);
+  for (const backend of ['basic_text', 'unknown', '', 'unsupported-provider']) {
+    assert.throws(() => processProbe(f.profile, 'write', key, true, 'linux', backend), /real system credential store/);
+    assert.equal(fs.existsSync(f.file), false);
+  }
+  const written = processProbe(f.profile, 'write', key, true, 'linux', 'gnome_libsecret');
+  const read = processProbe(f.profile, 'read', key, true, 'linux', 'gnome_libsecret');
+  assert.equal(written.backend, 'gnome_libsecret');
+  assert.equal(read.ciphertextSha256, written.ciphertextSha256);
+});
+
+test('Linux acceptance rejects v10 ciphertext despite an available secure backend', t => {
+  const f = fixture(t), key = crypto.randomBytes(32);
+  assert.throws(() => processProbe(f.profile, 'write', key, true, 'linux', 'gnome_libsecret', 'v10'), /v11 ciphertext/);
+  assert.equal(fs.existsSync(f.file), false);
+  processProbe(f.profile, 'write', key, true, 'linux');
+  const weak = fs.readFileSync(f.file);
+  weak.write('v10');
+  fs.writeFileSync(f.file, weak);
+  assert.throws(() => processProbe(f.profile, 'read', key, true, 'linux'), /v11 ciphertext/);
+  assert.deepEqual(fs.readFileSync(f.file), weak, 'weak ciphertext is preserved for diagnosis, never replaced');
+});
+
+test('macOS and Windows acceptance do not depend on Linux backend reporting', t => {
+  const f = fixture(t), key = crypto.randomBytes(32);
+  processProbe(f.profile, 'write', key, true, 'darwin', 'basic_text');
+  assert.equal(processProbe(f.profile, 'read', key, true, 'win32', 'unknown').persisted, true);
 });

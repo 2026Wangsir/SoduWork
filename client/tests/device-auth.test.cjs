@@ -5,19 +5,21 @@ const os = require('node:os');
 const path = require('node:path');
 
 const auth = require('../main/device-auth');
+const { createSafeStorage } = require('./helpers/device-safe-storage-fixture.cjs');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-device-auth-'));
   const handlers = new Map();
   const app = { getPath: (name) => name === 'userData' ? root : root };
   const ipcMain = { handle: (name, fn) => handlers.set(name, fn) };
-  const safeStorage = {
-    isEncryptionAvailable: () => true,
-    encryptString: (value) => Buffer.from('cipher:' + value, 'utf8'),
-    decryptString: (value) => value.toString('utf8').replace(/^cipher:/, ''),
-    getSelectedStorageBackend: () => 'dpapi',
-  };
+  const safeStorage = createSafeStorage();
   return { root, handlers, app, ipcMain, safeStorage };
+}
+
+function windowsFixture(t) {
+  const store = require('../main/device-credential-store.cjs'), create = store.create;
+  t.mock.method(store, 'create', options => create({ ...options, platform: 'win32' }));
+  return fixture();
 }
 
 for (const [name, previousUser, nextUser, migrate] of [
@@ -255,7 +257,7 @@ test('insecure operating-system storage fails closed', async (t) => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.stored, false);
-  assert.match(result.error, /\u5b89\u5168\u5b58\u50a8/);
+  assert.match(result.error, process.platform === 'linux' ? /Linux.*\u5bc6\u94a5\u73af/ : /\u5b89\u5168\u5b58\u50a8/);
 });
 
 test('a new installation gets an unpredictable device identity instead of reusing the user id', async (t) => {
@@ -387,8 +389,8 @@ test('sandboxed filesystems degrade rename to copy across credential and update 
     'runner config writes must degrade rename to copy on EXDEV');
 });
 
-test('credentials persist when a sandboxed filesystem reports same-directory rename as EXDEV', async (t) => {
-  const f = fixture();
+test('Windows credentials persist when a sandboxed filesystem reports same-directory rename as EXDEV', async (t) => {
+  const f = windowsFixture(t);
   t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   const realRename = fs.renameSync;
   let exdevRenames = 0;
@@ -431,8 +433,8 @@ test('credentials persist when a sandboxed filesystem reports same-directory ren
     'recovery copy must be cleaned up after a successful copy fallback');
 });
 
-test('the in-place overwrite is the last line of defense when even copy is blocked', async (t) => {
-  const f = fixture();
+test('Windows in-place overwrite remains available when even copy is blocked', async (t) => {
+  const f = windowsFixture(t);
   t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
@@ -463,8 +465,8 @@ test('the in-place overwrite is the last line of defense when even copy is block
     'successful in-place overwrite must clean its recovery copy');
 });
 
-test('non-EXDEV rename failures fall through to the in-place overwrite instead of failing login', async (t) => {
-  const f = fixture();
+test('Windows non-EXDEV rename failures fall through to the in-place overwrite instead of failing login', async (t) => {
+  const f = windowsFixture(t);
   t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
@@ -488,8 +490,8 @@ test('non-EXDEV rename failures fall through to the in-place overwrite instead o
   assert.equal(fs.existsSync(path.join(f.root, 'device-auth.json.next')), false);
 });
 
-test('a fully blocked filesystem still fails closed without corrupting existing credentials', async (t) => {
-  const f = fixture();
+test('Windows fully blocked filesystem still fails closed without corrupting existing credentials', async (t) => {
+  const f = windowsFixture(t);
   t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
@@ -531,8 +533,8 @@ test('a fully blocked filesystem still fails closed without corrupting existing 
   assert.equal(fs.existsSync(path.join(f.root, 'device-auth.json.bak')), false);
 });
 
-test('non-EXDEV write failures still fail closed without corrupting existing credentials', async (t) => {
-  const f = fixture();
+test('Windows non-EXDEV write failures still fail closed without corrupting existing credentials', async (t) => {
+  const f = windowsFixture(t);
   t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({

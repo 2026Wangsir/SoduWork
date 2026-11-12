@@ -41,10 +41,22 @@ async function main() {
         assert.equal(result.ok, true); assert.equal(result.version, record.version);
         assert.equal(result.upgraded, true); assert.equal(result.oldVersion, previous.version);
         assert.equal(result.nodeShimExecutable, true);
-        checks.push({ name, ok: true, oldVersion: previous.version });
+        assert.equal(result.credentialProviderDependencyVerified, kind !== 'tgz');
+        assert.equal(result.upgradeDependencyResolutionVerified, false);
+        for (const phase of ['fresh', 'restart', 'old', 'upgraded']) {
+          const smoke = await contract.read(path.join(output, phase + '.json'));
+          assert.equal(smoke.secureStorage?.backend, 'gnome_libsecret');
+          assert.equal(smoke.secureStorage?.roundTrip, true);
+        }
+        checks.push({ name, ok: true, oldVersion: previous.version, secureStorageBackend: 'gnome_libsecret',
+          credentialProviderDependencyVerified: result.credentialProviderDependencyVerified,
+          upgradeDependencyResolutionVerified: false });
       } finally { if (created) await run('docker', ['rm', '-f', container]); }
     }
-    await contract.acceptance('linux', checks, ['Disposable Xvfb containers; no desktop login, Wayland or polkit interaction.']);
+    await contract.acceptance('linux', checks, [
+      'Disposable Xvfb containers with a password-protected GNOME keyring; no desktop login, Wayland, KWallet or polkit interaction.',
+      'Upgrade checks reuse dependencies from initial candidate installation; newly added dependency resolution during upgrade is not certified.',
+    ]);
   } finally { await fs.rm(packages, { recursive: true, force: true }); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -808,8 +808,13 @@ test('mac/linux updates open the installer manually and report deferred', { time
 });
 
 test('a failed manual installer launch reports failure and drops the pending marker', { timeout: 12000 }, async () => {
+  const packageProbes = [];
   const ctx = await fixture('1.2.12', {
     platform: 'linux', arch: 'x64',
+    linuxExec: async (file, args) => {
+      packageProbes.push({ file, args });
+      return { error: new Error('fixture executable is not package-managed'), stdout: '' };
+    },
     shell: { openPath: async () => 'boom' },
   });
   try {
@@ -817,6 +822,11 @@ test('a failed manual installer launch reports failure and drops the pending mar
       await updater.check({ testMode: true });
       await assert.rejects(updater.installDownloaded(), /无法打开安装包/);
     });
+    const packageName = require('../main/distribution.cjs').current().linuxPackageName;
+    assert.deepEqual(packageProbes, [
+      { file: 'dpkg-query', args: ['-L', packageName] },
+      { file: 'rpm', args: ['-ql', packageName] },
+    ], 'package ownership queries must use the isolated executor');
     assert.equal(ctx.events.at(-1).state, 'failed');
     assert.ok(!ctx.events.some((event) => event.state === 'deferred'));
     await assert.rejects(() => fsp.stat(path.join(ctx.updateRoot, 'pending.json')));
@@ -871,7 +881,7 @@ function fakeLinuxExec(over = {}) {
   return exec;
 }
 
-test('linux deb 更新走与 Windows 相同的静默升级链路（pkexec+dpkg）', { timeout: 12000 }, async () => {
+test('linux deb 更新走与 Windows 相同的静默升级链路（pkexec+apt-get）', { timeout: 12000 }, async () => {
   const linuxExec = fakeLinuxExec();
   const ctx = await fixture('1.2.12', {
     platform: 'linux', arch: 'x64',
@@ -889,8 +899,8 @@ test('linux deb 更新走与 Windows 相同的静默升级链路（pkexec+dpkg�
     assert.deepEqual(ctx.relaunches, [{ execPath: process.execPath, args: [] }]);
     const pkexec = linuxExec.calls.find(c => c.file === '/usr/bin/pkexec');
     assert.ok(pkexec, 'pkexec must be invoked for the system install');
-    assert.deepEqual(pkexec.args.slice(0, 3), ['/usr/bin/dpkg', '-i', '--force-confnew']);
-    assert.ok(pkexec.args[3].endsWith('SoduWork-1.2.13-linux-x64.deb'));
+    assert.deepEqual(pkexec.args.slice(0, 9), ['/usr/bin/apt-get', '-y', '--no-remove', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold', 'install', '--']);
+    assert.ok(pkexec.args[9].endsWith('SoduWork-1.2.13-linux-x64.deb'));
     assert.ok(ctx.states.some(s => s.phase === 'preparing'));
     assert.ok(ctx.events.some(e => e.state === 'installing'));
     assert.ok(!ctx.events.some(e => e.state === 'failed'));
