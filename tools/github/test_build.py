@@ -26,6 +26,16 @@ class BuildTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.ctx = {'component': 'hub', 'version': '1.2.3', 'commit': 'a' * 40, 'runId': '123'}
 
+    def test_packaged_runner_requires_the_actual_bundled_pi_layout(self):
+        import runpy
+        helper = runpy.run_path(str(build.ROOT / 'hub-backend/scripts/check_packaged_runner_task.py'))['delivered_pi']
+        with self.assertRaisesRegex(AssertionError, 'Delivered Pi CLI is missing'):
+            helper(self.root)
+        cli = self.root / 'resources/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
+        cli.parent.mkdir(parents=True)
+        cli.write_text('// synthetic CLI')
+        self.assertEqual(helper(self.root), cli)
+
     def test_download_rejects_a_replaced_dependency(self):
         with patch.object(build.urllib.request, 'urlopen', return_value=io.BytesIO(b'replaced')):
             with self.assertRaisesRegex(ValueError, 'digest differs'):

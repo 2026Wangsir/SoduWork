@@ -101,3 +101,34 @@ test('isolated compatibility fixture loads real distribution and update trust', 
   assert.deepEqual(JSON.parse(result.stdout).updateTrust, require('../update-trust.json'));
   assert.equal(fs.existsSync(path.join(root, '.runtime')), false);
 });
+
+test('public compatibility gates have no missing relative module dependencies', () => {
+  const { createRequire } = require('node:module');
+  const root = path.resolve(__dirname, '..');
+  const pending = ['installer-runtime-resources', 'installer-all-notices', 'packaged-runner',
+    'installer-candidate-payload', 'installer-update', 'installer-notice-compatibility',
+    'installer-bootstrap-compatibility', 'installer-static-text-compatibility',
+    'installer-payload-rejection'].map(name => path.join(root, 'e2e', name + '.cjs'));
+  const visited = new Set();
+  while (pending.length) {
+    const file = pending.pop();
+    if (visited.has(file)) continue;
+    visited.add(file);
+    const resolve = createRequire(file).resolve;
+    for (const match of fs.readFileSync(file, 'utf8').matchAll(/require\(\s*['"](\.[^'"]+)['"]\s*\)/g)) {
+      // This import is inside the generated corruption-test shim, copied into
+      // the installed fixture at runtime alongside the real verifier.
+      if (match[1] === './.soduwork-realverify.cjs') continue;
+      const target = resolve(match[1]);
+      if (/\.(?:c?js|mjs)$/.test(target)) pending.push(target);
+    }
+  }
+});
+
+test('runtime resource checks reference only skills included in public source', () => {
+  const paths = require('../e2e/fixtures/installer-runtime-resource-paths.json');
+  for (const name of paths) {
+    const match = name.match(/^resources\/(?:runner\/_internal\/)?skills\/(.+)$/);
+    if (match) assert.equal(fs.existsSync(path.resolve(__dirname, '../../skills', match[1])), true, name);
+  }
+});

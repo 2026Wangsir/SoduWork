@@ -17,9 +17,15 @@ def delivered_node(payload: Path, executable: Path) -> Path:
     assert executable.is_file(), "Delivered Electron runtime is missing"
     return executable
 
+def delivered_pi(payload: Path) -> Path:
+    cli = payload / "resources/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+    assert cli.is_file(), "Delivered Pi CLI is missing: " + str(cli)
+    return cli
+
 def main():
     exe, payload, root, executable = [Path(x).resolve() for x in sys.argv[1:5]]
     bundled_node = delivered_node(payload, executable)
+    bundled_pi = delivered_pi(payload)
     root.mkdir(parents=True, exist_ok=True)
     work = root / "work"
     work.mkdir(exist_ok=True)
@@ -60,7 +66,7 @@ def main():
     base = "http://127.0.0.1:" + str(server.server_port)
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
         USERPROFILE=str(root / "profile"), SODUWORK_DATA_ROOT=str(root / "data"),
-        SODUWORK_BUNDLED_PI_CLI=str(payload / "resources/pi/@earendil-works/pi-coding-agent/dist/cli.js"),
+        SODUWORK_BUNDLED_PI_CLI=str(bundled_pi),
         SODUWORK_BUNDLED_NODE=str(bundled_node),
         SODUWORK_BUNDLED_SHELL=str(payload / "resources/shell"))
     for key in ["SODUWORK_HUB", "SODUWORK_RUNNER_TOKEN", "SODUWORK_RUNNER_KEY", "SODUWORK_DEVICE_SECRET", "SODUWORK_RUNNER_ID", "SODUWORK_WORK_ROOT", "PI_CODING_AGENT_DIR", "SODUWORK_PROXY_KEY", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE"]:
