@@ -2,6 +2,11 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const source = fs.readFileSync(path.resolve(__dirname, '../../tools/github/accept-linux.cjs'), 'utf8');
+test('Linux packages install the libsecret client required by Electron safeStorage', () => {
+  const { build } = require('../package.json');
+  assert.ok(build.deb.depends.includes('libsecret-1-0'));
+  assert.ok(build.rpm.depends.includes('libsecret'));
+});
 for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${firstRelease ? 'first release reinstall' : 'upgrade'} evidence`, async () => {
   const calls = [], errors = [], version = '1.13.15';
   let checks;

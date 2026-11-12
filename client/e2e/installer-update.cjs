@@ -7,6 +7,7 @@ const fsp = fs.promises;
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+const { installerSpawnOptions } = require('./fixtures/installer-spawn-options.cjs');
 const { createHash } = require('node:crypto');
 const { build, createFixtureGuid, fixtureNames, readFixtureReuse, Platform, Arch } = require('./fixtures/isolated-installer-build.cjs');
 const { getMakeNsisPath } = require('app-builder-lib/out/toolsets/windows');
@@ -26,7 +27,7 @@ async function until(fn, ms = 30000) {
 function run(file, args, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore' });
+  const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore', ...installerSpawnOptions(file, args) });
   child.done = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
   return child;
 }
