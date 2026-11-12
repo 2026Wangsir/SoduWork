@@ -168,6 +168,98 @@ class Harness2LatencyTests(unittest.TestCase):
                 self.assertEqual(capacity, {'active': 0, 'peak': 1, 'rejected': 0})
                 self.assertNotIn(model['key'], child.stdout + child.stderr)
 
+    def test_full_turn_recovers_token_limited_proposal_once_before_native_execution(self):
+        from tests.test_harness2_native_executor import NativeExecutorTests
+        helper = NativeExecutorTests()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def respond(body):
+                if body.get('tools'):
+                    return helper.response('Hello from the verified native executor.')
+                phase = body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]
+                if '.a1' in phase and body['max_tokens'] < 8192:
+                    value = helper.response('PARTIAL_PROPOSAL_MUST_NOT_BE_REUSED')
+                    value['choices'][0]['finish_reason'] = 'length'
+                    value['usage'] = {'prompt_tokens': 11, 'completion_tokens': 4096,
+                                      'completion_tokens_details': {'reasoning_tokens': 4000}}
+                    return value
+                return helper.response('{"files":{},"notes":"verified"}' if '.a1' in phase else 'Respond to the greeting.')
+            with streaming_endpoint(respond) as (model, requests, exhausted):
+                child = self.process_turn(root, model)
+                self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                events = [json.loads(line) for line in child.stdout.splitlines()]
+                self.assertFalse(any(row.get('error') for row in events))
+                planning = [body for body in requests if not body.get('tools')]
+                phases = [body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0] for body in planning]
+                self.assertEqual(phases, ['base1', 'inv1.a1', 'inv1.a1', 'dom1.a1', 'inv1', 'dom1', 'c1.a1', 'c1'])
+                self.assertEqual([row['max_tokens'] for row in planning[1:3]], [4096, 8192])
+                self.assertTrue(all(row['max_tokens'] == 8192 for row in planning[2:]
+                                    if '.a1' in row['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]))
+                self.assertEqual(planning[1]['messages'], planning[2]['messages'])
+                self.assertEqual(len(requests), 9)
+                self.assertEqual(len([row for row in requests if row.get('tools')]), 1)
+                self.assertNotIn('PARTIAL_PROPOSAL_MUST_NOT_BE_REUSED', json.dumps(requests))
+                usage = [row['part']['tokens'] for row in events
+                         if row.get('type') == 'step_finish' and row.get('part', {}).get('tokens')]
+                self.assertEqual(len(usage), 9)
+                self.assertEqual(sum(row.get('output_tokens', row.get('output', 0)) for row in usage), 4096 + 8 * 7)
+                self.assertEqual(sum(row.get('reasoning', 0) for row in usage), 4000)
+                self.assertIn('重试', child.stdout)
+                self.assertIn('Hello from the verified native executor.', child.stdout)
+                self.assertEqual(exhausted, [])
+                self.assertNotIn(model['key'], child.stdout + child.stderr)
+
+    def test_always_on_reasoning_recovers_within_declared_cap_and_stays_enabled(self):
+        from tests.test_harness2_native_executor import NativeExecutorTests
+        helper = NativeExecutorTests()
+        with tempfile.TemporaryDirectory() as folder:
+            def respond(body):
+                if body.get('tools'):
+                    return helper.response('Completed greeting.')
+                phase = body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]
+                value = helper.response('{"files":{},"notes":"verified"}' if '.a1' in phase else 'Respond politely.')
+                if phase == 'inv1.a1' and body['max_tokens'] < 16384:
+                    value['choices'][0]['finish_reason'] = 'length'
+                return value
+            with streaming_endpoint(respond) as (model, requests, _exhausted):
+                child = self.process_turn(Path(folder), {**model, 'thinkingMode': 'always',
+                                                        'maxOutputTokens': 16384})
+                self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                self.assertEqual([body['max_tokens'] for body in requests[1:3]], [8192, 16384])
+                self.assertTrue(all(body.get('reasoning_effort') == 'low' for body in requests))
+                self.assertFalse(any(body.get('thinking', {}).get('type') == 'disabled' for body in requests))
+                self.assertEqual(len(requests), 9)
+                self.assertEqual(len([row for row in requests if row.get('tools')]), 1)
+                self.assertIn('Completed greeting.', child.stdout)
+
+    def test_full_turn_rejects_persistent_limit_or_user_cap_without_native_execution(self):
+        from tests.test_harness2_native_executor import NativeExecutorTests
+        helper = NativeExecutorTests()
+        for limit, expected in [(32768, [4096, 8192]), (1024, [1024])]:
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                def respond(body):
+                    if body.get('tools'):
+                        return helper.response('Unexpected execution')
+                    phase = body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]
+                    value = helper.response('Never trust this incomplete proposal' if '.a1' in phase else 'Plan.')
+                    if '.a1' in phase:
+                        value['choices'][0]['finish_reason'] = 'length'
+                    return value
+                with streaming_endpoint(respond) as (model, requests, _exhausted):
+                    child = self.process_turn(root, {**model, 'maxOutputTokens': limit})
+                    self.assertEqual(child.returncode, 2, child.stdout + child.stderr)
+                    self.assertFalse(any(body.get('tools') for body in requests))
+                    self.assertEqual([body['max_tokens'] for body in requests[1:]], expected)
+                    events = [json.loads(line) for line in child.stdout.splitlines()]
+                    errors = [row['error'] for row in events if row.get('error')]
+                    self.assertEqual([(row['code'], row['phase']) for row in errors],
+                                     [('response_truncated', 'inv1.a1')])
+                    self.assertEqual(len([row for row in events if row.get('part', {}).get('tokens')]), len(requests))
+                    self.assertFalse(any(row.get('sessionID') for row in events))
+                    self.assertNotIn('Never trust this incomplete proposal', child.stdout)
+                    self.assertNotIn(model['key'], child.stdout + child.stderr)
+
     def test_full_glm_dom1_http_timeout_preserves_phase_and_never_starts_execution(self):
         from tests.test_harness2_native_executor import NativeExecutorTests
         helper = NativeExecutorTests()

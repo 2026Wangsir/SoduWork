@@ -275,7 +275,8 @@ def main(argv=None) -> int:
             stage = "refine"
             budget = RefinementBudget()
             refined = refine(
-                prompt, lambda messages: budget.run(model, messages, complete, usage),
+                prompt, lambda messages: budget.run(model, messages, complete, usage,
+                    on_retry=lambda: progress("Harness²：本阶段输出达到上限，在模型允许范围内提高预算并重试一次")),
                 new_work_dir(Path(root)), progress)
             refined_this_turn = True
             progress("方案已选定，开始按当前会话权限执行")
