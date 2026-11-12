@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Plugin audience HTTP smoke; isolated database and full cleanup."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 import os
 import shutil
 import sys
@@ -271,6 +272,105 @@ async def main():
               and reviewed.get("reviewedBy") == "Member A"
               and int(reviewed.get("reviewedAt") or 0) > 0,
               reviewed_catalog.text)
+        first_review = reviewed.get("reviewHistory", [])
+        check("the first review is retained as a public event on its exact version",
+              len(first_review) == 1
+              and first_review[0].get("decision") == "reject"
+              and first_review[0].get("note") == reviewed.get("reviewNote")
+              and first_review[0].get("reviewedAt") == reviewed.get("reviewedAt"),
+              first_review)
+
+        review_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+        plugin_id = uploaded.json().get("plugin", {}).get("id")
+        original_review_id = first_review[0]["id"] if first_review else "missing-review"
+        review_ids = ["history-02-revoke", "history-01-approve", original_review_id]
+        async with SessionLocal() as session:
+            version = await session.get(am.PluginVersion, submitted_version_id)
+            original_audit = await session.get(models.AuditLog, original_review_id)
+            original_detail = dict(original_audit.detail or {}) if original_audit else {}
+            session.add_all([
+                am.PluginVersion(
+                    id="history-own-v2", plugin_id=plugin_id, version="0.2.0",
+                    checksum="history-own-v2", created_by=USER_A,
+                    manifest={**version.manifest, "version": "0.2.0"},
+                    created_at=review_at + timedelta(seconds=1)),
+                am.PluginVersion(
+                    id="history-other-v3", plugin_id=plugin_id, version="0.3.0",
+                    checksum="history-other-v3", created_by=USER_B,
+                    manifest={**version.manifest, "version": "0.3.0"},
+                    created_at=review_at + timedelta(seconds=2)),
+                *[models.AuditLog(
+                    id=event_id, actor_id=USER_A, actor_name="Member A", actor_org_id=ORG,
+                    action="plugin." + decision, target_type="plugin_version",
+                    target_id=submitted_version_id, at=review_at,
+                    detail={"decision": decision, "note": note,
+                            "privateContext": {"packagePath": "fixture-private-path"}},
+                ) for event_id, decision, note in (
+                    ("history-01-approve", "approve", "Approved after review"),
+                    ("history-02-revoke", "revoke", "Publication withdrawn"),
+                )],
+                models.AuditLog(
+                    id="history-other-review", actor_id=USER_A, actor_name="Member A",
+                    actor_org_id=ORG, action="plugin.reject", target_type="plugin_version",
+                    target_id="history-other-v3", at=review_at,
+                    detail={"note": "Other publisher's feedback"}),
+                models.AuditLog(
+                    id="history-unrelated-event", actor_id=USER_A, actor_name="Member A",
+                    actor_org_id=ORG, action="plugin.evaluation_review",
+                    target_type="plugin_version", target_id=submitted_version_id,
+                    at=review_at, detail={"note": "Internal evaluation detail"}),
+            ])
+            await session.commit()
+
+        history_response = await client.get("/api/v1/plugins/catalog", headers=headers("a"))
+        own_receipts = [row for row in history_response.json().get("submissions", [])
+                        if row["pluginId"] == plugin_id]
+        check("each own submitted version remains visible without another publisher's version",
+              [row["versionId"] for row in own_receipts] == ["history-own-v2", submitted_version_id],
+              own_receipts)
+        old_receipt = next((row for row in own_receipts
+                            if row["versionId"] == submitted_version_id), {})
+        history = old_receipt.get("reviewHistory", [])
+        check("all reviews survive a newer submission with stable ordering for equal timestamps",
+              [row.get("id") for row in history] == review_ids
+              and [row.get("decision") for row in history] == ["revoke", "approve", "reject"]
+              and old_receipt.get("reviewDecision") == "revoke"
+              and old_receipt.get("reviewNote") == "Publication withdrawn",
+              old_receipt)
+        check("review history only exposes public feedback fields",
+              all(set(row) == {"id", "decision", "note", "reviewedAt", "reviewedBy"}
+                  for row in history)
+              and "fixture-private-path" not in history_response.text
+              and "Internal evaluation detail" not in history_response.text,
+              history)
+        check("unreviewed versions have an empty history and no inherited review summary",
+              own_receipts[0].get("reviewHistory") == []
+              and own_receipts[0].get("reviewDecision") == ""
+              and own_receipts[0].get("reviewNote") == ""
+              and own_receipts[0].get("reviewedAt") == 0,
+              own_receipts)
+        other_response = await client.get("/api/v1/plugins/catalog", headers=headers("b"))
+        other_receipts = [row for row in other_response.json().get("submissions", [])
+                          if row["pluginId"] == plugin_id]
+        check("another publisher only receives their own exact version and feedback",
+              [row["versionId"] for row in other_receipts] == ["history-other-v3"]
+              and [row["id"] for row in other_receipts[0]["reviewHistory"]] == ["history-other-review"],
+              other_receipts)
+        async with SessionLocal() as session:
+            original_audit = await session.get(models.AuditLog, original_review_id)
+            check("reading newer versions never rewrites an earlier review audit",
+                  original_audit is not None and original_audit.detail == original_detail)
+            author = await session.get(models.User, USER_A)
+            author.org_id = ORG_CHILD
+            await session.commit()
+        changed_org = await client.get("/api/v1/plugins/catalog", headers=headers("a"))
+        check("changing the current organization does not expose previous organization submissions",
+              changed_org.status_code == 200 and changed_org.json().get("submissions") == [],
+              changed_org.text)
+        async with SessionLocal() as session:
+            author = await session.get(models.User, USER_A)
+            author.org_id = ORG
+            await session.commit()
 
 
 async def guarded():

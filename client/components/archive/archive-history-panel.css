@@ -36,5 +36,5 @@ html[data-desk-panel="workspace"] #archivePanel.workspace-hosted{position:fixed!
 #archivePanel .archive-history-sub{min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:max(var(--font-min-readable, 14.5px), 12px)}
 #archivePanel .archive-history-body{padding-inline:var(--ws-head-gutter,28px)}
 .archive-history-panel button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.archive-delete-confirm{background:var(--s-urgent)}
+.archive-delete-confirm{background:var(--s-urgent,#c34f58)}
 @media(max-width:640px){#archivePanel .archive-history-heading{flex-wrap:wrap;gap:4px}.archive-history-toolbar{flex-wrap:wrap;gap:10px}#archiveHistoryCount{margin-left:0}}

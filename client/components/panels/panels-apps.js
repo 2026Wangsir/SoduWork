@@ -804,7 +804,7 @@ function appsCreateDialog() {
         return;
       }
       closeAppsCreateDialog();
-      try { window.PluginBuilderEntry.openApp(category ? category.title + '：' : '', category ? {appCategory:category.id,storageLocation} : undefined, kind); }
+      try { window.PluginBuilderEntry.openApp(category ? (window.SoduWorkI18n?.translateText?.(category.title) || category.title) + '：' : '', category ? {appCategory:category.id,storageLocation} : undefined, kind); }
       catch (error) { sayAppsMessage('即用开发助手暂时不可用：' + String(error && error.message || error)); }
     }
   });

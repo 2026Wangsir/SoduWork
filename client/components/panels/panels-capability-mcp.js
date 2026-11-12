@@ -150,7 +150,8 @@
       const active = () => sameView() && layer.isConnected && !layer.hidden && layer.querySelector('[data-mcp-import-do]') === submit;
       const submit = layer.querySelector('[data-mcp-import-do]');
       const consent = layer.querySelector('[data-mcp-import-consent]');
-      consent.onchange = () => { submit.disabled = importing || !consent.checked || !result?.summary?.importable; };
+      function updateSubmit() { submit.disabled = importing || !consent.checked || !result?.summary?.importable; }
+      consent.onchange = updateSubmit;
       async function preview(selectedFile) {
         file = selectedFile; result = null; submit.disabled = true; consent.checked = false;
         const holder = layer.querySelector('[data-mcp-preview]'); holder.textContent = '正在检查配置…';
@@ -167,6 +168,7 @@
               '<code>' + h(row.target) + '</code>' +
               (row.credentialKeys?.length ? '<span>只写凭据：' + row.credentialKeys.map(h).join('、') + '</span>' : '') +
               [...(row.errors || []), ...(row.warnings || [])].map(t => '<p>' + h(t) + '</p>').join('') + '</article>').join('');
+          updateSubmit();
         } catch (e) { if (active()) holder.textContent = errorText(e, '文件检查失败'); }
       }
       const picker = layer.querySelector('[data-mcp-file]');

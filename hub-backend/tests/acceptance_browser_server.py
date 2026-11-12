@@ -33,6 +33,8 @@ async def seed():
             ('old-output', 'old.md', b'Old draft', 'output', 1),
             ('site-html', 'index.html', b'<html><head><link href="assets/style.css" rel="stylesheet"></head><body>Final site</body></html>', 'output', 2),
             ('site-css', 'assets/style.css', b'body{color:purple}', 'output', 2),
+            ('site-doc', 'README.md', b'# Final site\nOpen index.html.', 'output', 2),
+            ('site-notes', 'handoff.txt', b'Final site delivery notes.', 'output', 2),
             ('verify-shot', 'final-hero.png', b'Optional evidence', 'verification', 2),
             ('input-spec', 'brief.md', b'Reference only', 'input', 0),
         ]:

@@ -893,7 +893,11 @@
 .nacceptance-result-files{display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--accent);font-size:12px}.nacceptance-result-files small{color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nacceptance-result-buttons{display:flex;justify-content:flex-end;gap:8px}.nacceptance-result-buttons button{border:1px solid var(--line);border-radius:9px;background:var(--bg-0);color:var(--ink-2);padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}.nacceptance-result-buttons button.primary{border-color:var(--accent);background:var(--accent);color:#fff}
 .nacceptance-result-followup{margin:0;padding:9px 11px;border-radius:9px;background:color-mix(in srgb,var(--accent) 8%,var(--bg-0));color:var(--accent);font-size:12px}
-.nacceptance-result-error{margin:0;color:var(--s-urgent,#c34f58);font-size:12px}
+.nacceptance-result-outcome{margin-top:14px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--accent) 5%,var(--bg-0));min-width:0}
+.nacceptance-result-outcome>.nacceptance-result-followup{padding:0;background:none;font-weight:600}
+.nacceptance-result-outcome-note{margin:8px 0 0;padding-top:8px;border-top:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2)}
+.nacceptance-result-error{margin:0;padding:7px 9px;border-radius:7px;background:color-mix(in srgb,var(--s-urgent,#c34f58) 7%,var(--bg-0));color:var(--s-urgent,#c34f58);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.nacceptance-result-actions textarea[aria-invalid="true"]{border-color:var(--s-urgent,#c34f58)}
 @media(max-width:520px){.nacceptance-result>header{align-items:flex-start}.nacceptance-result>header em{margin-left:auto}.nacceptance-result-body{padding:12px 13px;}}
 /* Generated plugins stay installable from the conversation that created them. */
 .nplugin-draft{display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:10px 12px;margin:14px 0 8px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:14px;background:var(--bg-0);font:14.5px/1.5 var(--font-ui);color:var(--ink-2)}

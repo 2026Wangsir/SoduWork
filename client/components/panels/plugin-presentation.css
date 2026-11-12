@@ -24,6 +24,8 @@
 .cap-plugin-card-status.is-danger::before{background:var(--crit,#c6424e)}
 .cap-plugin-card-status.is-info::before{background:var(--accent)}
 .cap-plugin-card-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.cap-plugin-publication{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 18px 12px;min-width:0}
+.cap-plugin-publication .btn-mini{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start}
 .cap-plugin-card-actions .btn-mini{min-height:32px;padding:5px 11px;font-size:max(var(--font-min-readable, 14.5px), 12px);border-radius:8px;white-space:nowrap}
 .cap-plugin-card-actions .btn-mini:first-child{border-color:transparent;background:transparent;color:var(--ink-3)}
 .cap-plugin-card-actions .cap-plugin-use{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 18%,var(--line));color:var(--accent);font-weight:550}

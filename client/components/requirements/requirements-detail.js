@@ -195,6 +195,7 @@
       '<div class="rq-detail-modal-card rq-confirm-card"><div class="rq-confirm-icon" aria-hidden="true">!</div><div class="rq-confirm-copy"><h3 id="rqConfirmTitle">放弃未保存的修改？</h3><p id="rqConfirmDescription">已保存的需求内容会保留。</p></div><div class="rq-confirm-actions"><button type="button" data-rq-confirm-cancel>继续编辑</button><button type="button" class="rq-primary" data-rq-confirm-discard>放弃修改</button></div></div></div>';
     document.body.appendChild(node);
     global.RequirementFields?.bindTags(node);
+    global.RequirementFields?.bindVisibility?.(node);
     node.addEventListener('click', event => {
       if (busy) return;
       const more = node.querySelector('.rq-detail-more');
@@ -234,14 +235,19 @@
       const submitReview = event.target.closest('[data-rq-submit-review]');
       if (submitReview && task && !busy && R.canSubmitReview(task) && global.SoduWorkAPI?.submitTaskReview) {
         busy = true; submitReview.disabled = true; feedback('');
-        const request = seq;
-        Promise.resolve(global.SoduWorkAPI.submitTaskReview(task.id, ''))
+        const request = seq, id = task.id;
+        Promise.resolve().then(() => {
+          if (request === seq) return global.SoduWorkAPI.submitTaskReview(id, '');
+        })
           .then(async result => {
             if (request !== seq) return;
-            await global.RequirementsBoard?.refresh?.();
-            await open(task.id);
+            if (result?.ok !== true) throw new Error(result?.reason || result?.error || result?.message || '操作没有完成，请重试');
+            // The accepted receipt completes this drawer. List refreshes must
+            // not reopen it or leave its submit action available for retries.
+            close(true);
             if (result?.already) global.petSay?.('这条需求已经在待验收，请直接查看验收卡');
             else global.petSay?.('已提交验收，等待验收人确认');
+            await global.RequirementsBoard?.refresh?.();
           })
           .catch(error => { if (request === seq) feedback(errorText(error)); })
           .finally(() => { if (request === seq) { busy = false; if (submitReview.isConnected) submitReview.disabled = false; } });
@@ -492,6 +498,12 @@
       global.TaskExecutionJourney?.unmount(previousTrace); mountedTrace = null;
     }
     const canEdit = R.canEdit(task), phase = R.stage(task);
+    const sourceScope = task.repositoryIssue?.visibilityScope;
+    const fixedVisibility = ['repository', 'organization'].includes(sourceScope) ? sourceScope : '';
+    const visibilityLabel = fixedVisibility === 'repository' ? '仓库成员可见' :
+      fixedVisibility === 'organization' || task.visibility === 'organization' ? '同公司可见' : '仅相关人可见';
+    const visibilityOptions = fixedVisibility ? [[task.visibility || 'related', visibilityLabel]] :
+      [['organization', '同公司可见'], ['related', '仅相关人可见']];
     const metadataLocked = task.readOnly === true && task.status !== 'todo';
     const content = R.content(task);
     const priorities = global.TaskPriority?.labels || { normal: '普通' };
@@ -513,9 +525,10 @@
       '<dl class="rq-detail-properties"><div><dt>类型</dt><dd>' + esc(R.kinds[task.kind] || R.kinds.requirement) + '</dd></div>' +
       '<div><dt>优先级</dt><dd>' + esc(priorities[task.priority] || priorities.normal) + '</dd></div>' +
       '<div><dt>截止日期</dt><dd>' + esc(R.day(task.due) || '未设置') + '</dd></div>' +
-      '<div><dt>可见范围</dt><dd>' + (task.visibility === 'organization' ? '团队可见' : '仅相关人可见') + '</dd></div>' +
+      '<div><dt>可见范围</dt><dd>' + visibilityLabel + '</dd></div>' +
       '<div><dt>创建时间</dt><dd>' + timeProperty(created) + '</dd></div>' +
       '<div><dt>最近更新</dt><dd>' + timeProperty(changed) + '</dd></div></dl>' +
+      (global.RequirementFields?.visibilityHint?.(task.visibility, 'rqVisibilityReadHint', fixedVisibility) || '') +
       '<section class="rq-detail-block rq-detail-tag-block"><h4>' + sectionIcon('tags') + '标签</h4><div class="rq-detail-tags" data-rq-detail-tags>' +
       (tags.length ? tags.map(tag => '<span data-user-content>' + esc(tag) + '</span>').join('') : '<p class="rq-field-hint">暂无标签</p>') + '</div></section>' +
       '<section class="rq-detail-block"><h4>' + sectionIcon('content') + '背景与说明</h4><div class="rq-description"' + (content.note ? ' data-user-content' : '') + '>' + esc(R.displayNote(task) || '暂无补充说明') + '</div></section>' +
@@ -532,8 +545,9 @@
       '<div class="rq-field-pair">' + (task.canViewExecution !== false ? '<label>截止日期<input type="date" name="due" value="' + esc(R.day(task.due)) + '"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '></label>' : '') +
       (!task.readOnly ? '<label>负责人<select name="assigneeUserId" data-search-placeholder="输入部分姓名搜索…"><option value="">未指派</option><option value="' + esc(task.assigneeUserId || '') + '" selected>' + esc(task.assigneeName || (task.assigneeUserId ? '当前负责人' : '未指派')) + '</option></select></label>' : '') + '</div>' +
       '<div class="rq-tag-field"><label for="rqTagsInput">标签</label>' + (global.RequirementFields?.tagHtml(task.tags, {id: 'rqTags', name: 'tags'}) || '') + '</div><div class="rq-field-pair">' +
-      ((!task.readOnly || R.roles(task).includes('creator')) ? '<label>可见范围<select name="visibility">' +
-        options([['organization', '团队可见'], ['related', '仅相关人可见']], task.visibility || 'related') + '</select></label>' : '') +
+      ((!task.readOnly || R.roles(task).includes('creator')) ? '<label>可见范围<select name="visibility" data-rq-visibility aria-describedby="rqVisibilityHint"' +
+        (fixedVisibility ? ' disabled data-rq-locked' : '') + '>' + options(visibilityOptions, task.visibility || 'related') + '</select>' +
+        (global.RequirementFields?.visibilityHint?.(task.visibility, 'rqVisibilityHint', fixedVisibility) || '') + '</label>' : '') +
       (R.canTriage(task) ? '<label>准备阶段<select name="triageStage">' + options(R.lanes.slice(0, 3), task.triageStage || 'ready') + '</select></label>' : '') +
       '</div></section></form>' : overview;
     const migrated = (task.migratedRequirements || []).map(item => '<details class="rq-source"><summary>' + esc(item.title || '历史需求') +

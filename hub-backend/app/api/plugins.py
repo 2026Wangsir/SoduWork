@@ -16,6 +16,7 @@ from ..deps import require_any_perm, require_perm
 from ..models import Task, User
 from ..services import (audit, plugin_audience, plugin_evaluations,
                         plugin_governance, plugin_marketplace, plugin_mcp_gateway,
+                        plugin_lifecycle_notifications,
                         plugin_packages, plugin_rollout, plugin_service, plugin_signatures,
                         plugin_starter, rbac,
                         workflow_control, workflow_engine)
@@ -254,8 +255,9 @@ async def update_catalog_policy(
     plugin = await _plugin(session, user, plugin_id)
     if plugin.org_id is None and not user.is_super:
         raise HTTPException(status_code=403, detail="系统级插件只能由超级管理员配置目录策略")
+    await plugin_lifecycle_notifications.lock_plugin(session, plugin)
     before = plugin_marketplace.public_policy(
-        await plugin_marketplace.get(session, plugin_id))
+        await session.get(am.PluginCatalogPolicy, plugin_id, populate_existing=True))
     before_compose = await plugin_marketplace.app_recommended_on(session, plugin_id)
     before_sidebar = await plugin_marketplace.app_recommended_on(session, plugin_id, "sidebar")
     for key in ("composeRecommended", "sidebarRecommended"):
@@ -292,12 +294,20 @@ async def update_catalog_policy(
         await plugin_marketplace.sync_app_recommendation(
             session, plugin_id, plugin.org_id,
             body["sidebarRecommended"], str(user.id), commit=False, surface="sidebar")
-    await session.commit()
-    await session.refresh(row)
+    notices = []
+    if (plugin.enabled and before["installation"] != plugin_marketplace.NOT_AVAILABLE and
+            row.installation == plugin_marketplace.NOT_AVAILABLE):
+        published_version = await session.scalar(select(am.PluginVersion.id).where(
+            am.PluginVersion.plugin_id == plugin_id,
+            am.PluginVersion.enabled.is_(True),
+            am.PluginVersion.trust_state == "approved").limit(1))
+        if published_version:
+            notices = await plugin_lifecycle_notifications.create(
+                session, plugin, user, "unpublished")
     after = plugin_marketplace.public_policy(row)
     after_compose = await plugin_marketplace.app_recommended_on(session, plugin_id)
     after_sidebar = await plugin_marketplace.app_recommended_on(session, plugin_id, "sidebar")
-    await audit.log(
+    audit.add(
         session, user, "plugin.catalog_policy", "plugin", plugin.id, plugin.name,
         {"before": before, "after": after,
          "beforeComposeRecommended": before_compose,
@@ -305,6 +315,8 @@ async def update_catalog_policy(
          "beforeSidebarRecommended": before_sidebar,
          "afterSidebarRecommended": after_sidebar,
          "taskBindingsUnaffected": True})
+    await session.commit()
+    await plugin_lifecycle_notifications.publish(session, notices)
     return {**after, "composeRecommended": after_compose, "sidebarRecommended": after_sidebar}
 
 
@@ -445,8 +457,11 @@ async def trust_version(
     plugin = await _plugin(session, user, version.plugin_id)
     if plugin.org_id is None and not user.is_super:
         raise HTTPException(status_code=403, detail="系统级插件只能由超级管理员审批")
+    await plugin_lifecycle_notifications.lock_plugin(session, plugin)
+    await session.refresh(version)
     enabled = bool(body.get("enabled"))
     previous_state = str(version.trust_state or "quarantined")
+    was_enabled = bool(version.enabled)
     decision = ("approve" if enabled else
                 "reject" if previous_state == "quarantined" else "revoke")
     note = str(body.get("note") or "").strip()[:1200]
@@ -466,6 +481,10 @@ async def trust_version(
             raise HTTPException(
                 status_code=409,
                 detail="发布评测尚未通过：" + "；".join(gate.get("blockers") or []))
+        # Evaluation helpers may commit their own results. Reacquire the
+        # transition lock after those prerequisites, before trust/history change.
+        await plugin_lifecycle_notifications.lock_plugin(session, plugin)
+        await session.refresh(version)
     elif enabled:
         gate = {
             "ok": True,
@@ -474,14 +493,20 @@ async def trust_version(
                 (version.capability_report or {}).get("qualitySummary") or {}),
         }
     await plugin_service.approve_version(
-        session, version, enabled, user.display_name or user.username)
-    await audit.log(session, user, "plugin." + decision,
+        session, version, enabled, user.display_name or user.username, commit=False)
+    notices = []
+    if not enabled and previous_state == "approved" and was_enabled:
+        notices = await plugin_lifecycle_notifications.create(
+            session, plugin, user, "revoked", version=version)
+    audit.add(session, user, "plugin." + decision,
                     "plugin_version", version.id, f"{plugin.name} {version.version}",
                     {"pluginId": plugin.id, "versionId": version.id,
                      "version": version.version, "decision": decision, "note": note,
                      "checksum": version.checksum, "capabilities": version.capability_report or {},
                      "evaluationGate": gate or {},
                      "reviewMode": review_mode})
+    await session.commit()
+    await plugin_lifecycle_notifications.publish(session, notices)
     return plugin_service.version_api(version)
 
 

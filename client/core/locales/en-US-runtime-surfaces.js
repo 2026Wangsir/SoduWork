@@ -1,5 +1,14 @@
 (function (global) {
   const messages = {
+    '同公司可见': 'Visible within the company',
+    '仓库成员可见': 'Visible to repository members',
+    '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。': 'Repository members can view the issue content. Execution conversations and logs keep their existing access permissions.',
+    '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。': 'Company members can view the issue content. Execution conversations and logs keep their existing access permissions.',
+    '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。': 'Only related people can view the issue content. Execution conversations and logs keep their existing access permissions.',
+    '已提交验收，等待验收人处理': 'Submitted for acceptance; waiting for the reviewer',
+    '“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。': '“Needs my attention” only shows issues that currently require your action. Issues in progress or submitted for acceptance remain under “Related to me”.',
+    '查看与我相关': 'View related issues',
+    '执行已安排，可在“与我相关”查看进展': 'Execution is scheduled. Follow its progress under “Related to me”.',
     "workspace.history.more": "Load more",
     "workspace.history.retry": "Reload",
     "workspace.history.localError": "Local history is temporarily unavailable",
@@ -209,6 +218,9 @@
   "在此执行机的终端运行以下命令，按官方页面完成登录，再刷新状态。": "Run this command in the terminal on this execution machine, sign in on the official page, then refresh the status.",
 
   "notification.task_assignment": "{sender} assigned the issue “{title}” to you",
+  "notification.plugin_unpublished": "“{name}” was removed from the company marketplace.",
+  "notification.plugin_version_revoked": "Version {version} of “{name}” was revoked and is no longer available.",
+  "发布状态更新": "Publication update",
   "notification.receipt.accepted": "Sent to {recipient}. Waiting for delivery.{subject}",
   "notification.receipt.delivered": "{recipient} received your message.{subject}",
   "notification.receipt.read": "{recipient} read your message.{subject}",
@@ -235,6 +247,7 @@
   "留在本地": "Stay local",
   "继续修正": "Continue revising",
   "继续编辑": "Continue editing",
+  "查看创建结果": "View creation result",
   "授权未完成，请重试": "Authorization is incomplete. Try again.",
   "仅在你需要创建、修改或发送内容时开启": "Enable only when you need to create, change, or send content.",
   "选择连接": "Select connection",

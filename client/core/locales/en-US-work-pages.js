@@ -1,5 +1,10 @@
 (function (global) {
   const messages = {
+    '需求内容': 'Issue content',
+    '明确完成这项需求的标准': 'Define what counts as completing this issue',
+    '基本信息': 'Basic information',
+    '已保存到收集箱，可在需求池继续查看。': 'Saved to Inbox. You can continue viewing it in Issues.',
+    '已保存到待开始，可在需求池继续查看。': 'Saved to Ready to start. You can continue viewing it in Issues.',
     '尚未填写完成标准': 'No acceptance criteria yet',
     '放弃未保存的修改？已保存的需求内容会保留。': 'Discard unsaved changes? The saved issue will be kept.',
     '此需求已关联另一条自动化，请重新加载后查看。': 'This issue is linked to another automation. Reload to view it.',

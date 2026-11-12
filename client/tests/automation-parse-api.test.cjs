@@ -16,13 +16,13 @@ function fixture(response) {
     fetch: async (_url, init) => {body = JSON.parse(init.body); return response || {ok:true,
       text:async () => JSON.stringify({fields:{title:'draft'}})};}};
   vm.runInNewContext(source, context);
-  return {api: window.SoduWorkAPI, body: () => JSON.parse(JSON.stringify(body))};
+  return {api: window.SoduWorkAPI, window, body: () => JSON.parse(JSON.stringify(body))};
 }
 
 test('ordinary parse request preserves fields and opts into JSON keepalive', async () => {
   const f = fixture();
   await f.api.parseTaskText('old task', 'model-a', [{id:'attachment-a'}]);
-  assert.deepEqual(f.body(), {text:'old task', model:'model-a', keepalive:true, attachments:[{id:'attachment-a'}]});
+  assert.deepEqual(f.body(), {text:'old task', model:'model-a', keepalive:true, locale:'zh-CN', attachments:[{id:'attachment-a'}]});
 });
 
 test('附件解析拒绝的具体原因返回表单，不能伪装成空的成功结果', async () => {
@@ -36,7 +36,7 @@ test('automation parse forwards only the opt-in draft context', async () => {
   await f.api.parseTaskText('form with prior text', 'model-a', [], {
     kind:'automation', instruction:'use Mini game', candidates, accessMode:'full',
   });
-  assert.deepEqual(f.body(), {text:'form with prior text', model:'model-a', keepalive:true, attachments:[],
+  assert.deepEqual(f.body(), {text:'form with prior text', model:'model-a', keepalive:true, locale:'zh-CN', attachments:[],
     kind:'automation', instruction:'use Mini game', candidates});
 });
 
@@ -52,7 +52,19 @@ test('requirement parsing separates the current instruction from reference mater
     const f = fixture();
     await f.api.parseTaskText('当前要求及历史材料', '', [], { kind,
       instruction: '转给示例成员修复', candidates: { methods: [{ id: 'not-authority' }] } });
-    assert.deepEqual(f.body(), { text: '当前要求及历史材料', model: '', keepalive: true, attachments: [],
+    assert.deepEqual(f.body(), { text: '当前要求及历史材料', model: '', keepalive: true, locale: 'zh-CN', attachments: [],
       instruction: '转给示例成员修复' });
+  }
+});
+
+test('every parse reads the current UI locale, including refinement and automation', async () => {
+  const f = fixture();
+  for (const locale of ['en-US', 'ja-JP', 'ko-KR', 'zh-CN']) {
+    f.window.SoduWorkI18n = {getLocale: () => locale};
+    for (const options of [undefined, {instruction:'Refine the draft'}, {kind:'automation',instruction:'Every day'}]) {
+      await f.api.parseTaskText('原文保持不变', '', [], options);
+      assert.equal(f.body().locale, locale);
+      assert.equal(f.body().text, '原文保持不变');
+    }
   }
 });

@@ -28,6 +28,8 @@ The management UI handles candidate import, quarantine, evaluation, review, publ
 
 An author may explicitly upload a personal plugin for all organization members or selected members. Hub repeats preflight and creates an immutable candidate in quarantine. Uploading does not alter the personal copy. First publication from a client signs the package with an Ed25519 key held in system secure storage. A candidate public key may verify that package without becoming trusted. Administrators must compare Key ID and SHA-256 fingerprints, register the publisher explicitly, then independently review and enable the version.
 
+My submissions retains each submitted version and its review history when a newer version is submitted. Each record opens that exact version, including its earlier review decisions and feedback. Unpublishing a listed plugin sends an in-app notice to its publishers and accounts with an active installation. Revoking a version notifies its publishers and accounts with that version installed. Notices are saved with the change and remain available after reconnecting; retrying an unchanged operation does not send another notice. Plugin notices follow the recipient's account and company scope.
+
 - Personal identity is `local:<uuid>`, stored in the current client profile.
 - Package definitions contain no passwords, tokens, private keys, or API keys. Organization credentials use Secret References.
 - Version audiences are immutable and restricted to active accounts in the organization. Runtime checks repeat visibility validation.

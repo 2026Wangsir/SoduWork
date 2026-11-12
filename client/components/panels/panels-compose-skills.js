@@ -228,7 +228,11 @@
     }
 
     function onInput() {
+      const opening = !menu.classList.contains('show');
       match = queryOf(input.value, input.selectionStart);
+      // Imports and catalog changes can happen while this composer stays mounted.
+      // Refresh once per opening, preserving explicit selections and typed text.
+      if (match && opening) opts.onOpen?.();
       active = 0;
       menu.scrollTop = 0;
       paintMenu();

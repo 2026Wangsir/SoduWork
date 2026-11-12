@@ -276,7 +276,7 @@
       if (_skillPicker) _skillPicker.setItems(decorated);
     }).catch(() => { /* plugin icons are optional; the Skill list is already usable */ });
   }
-  function _loadCapabilities(force) {
+  function _loadCapabilities(force, { preserveSelection = false } = {}) {
     const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
     if (_capLoading) {
       // Model discovery can finish after the initial capability request. If it
@@ -327,7 +327,8 @@
         }
         _capabilities = (result && result.items) || [];
         _skills = Array.isArray(result && result.skills) ? result.skills.slice() : [];
-        const requested = Array.isArray(_requestedCapabilities) ? new Set(_requestedCapabilities.map(String)) : null;
+        const requested = preserveSelection ? new Set(_pickedCapabilities)
+          : Array.isArray(_requestedCapabilities) ? new Set(_requestedCapabilities.map(String)) : null;
         _pickedCapabilities = new Set(_capabilities.filter((item) =>
           item.selectable && item.deviceGranted && (requested ? requested.has(item.id) : item.selected)).map((item) => item.id));
         if (_skillPicker) {

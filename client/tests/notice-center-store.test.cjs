@@ -30,6 +30,22 @@ function fixture(){
     html:()=>nodes.get('npBody').innerHTML};
 }
 const row=()=>({id:'mate-client',serverMessageId:'server-1',messageId:'client-1',at:Date.now(),text:'收到需求',bodyText:'收到需求',kind:'task_assignment',taskId:'task-1',read:false,sentStatus:'delivered',senderName:'发送人',recipientName:'接收人'});
+test('publication notices use localized system copy and retain recipient read acknowledgements',async()=>{
+  const f=fixture(), name='<img src=x onerror="bad()">';
+  f.context.esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  f.context.SoduWorkI18n={t:(_key,_fallback,params)=>'Removed: '+params.name};
+  f.rows.received=[{...row(),kind:'plugin_lifecycle',taskId:'',textMessage:{key:'notification.plugin_unpublished',params:{name}}}];
+  await f.open();
+  assert.match(f.html(),/发布状态更新/);
+  assert.match(f.html(),/class="np-txt" data-user-content/);
+  assert.match(f.html(),/Removed: &lt;img/);
+  assert.doesNotMatch(f.html(),/<img|data-ntask=|来自/);
+  f.click({'data-nnotice':'mate-client','data-server-message':'server-1'});await settle();
+  assert.deepEqual(f.reads,['server-1']);assert.equal(f.rows.received[0].read,true);
+  f.rows.sent=[{...f.rows.received[0],recipientName:'Recipient <script>'}];
+  await f.context._loadMateNoticeFolder('sent');
+  assert.match(f.html(),/Recipient &lt;script&gt;/);assert.doesNotMatch(f.html(),/<script>/);
+});
 test('notice center renders the shared store and refreshes receipt status without a parallel cache',async()=>{
   const f=fixture();f.rows.received=[row()];f.rows.sent=[{...row(),read:true}];await f.open();
   assert.match(f.html(),/收到需求/);assert.match(f.html(),/data-ntask="task-1"/);

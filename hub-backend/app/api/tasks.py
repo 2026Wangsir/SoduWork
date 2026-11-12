@@ -132,6 +132,7 @@ async def parse_task(
     async def parse():
         return await svc.parse_task_text(session, str(body.get("text") or ""),
                                        client=client, model=str(body.get("model") or ""),
+                                       **({"locale": body["locale"]} if "locale" in body else {}),
                                        **({"attachments": body["attachments"]} if "attachments" in body else {}),
                                        **({"instruction": str(body.get("instruction") or "")} if "instruction" in body else {}),
                                        **({"automation": body} if body.get("kind") == "automation" else {}))

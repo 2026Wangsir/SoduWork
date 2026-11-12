@@ -1,5 +1,14 @@
 (function (global) {
   const messages = {
+    '同公司可见': '同公司可见',
+    '仓库成员可见': '仓库成员可见',
+    '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。': '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。',
+    '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。': '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。',
+    '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。': '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。',
+    '已提交验收，等待验收人处理': '已提交验收，等待验收人处理',
+    '“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。': '“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。',
+    '查看与我相关': '查看与我相关',
+    '执行已安排，可在“与我相关”查看进展': '执行已安排，可在“与我相关”查看进展',
     "workspace.history.more": "加载更多",
     "workspace.history.retry": "重新加载",
     "workspace.history.localError": "本机历史暂时无法读取",
@@ -160,6 +169,9 @@
   "在此执行机的终端运行以下命令，按官方页面完成登录，再刷新状态。": "在此执行机的终端运行以下命令，按官方页面完成登录，再刷新状态。",
 
   "notification.task_assignment": "{sender} 将需求「{title}」交给你",
+  "notification.plugin_unpublished": "「{name}」已从企业市场下架。",
+  "notification.plugin_version_revoked": "「{name}」的 v{version} 版本已撤销，无法继续使用。",
+  "发布状态更新": "发布状态更新",
   "notification.receipt.accepted": "已发送给{recipient}，等待对方接收。{subject}",
   "notification.receipt.delivered": "{recipient}已收到你发送的消息。{subject}",
   "notification.receipt.read": "{recipient}已读你发送的消息。{subject}",

@@ -97,6 +97,22 @@ test('ordinary entry defaults to actionable while preserving other saved filters
   assert.equal(f.rendered.at(-1).state.scope, 'actionable');
 });
 
+test('personal action scope explains where active work remains and links to related work', () => {
+  const f = fixture({scope:'actionable'}, {now:Date.now()});
+  f.context.tasks = [{id:'streaming',status:'doing',myRoles:['assignee'],ai:{state:'streaming'}}];
+  f.api.open();
+  const hint = f.root.querySelector('#rqScopeHint');
+  assert.equal(hint.hidden,false);
+  assert.match(f.root.innerHTML,/当前轮到你操作/);
+  assert.match(f.root.innerHTML,/执行中或已提交验收的需求仍保留在/);
+  assert.match(f.root.innerHTML,/data-rq-scope="related">查看与我相关/);
+  const button = {dataset:{rqScope:'related'},hasAttribute:name=>name==='data-rq-scope',closest:()=>null};
+  f.root.dispatchEvent({type:'click',target:{closest:selector=>selector==='button,[data-rq-open]'?button:null}});
+  assert.equal(hint.hidden,true);
+  assert.equal(f.root.querySelector('#rqScope').value,'related');
+  assert.match(f.root.querySelector('.hb-body').innerHTML,/data-hbid="streaming"/);
+});
+
 test('entering the pool reconciles a stale failure without rerunning the requirement', async () => {
   const f = fixture({}), row = f.context.tasks.find(task => task.id === 'running');
   row.ai = {state: 'failed', error: 'Old routing failure'};

@@ -241,6 +241,14 @@ async def main():
                 (v2_model.trust_state, plugin_model.description))
         bound_catalog = await client.get("/api/v1/plugins/catalog", headers=headers())
         bound_items = bound_catalog.json().get("items") if bound_catalog.status_code == 200 else []
+        own_versions = [row for row in bound_catalog.json().get("submissions", [])
+                        if row.get("pluginId") == plugin.id]
+        chk("新申请保留每个已提交版本及原版本进度",
+            [row.get("versionId") for row in own_versions] == [v2.id, first.id]
+            and own_versions[0]["trustState"] == "quarantined"
+            and own_versions[0]["reviewHistory"] == []
+            and own_versions[1] == progress,
+            own_versions)
         chk("员工目录展示已审核上架版本并明确任务绑定状态",
             len(bound_items) == 1
             and bound_items[0]["version"] == "1.0.0"

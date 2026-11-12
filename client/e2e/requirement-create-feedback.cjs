@@ -143,6 +143,16 @@ async function setup(options = {}) {
   await js('fixture.open(' + JSON.stringify(options.open || {}) + ').then(()=>true)');
   await until('Boolean(document.querySelector("#cpCreate"))', 'actual requirement form');
 }
+async function englishDraft(stage = 'intake') {
+  await setup({ open: { triageStage: stage, text: 'Help me design a login page', proposal: {
+    title: 'Design a login page', note: 'Keep the original requirement text.', checklist: ['Deliver a working preview'],
+  } } });
+  for (const file of JSON.parse(fs.readFileSync(path.join(client, 'core/locales/manifest.json'), 'utf8'))
+    .map(file => 'core/locales/' + file).concat(['core/i18n-dom.js', 'core/i18n.js'])) {
+    await js(fs.readFileSync(path.join(client, file), 'utf8') + '\n;void 0;');
+  }
+  await js(`SoduWorkI18n.setLocale('en-US')`); await frame();
+}
 async function addFiles(names) {
   await js(`(() => {const data=new DataTransfer();for(const name of ${JSON.stringify(names)})data.items.add(new File(['fixture material'],name,{type:'text/plain'}));
     const input=document.querySelector('#wesAttachInput');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
@@ -160,6 +170,27 @@ app.whenReady().then(async () => {
     report.network.push(request.url); callback({ cancel: true });
   });
   buildPage();
+  await runCase('english-requirement-form', async () => {
+    await englishDraft(); await shot('english-form');
+    assert.doesNotMatch(await js('document.querySelector("#workEntryLayer").innerText'), /[\u4e00-\u9fff]/);
+    const original = await js('ComposeDraft.capture().draft');
+    for (const value of ['zh-CN', 'ja-JP', 'ko-KR', 'en-US']) {
+      await js(`SoduWorkI18n.setLocale(${JSON.stringify(value)})`); await frame();
+      assert.deepEqual(await js('ComposeDraft.capture().draft'), original, 'locale changes preserve the draft');
+    }
+    assert.doesNotMatch(await js('document.querySelector("#workEntryLayer").innerText'), /[\u4e00-\u9fff]/);
+  });
+  for (const stage of ['intake', 'ready']) await runCase('english-requirement-receipt-' + stage, async () => {
+    await englishDraft(stage); await click('#cpCreate');
+    await until('Boolean(document.querySelector("dialog.wes-result-dialog:modal"))');
+    await frame(); await shot('english-receipt-' + stage);
+    assert.doesNotMatch(await js('document.querySelector(".wes-result-dialog").innerText'), /[\u4e00-\u9fff]/);
+    assert.equal(await js('fixture.creates[0].task.title'), 'Design a login page');
+    assert.equal(await js('fixture.creates[0].task.note'), 'Keep the original requirement text.');
+    await button('View details');
+    await until('fixture.details.length===1');
+    assert.equal(await js('fixture.details[0].hadModal'), false);
+  });
   await runCase('success-intake-closes-form-and-opens-detail', async () => {
     await setup(); await click('#cpCreate');
     await assertDialog('需求已创建');
@@ -182,18 +213,31 @@ app.whenReady().then(async () => {
     await js('fixture.pendingCreates.shift()(true)'); await assertDialog('需求已创建');
     assert.equal(await js('fixture.creates.length'), 1);
   });
-  await runCase('inline-chat-receipt-shows-confirmed-time', async () => {
+  await runCase('inline-chat-receipt-shows-confirmed-creation-time', async () => {
+    const created = 1792700000000, updated = 1792700123000;
     await setup();
     await js("fixture.open({host:document.querySelector('#fixtureInline')}).then(()=>true)");
     await js("fixture.persistMode='defer'"); await click('#cpCreate');
     await until('fixture.pendingCreates.length===1');
-    await js("tasks[0].updatedAt=1792700123000;fixture.pendingCreates.shift()(true)");
+    // The Hub confirms both timestamps; a creation receipt must not prefer the later update.
+    await js(`delete tasks[0].createdAt;Object.assign(tasks[0], {created:${created}, updatedAt:${updated}});fixture.pendingCreates.shift()(true)`);
     await until('Boolean(document.querySelector(".cp-receipt-time"))');
-    assert.equal(await js('document.querySelector(".cp-receipt-time").dateTime'), new Date(1792700123000).toISOString());
-    assert.match(await js('document.querySelector(".cp-receipt-time").textContent'), /更新于/);
+    assert.equal(await js('document.querySelector(".cp-receipt-time").dateTime'), new Date(created).toISOString());
+    assert.match(await js('document.querySelector(".cp-receipt-time").parentElement.textContent'), /创建时间/);
+    assert.match(await js('document.querySelector(".cp-receipt-time").title'), /创建时间/);
     assert.equal(await js('document.querySelectorAll("[data-cp-receipt-close]").length'), 0);
     assert.equal(await js('fixture.creates.length'), 1);
+    const saved = await js('ComposeDraft.capture()');
+    assert.equal(saved.receipt.createdAt, created);
+    assert.equal(saved.receipt.updatedAt, updated);
     await shot('inline-chat-receipt-time');
+
+    await win.loadFile(page);
+    await js(`fixture.open({host:document.querySelector('#fixtureInline'),cardState:${JSON.stringify(saved)}}).then(()=>true)`);
+    await until('Boolean(document.querySelector(".cp-receipt-time"))');
+    assert.equal(await js('document.querySelector(".cp-receipt-time").dateTime'), new Date(created).toISOString());
+    assert.equal(await js('fixture.creates.length'), 0, 'restoring a receipt must not create another requirement');
+    await shot('inline-chat-receipt-time-restored');
   });
   await runCase('failure-shows-error-dialog-and-keeps-form', async () => {
     await setup(); await js("fixture.persistMode='throw'"); await click('#cpCreate');

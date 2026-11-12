@@ -11,6 +11,7 @@ const sessions = require('./agent-runtime/pi-session-bridge');
 const outputs = require('./pi-session/outputs');
 const artifactRuntime = require('./conversation/artifact-runtime');
 const appBridgeContract = require('./soduwork-app-bridge-contract.cjs');
+const appOwner = require('./work-preview-app-owner.cjs');
 // The main process always exposes __dirname. Parser/lifecycle fixtures load
 // this module in a VM, where it is intentionally absent, so keep the bridge
 // path deterministic without making those isolated tests depend on a global.

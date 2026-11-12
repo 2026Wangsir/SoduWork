@@ -77,6 +77,35 @@ test('new-session fallback uses the compose entry or throws synchronously when u
   assert.throws(() => unavailable.entry._openPluginBuilder('seed'), /插件制作助手暂时没有加载完成/);
 });
 
+test('app creation localizes generated prefixes and storage choices without translating the user description', () => {
+  for (const locale of ['en-US', 'ja-JP', 'ko-KR']) {
+    const messages = require('../core/locales/' + locale + '-gap-pages.js');
+    for (const label of ['数据本地化', '数据云端化', '工具办公', '小游戏', '机器人', '其他']) {
+      assert.ok(messages[label], locale + ' must translate ' + label);
+      if (locale === 'ja-JP') assert.match(messages[label], /[\u3040-\u30ff]/);
+      if (locale === 'ko-KR') assert.match(messages[label], /[\uac00-\ud7af]/);
+    }
+    const translated = [];
+    const f = fixture({}, { SoduWorkI18n: { getLocale: () => locale, translateText: text => {
+      translated.push(text); return messages[text] || text;
+    } } });
+    const source = '保留原文 Original requirement';
+    for (const kind of ['lite', 'web', 'desktop', undefined]) {
+      for (const storageLocation of ['local', 'cloud', undefined]) {
+        const payload = f.window.PluginBuilderEntry.buildPayload(source, { storageLocation, appCategory: 'office' }, true, kind);
+        assert.ok(payload.prefill.endsWith(source));
+        const prefix = payload.prefill.slice(0, -source.length);
+        if (locale === 'en-US') assert.doesNotMatch(prefix, /[\u4e00-\u9fff]/);
+        if (locale === 'ja-JP') assert.match(prefix, /[\u3040-\u30ff]/);
+        if (locale === 'ko-KR') assert.match(prefix, /[\uac00-\ud7af]/);
+        if (storageLocation) assert.ok(payload.contextPrompts[0].includes('"location":"' + storageLocation + '"'));
+        assert.ok(payload.contextPrompts.join('\n').includes('appCategory=office'));
+      }
+    }
+    assert.ok(!translated.includes(source));
+  }
+});
+
 test('plugin authoring from an active conversation reuses it and returns a Promise', async () => {
   let complete, cleared = 0;
   const ctx = { _ref: 'existing', _pluginMention: {

@@ -52,6 +52,8 @@ app.whenReady().then(async()=>{
     for(let i=0;i<50;i++) {task=(await call('/api/v1/tasks/empty-delivery')).body;if(task.requirementStage==='reviewing')break;await wait(100);}
     assert.equal(task.requirementStage,'reviewing');
     assert.equal(task.canSubmitReview,false);
+    assert.equal(await executor.js(`document.querySelectorAll('.rq-detail-backdrop').length`),0,
+      'A successful HTTP submission closes the executor drawer');
     const reviewer=await open('sender');
     await reviewer.js(`RequirementsDetail.open('empty-delivery')`);
     assert.equal(await reviewer.js(`document.querySelectorAll('[data-tfd-acceptance-mode]').length`),2);
@@ -81,18 +83,21 @@ app.whenReady().then(async()=>{
     const multiple=await call('/api/v1/tasks/multiple-deliverables/submit-review','recipient','POST',{});
     assert.equal(multiple.status,200,JSON.stringify(multiple.body));
     const materialContext=(await call('/api/v1/tasks/multiple-deliverables/acceptance-context','sender')).body;
-    assert.deepEqual(materialContext.attachmentIds.slice().sort(),['site-css','site-html']);
-    assert.equal(materialContext.deliveryBundle.fileCount,2);
+    assert.deepEqual(materialContext.attachmentIds.slice().sort(),['site-css','site-doc','site-html','site-notes']);
+    assert.equal(materialContext.deliveryBundle.fileCount,4);
     const prepared=await require('../main/pi-session/task-input').prepare({hub,clientId:'e2e-sender',
       secret:'isolated-requirements-fixture-key-never-production'},'multiple-deliverables','acceptance-chat','turn','Review',
       {acceptanceOnly:true},{handle:{sessionId:'acceptance-chat'}});
     await prepared.beforeTurn();
-    assert.equal(prepared.attachments.length,1);
+    assert.equal(prepared.attachments.length,2);
     assert.equal(prepared.attachments[0].mimeType,'application/zip');
     assert.equal(prepared.attachments[0].data.subarray(0,2).toString(),'PK');
-    assert.deepEqual(prepared.attachments[0].evidenceMeta.sourceAttachmentIds.slice().sort(),['site-css','site-html']);
+    assert.deepEqual(prepared.attachments[0].evidenceMeta.sourceAttachmentIds.slice().sort(),['site-css','site-doc','site-html','site-notes']);
+    assert.equal(prepared.attachments[1].name,'brief.md');
+    assert.equal(prepared.attachments[1].data.toString(),'Reference only');
     await reviewer.js(`(async()=>{await Store.refreshTasks();await TaskApprovalInbox.refresh();await RequirementsDetail.open('multiple-deliverables')})()`);
-    assert.equal(await reviewer.js(`document.querySelectorAll('[data-rq-material-group="output"] .rq-material').length`),1);
+    assert.equal(await reviewer.js(`document.querySelectorAll('[data-rq-material-group="output"] .rq-material').length`),5);
+    assert.deepEqual(await reviewer.js(`Array.from(document.querySelectorAll('[data-rq-material-group="output"] [data-rq-file-id]'),n=>n.dataset.rqFileId).filter(Boolean).sort()`),['site-css','site-doc','site-html','site-notes']);
     assert.equal(await reviewer.js(`!!document.querySelector('[data-rq-bundle-download]')`),true);
     assert.equal(await reviewer.js(`document.querySelector('[data-rq-material-group="output"]').textContent.includes('final-hero.png')`),false);
     await reviewer.click('[data-rq-material-group="output"]>summary');
@@ -107,7 +112,7 @@ app.whenReady().then(async()=>{
     await reviewer.click('[data-rq-bundle-download]');
     await downloaded;
     assert.equal(fs.readFileSync(downloadPath).subarray(0,2).toString(),'PK');
-    report.checks.push('Two deliverables enter the real acceptance runtime as one version-bound checksum-verified ZIP; the drawer downloads the archive through a native click and evidence stays optional');
+    report.checks.push('Three primary deliverables and their stylesheet enter the real acceptance runtime as one version-bound checksum-verified ZIP alongside the original reference; the drawer retains original files and downloads the archive through a native click, excluding historical output and optional evidence');
     for(const page of [executor,reviewer])assert.deepEqual(await page.js('fixtureErrors'),[]);
     report.ok=true;
   }catch(error){report.error=String(error.stack||error);for(let i=0;i<windows.length;i++)fs.writeFileSync(path.join(output,'failure-'+i+'.png'),(await windows[i].webContents.capturePage()).toPNG());}

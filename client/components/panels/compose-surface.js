@@ -222,6 +222,7 @@
     if (global.ComposeSkills) {
       ctx._skillPicker = ComposeSkills.create({
         host: p.querySelector('.cp-box'), input,
+        onOpen: () => ctx._loadCapabilities(true, { preserveSelection: true }),
         onChange: () => ctx._rememberComposeDraft(),
         say: (message) => { if (typeof petSay === 'function') petSay(message); },
       });

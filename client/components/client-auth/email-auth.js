@@ -42,8 +42,8 @@
       '<label><span class="ac-account-label">账号</span><input id="soduWorkAuthAccount" name="username" type="text" autocomplete="username" maxlength="254" placeholder="输入账号" required></label>' +
       '<label data-auth-code><span>邮箱验证码</span><span class="ac-code-row"><input id="acEmailCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6 位验证码">' +
       '<button type="button" class="ac-secondary" data-send-code>获取验证码</button></span></label>' +
-      '<label data-auth-password hidden><span class="ac-password-label">密码</span><span class="ac-password-row"><input id="soduWorkAuthPassword" type="password" autocomplete="current-password" maxlength="128" placeholder="输入密码">' +
-      '<button type="button" class="ac-text" data-password-toggle="soduWorkAuthPassword" aria-label="显示密码" aria-pressed="false">显示</button></span></label>' +
+      '<label data-auth-password hidden><span class="ac-password-label">密码</span><span class="ac-password-row"><input id="soduWorkAuthPassword" type="password" autocomplete="current-password" maxlength="128" placeholder="输入密码" aria-describedby="acPasswordRequirements">' +
+      '<button type="button" class="ac-text" data-password-toggle="soduWorkAuthPassword" aria-label="显示密码" aria-pressed="false">显示</button></span><span id="acPasswordRequirements" class="ac-status" hidden></span></label>' +
       '<label data-auth-confirm hidden><span>确认密码</span><input id="acConfirmPassword" type="password" autocomplete="new-password" maxlength="128" placeholder="再次输入密码"></label>' +
       '<div class="ac-consent" data-auth-consent hidden><label><input id="acConsent" type="checkbox"><span>我已阅读并同意</span></label>' +
       '<button type="button" class="ac-link" data-legal="terms">《用户协议》</button><span data-consent-and>和</span><button type="button" class="ac-link" data-legal="privacy">《隐私政策》</button></div>' +
@@ -66,6 +66,14 @@
     const api = () => hooks.api();
     const tx = value => (global.SoduWorkI18n && typeof global.SoduWorkI18n.translateText === 'function')
       ? global.SoduWorkI18n.translateText(String(value || '')) : String(value || '');
+    function passwordRequirements() {
+      return '密码需为 {min} 至 {max} 个字符。'.replace('{min}', policy?.passwordMinLength || 8).replace('{max}', password.maxLength || 128);
+    }
+    function refreshPasswordRequirements() {
+      const hint = gate.querySelector('#acPasswordRequirements');
+      hint.hidden = !['register', 'resetPassword'].includes(mode);
+      hint.textContent = tx(passwordRequirements());
+    }
     function setStatus(message, kind) {
       statusSource = String(message || '');
       status.textContent = tx(statusSource);
@@ -128,7 +136,7 @@
       const hub = gate.querySelector('.soduwork-auth-hub');
       if (hub && hub.firstChild && hub.firstChild.nodeType === 3) hub.firstChild.nodeValue = tx('连接 ');
       if (!busy) text('.soduwork-auth-submit span', actionLabel());
-      refreshCooldown(); refreshAvailability();
+      refreshCooldown(); refreshAvailability(); refreshPasswordRequirements();
       if (statusSource) status.textContent = tx(statusSource);
     }
     function actionLabel() { return mode === 'register' ? '注册并进入工作区' : mode === 'resetPassword' ? '重置密码' : '登录'; }
@@ -264,6 +272,19 @@
     });
     language.addEventListener('change', () => global.SoduWorkI18n?.setLocale?.(language.value));
     ui.bindPassword(gate);
+    form.addEventListener('keydown', event => {
+      if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || !confirm.getClientRects().length) return;
+      // Keep the two password fields adjacent in keyboard order without removing
+      // the visibility button from navigation or changing ordinary sign-in.
+      const fields = [...form.querySelectorAll('input,button')].filter(node => !node.disabled && node.getClientRects().length);
+      const toggle = gate.querySelector('[data-password-toggle]');
+      if (!fields.includes(confirm) || !fields.includes(toggle)) return;
+      fields.splice(fields.indexOf(toggle), 1);
+      fields.splice(fields.indexOf(confirm) + 1, 0, toggle);
+      const index = fields.indexOf(event.target), next = fields[index + (event.shiftKey ? -1 : 1)];
+      if (index < 0 || !next) return;
+      event.preventDefault(); next.focus();
+    });
     gate.querySelector('.soduwork-auth-retry').addEventListener('click', hooks.retry);
     gate.querySelector('[data-recheck-policy]').addEventListener('click', () => {
       if (busy || sending) return;
@@ -313,7 +334,7 @@
       if (mode !== 'password' && !ui.code(code.value)) { setStatus('请输入 6 位验证码。', 'error'); code.focus(); return; }
       if (mode !== 'emailCode' && !password.value) { setStatus('请输入密码。', 'error'); password.focus(); return; }
       if (['register', 'resetPassword'].includes(mode)) {
-        if (password.value.length < (policy?.passwordMinLength || 8)) { setStatus('密码长度不足，请按要求重新填写。', 'error'); return; }
+        if (password.value.length < (policy?.passwordMinLength || 8)) { setStatus(passwordRequirements(), 'error'); password.focus(); return; }
         if (password.value !== confirm.value) { setStatus('两次输入的密码不一致。', 'error'); confirm.focus(); return; }
       }
       if (mode === 'register' && (!consent.checked || !policy?.requiredConsentVersions?.terms || !policy?.requiredConsentVersions?.privacy)) {
@@ -356,7 +377,7 @@
         if (busy) pendingPasswordMode = true; else changeMode('password');
       } else pendingPasswordMode = false;
       gate.querySelector('[data-auth-mode="register"]').hidden = policy.allowSelfRegistration === false;
-      refreshAvailability(); refreshCooldown();
+      refreshAvailability(); refreshCooldown(); refreshPasswordRequirements();
     }
     function setPolicyError() {
       policyError = true;
