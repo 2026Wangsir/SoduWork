@@ -10,7 +10,7 @@ test('production native launcher recovers previous payloads and interrupted flat
     t.after(async () => {
       assert.equal(path.dirname(root), os.tmpdir());
       assert.match(path.basename(root), /^soduwork-native-launcher-recovery-/);
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 });
     });
     const compiler = await getMakeNsisPath();
     const run = (exe, args, timeout = 30000) => spawnSync(exe, args, {
