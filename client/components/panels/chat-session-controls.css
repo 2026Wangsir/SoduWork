@@ -5,8 +5,8 @@
 .wc-agent-badge>span{display:flex;align-items:center;flex:none}.wc-agent-badge>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:max(var(--font-min-readable, 14.5px), 12px);font-weight:500}
 .wc-agent-badge .agent-brand{--agent-brand-size:18px;width:18px;height:18px;flex-basis:18px;border:0;border-radius:4px;box-shadow:none;background:transparent}.wc-agent-badge .agent-brand>img{width:16px;height:16px}
 .wc-runtime-availability{display:inline-flex;align-items:center;gap:3px;min-width:0;flex:0 0 auto;height:30px}
-.wc-runtime-missing{display:inline-flex;align-items:center;min-width:0;height:24px;padding-inline:2px}
-.wc-runtime-missing-icon{display:grid;place-items:center;width:22px;height:22px;margin-left:-5px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:7px;background:var(--bg-0);box-shadow:0 1px 2px rgba(20,30,48,.08)}
+.wc-runtime-missing{display:inline-flex;align-items:center;gap:2px;min-width:0;height:24px;padding-inline:2px}
+.wc-runtime-missing-icon{display:grid;place-items:center;width:22px;height:22px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:7px;background:var(--bg-0);box-shadow:0 1px 2px rgba(20,30,48,.08)}
 .wc-runtime-missing-icon:first-child{margin-left:0}
 .wc-runtime-missing-icon .agent-brand{--agent-brand-size:20px;width:20px;height:20px;flex-basis:20px;display:grid;place-items:center;border:0;border-radius:0;background:transparent;box-shadow:none}
 .wc-runtime-missing-icon .agent-monogram{font-size:12px;letter-spacing:0}

@@ -45,7 +45,7 @@ if (typeof electron === 'string') {
       const mark=icon.querySelector('.agent-monogram,svg'),bounds=icon.getBoundingClientRect(),m=mark?.getBoundingClientRect();
       const range=document.createRange();if(mark)range.selectNodeContents(mark);const text=mark?.tagName==='SPAN'?range.getBoundingClientRect():m;
       return {actual:signature(icon),expected:signature(expected),visible:icon.checkVisibility(),
-        unobscured:icon.contains(document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2)),
+        unobscured:[1,bounds.width/2,bounds.width-1].every(x=>icon.contains(document.elementFromPoint(bounds.x+x,bounds.y+bounds.height/2))),
         bounds:{width:bounds.width,height:bounds.height},fits:!!text&&text.left>=bounds.left-1&&text.right<=bounds.right+1&&text.top>=bounds.top-1&&text.bottom<=bounds.bottom+1};
     })()`);
     report.checks.push({ surface, selector, id, ...result });
