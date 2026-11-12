@@ -366,6 +366,9 @@ def launch_desktop(state: Path, client: Path, env: dict, base: str, output) -> s
     desktop_env.update(SODUWORK_USER_DATA=str(profile), VIRTUAL_ENV=str(state / 'venv'),
                        SODUWORK_SOURCE_SESSION='1')
     bin_dir = state / 'venv' / ('Scripts' if os.name == 'nt' else 'bin')
+    # Bind Runner to the interpreter prepared for this exact source instance.
+    # The desktop must not infer executable ownership from an inherited PATH.
+    desktop_env['SODUWORK_SOURCE_RUNNER_PYTHON'] = str(bin_dir / ('python.exe' if os.name == 'nt' else 'python'))
     desktop_env['PATH'] = str(bin_dir) + os.pathsep + desktop_env.get('PATH', '')
     for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XAUTHORITY'):
         if key in os.environ:

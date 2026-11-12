@@ -66,8 +66,8 @@ if (typeof electron === 'string') {
         await click('#nchatRuntime'); await until('document.querySelector("[data-runtime=' + agent + ']")');
         await click('[data-runtime=' + agent + ']'); await until('state.adapterId===' + JSON.stringify(agent));
         const badge = await js('({id:document.querySelector("#nchatRuntimeIcon [data-agent-brand]").dataset.agentBrand,' +
-          'src:document.querySelector("#nchatRuntimeIcon img").getAttribute("src"),name:document.querySelector("#nchatRuntimeName").textContent})');
-        assert.equal(badge.id, agent); assert.equal(badge.src, await js('AgentBrand.ICONS[' + JSON.stringify(agent) + ']'));
+          'glyph:document.querySelector("#nchatRuntimeIcon [data-agent-brand]").innerHTML,name:document.querySelector("#nchatRuntimeName").textContent})');
+        assert.equal(badge.id, agent); assert.equal(badge.glyph, await js('AgentBrand.glyph(' + JSON.stringify(agent) + ')'));
         assert.equal(badge.name, await js('AgentBrand.LABELS[' + JSON.stringify(agent) + ']'));
         assert.equal(await js('boundTask.id'), 'finished-requirement');
         assert.equal(await js('taskExecutions[0].run.engine'), 'pi');

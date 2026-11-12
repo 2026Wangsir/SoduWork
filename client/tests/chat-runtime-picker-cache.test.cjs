@@ -27,7 +27,10 @@ class Element extends Target {
       toggle: (name, active) => active ? this.classList.add(name) : this.classList.remove(name),
     };
   }
-  setAttribute(name, value) { this.attributes[name] = String(value); }
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+    if (name === 'class') this.className = String(value);
+  }
   getAttribute(name) { return this.attributes[name]; }
   set textContent(value) { this.text = value; this.children = []; }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
@@ -71,11 +74,13 @@ function fixture(t, initial = {}) {
   for (const [node, id] of [[button, 'nchatRuntime'], [missingWrap, 'nchatRuntimeAvailability'], [missing, 'nchatRuntimeMissing'], [more, 'nchatRuntimeMore']]) node.setAttribute('id', id);
   missingWrap.append(missing, more); root.append(button, missingWrap);
   const context = new Target(), document = new Target(); document.createElement = tag => new Element(tag);
+  document.createElementNS = (_namespace, tag) => new Element(tag);
   const load = (ref, options, draft = false) => {
     const pending = deferred(); calls.push({ ref, options, draft, ...pending }); return pending.promise;
   };
   const selection = deferred(), selectionResponses = [];
   Object.assign(context, { AbortController, document, setTimeout,
+    AgentBrand: require('../components/panels/agent-brand'),
     Date: class extends Date { static now() { return now; } },
     SoduWorkAPI: { taskStorageKey: () => owner },
     SoduWorkI18n: { translateText: value => locale + value },
@@ -107,6 +112,34 @@ function fixture(t, initial = {}) {
     choose: id => pop.fire('click', { target: pop.querySelectorAll('[data-runtime]').find(row => row.dataset.runtime === id) }),
   };
 }
+
+test('available and missing runtime marks share the Agent management identity without an image map', async t => {
+  const f = fixture(t), pending = f.click(); await settle();
+  f.calls[0].resolve(inventory('harness2', { missing: [{ id: 'codex', displayName: 'Codex' }] }));
+  await pending;
+  assert.deepEqual(f.pop.querySelectorAll('[data-runtime]').map(row =>
+    row.querySelector('.agent-monogram').textContent), ['PI', 'H2']);
+  const missing = f.pop.querySelector('#nchatRuntimeMissing');
+  assert.equal(missing.querySelector('.agent-monogram').textContent, 'CX');
+  assert.equal(missing.querySelector('.agent-brand').attributes['aria-label'], 'Codex');
+  assert.equal(f.pop.querySelectorAll('img').length, 0);
+  assert.doesNotMatch(missing.textContent, /•/);
+});
+
+test('unknown runtime marks use the generic shared vector in available and missing rows', async t => {
+  const f = fixture(t), pending = f.click(); await settle();
+  f.calls[0].resolve(inventory('custom-fixture', {
+    missing: [{ id: 'unrecognized', displayName: '<img src=x>' }],
+  }));
+  await pending;
+  const custom = f.pop.querySelectorAll('[data-runtime]')[1].querySelector('.agent-brand');
+  assert.equal(custom.attributes['data-agent-brand'], 'custom');
+  assert.equal(custom.querySelectorAll('svg').length, 1);
+  const missing = f.pop.querySelector('#nchatRuntimeMissing');
+  assert.equal(missing.querySelectorAll('svg').length, 1);
+  assert.equal(f.pop.querySelectorAll('img').length, 0);
+  assert.doesNotMatch(missing.textContent, /•/);
+});
 
 test('prefetched inventory opens immediately and 1000 repeated opens reuse one non-forced read', async t => {
   const f = fixture(t); f.picker.render(); await settle();

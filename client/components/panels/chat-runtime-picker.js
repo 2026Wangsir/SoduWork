@@ -69,11 +69,8 @@
         const icon = node('span', '', 'wc-runtime-missing-icon');
         icon.dataset.runtimeMissing = row.id || ''; icon.title = tx(row.displayName || row.id || '');
         icon.setAttribute('aria-hidden', 'true');
-        const src = global.AgentBrand?.ICONS?.[row.id];
-        if (src) {
-          const image = node('img'); image.src = src; image.alt = ''; image.draggable = false;
-          image.className = 'agent-brand'; icon.append(image);
-        } else icon.textContent = '•';
+        const brand = global.AgentBrand?.element?.(row.id, { document });
+        if (brand) icon.append(brand); else icon.textContent = '•';
         return icon;
       }));
       missingWrap.hidden = rows.length === 0; missing.hidden = rows.length === 0; more.hidden = rows.length === 0;
@@ -125,12 +122,8 @@
           choice.type = 'button'; choice.dataset.runtime = runtime.id; choice.dataset.sessionAgent = runtime.id;
           choice.setAttribute('aria-selected', String(selected)); choice.setAttribute('aria-pressed', String(selected));
           choice.classList.toggle('on', selected);
-          const src = global.AgentBrand?.ICONS?.[runtime.id];
-          if (src) {
-            const brand = node('span', '', global.AgentBrand.className(runtime.id, 'runtime-brand'));
-            const image = node('img'); image.src = src; image.alt = ''; image.draggable = false;
-            brand.append(image); choice.append(brand);
-          } else choice.append(node('span', '•', 'runtime-brand'));
+          const brand = global.AgentBrand?.element?.(runtime.id, { document, className: 'runtime-brand' });
+          choice.append(brand || node('span', '•', 'runtime-brand'));
           const runtimeHealth = runtime.availability || {};
           const rawVersion = runtime.version || runtimeHealth.version || runtimeHealth.detectedVersion || '';
           const runtimeVersion = global.AgentBrand?.version({ key: runtime.id, version: rawVersion }) || rawVersion;

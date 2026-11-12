@@ -23,6 +23,8 @@
 
 不需要手动创建数据库、安装 Docker、安装 Git、准备 `.env` 或分别运行三个工程的安装命令。首次需联网下载依赖，后续复用已安装内容。
 
+启动器会在专用 `venv/` 中安装 Hub 和 Runner 两套依赖，检查 Runner 所需的 Python 模块，并把同一解释器交给桌面端。使用此入口无需另建 `hub-backend/.venv`。如果 Agent 管理提示源码 Runner 环境不完整，请退出源码启动会话后重跑同一入口，保留原数据目录。
+
 Windows 桌面启动还会在本实例的应用副本中准备并校验命令运行环境（PortableGit），供 Agent 使用 Bash、Git 和常用命令。无需单独安装 Git 或配置 WSL。后续启动会保留运行环境和下载缓存，并再次检查可用性；准备失败时查看 `startup.log`，修复网络后重跑同一入口。
 
 ## 怎么判断启动成功
@@ -243,6 +245,8 @@ python3 tools/dev/verify_local_start.py
 ```
 
 在有图形桌面的系统上加 `--desktop`，可同时验证原生 Electron 启动、专用服务地址，以及 Ctrl+C / 关闭启动器后的桌面进程清理。
+
+macOS 可运行 `TMPDIR=/private/tmp python3 tools/dev/verify_source_runner.py`，要求 `PATH` 中有 Node.js 22，并使用已安装 `websockets` 的 Python 3.12+ 测试解释器。它创建临时 Hub、桌面配置和真实 Runner，以合成账号登录并检查 Agent 发现，不创建任务或调用模型。夹具使用 Chromium 模拟钥匙串，不验证原生钥匙串访问。
 
 该验证不使用已有 `.venv`、前端 `node_modules/dist`、业务数据库或默认端口 9080，不调用付费模型；不会把接口夹具测试声称为真实模型交付验证。
 

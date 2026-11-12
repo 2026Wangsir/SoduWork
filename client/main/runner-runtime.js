@@ -248,6 +248,20 @@ function _spec(app) {
   }
   const clientRoot = path.dirname(__dirname);
   const backend = path.resolve(clientRoot, '..', 'hub-backend');
+  if (process.env.SODUWORK_SOURCE_SESSION === '1') {
+    // The launcher owns this generated application copy and its sibling venv.
+    // An activated shell or PATH entry must never select another interpreter.
+    const expected = path.resolve(clientRoot, '..', '..', 'venv',
+      ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']));
+    const supplied = process.env.SODUWORK_SOURCE_RUNNER_PYTHON;
+    const samePath = value => process.platform === 'win32' ? value.toLowerCase() : value;
+    if (path.basename(path.dirname(clientRoot)) !== 'application' ||
+        typeof supplied !== 'string' || !path.isAbsolute(supplied) ||
+        samePath(path.resolve(supplied)) !== samePath(expected)) {
+      return { error: '源码启动的 Runner Python 配置无效，请退出后重新运行 sh start.sh --desktop（Windows：start.cmd --desktop）' };
+    }
+    return { bin: expected, args: [path.join(backend, 'runner_main.py')], sourceSession: true };
+  }
   const python = process.platform === 'win32'
     ? path.join(backend, '.venv', 'Scripts', 'python.exe')
     : path.join(backend, '.venv', 'bin', 'python');
@@ -409,8 +423,10 @@ function _start(app) {
   const cfg = _readConfig(app);
   if (!cfg) { if (!_lastError) _lastError = 'runner 配置还没准备好'; return; }
   const spec = _spec(app);
+  if (spec.error) { _lastError = spec.error; _connectionState = 'error'; return; }
   if (!fs.existsSync(spec.bin) || spec.args.some((x) => !fs.existsSync(x))) {
     _lastError = app.isPackaged ? '安装包里没有 runner 运行时'
+      : spec.sourceSession ? '源码启动的 Runner 环境不完整，请退出后重新运行 sh start.sh --desktop（Windows：start.cmd --desktop），无需创建工程内的 .venv'
       : !fs.existsSync(spec.bin)
         ? '开发环境缺少 Runner Python：请创建 hub-backend/.venv，并安装 requirements-runner.txt 中的依赖'
         : '开发环境缺少 hub-backend/runner_main.py，请检查工程文件是否完整';

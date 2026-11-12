@@ -53,6 +53,29 @@
     delete result.taskId; delete result.taskIds; delete result.mode;
     return result;
   }
+  function sourceDisplayAliases(items) {
+    const auth = global.SoduWorkAPI?.clientAuthSnapshot?.();
+    const aliases = new Map();
+    if (!localHistory || !auth?.user?.id || !auth.clientId) return aliases;
+    const native = new Map();
+    for (const row of items) {
+      const id = localHistory.aliases.get(row?.id), record = localHistory.records.get(id);
+      if (id && row.id === id && record && !record.archived && !record.deleted &&
+          !row.archived && !row.deleted && !row.pending && !row.cached && !row.source &&
+          !row.cloud && !row.accountConversation && !row.accountProjection && !row.remoteProjection)
+        native.set(id, row);
+    }
+    for (const row of items) {
+      if (!row?.accountConversation || row.accountCanSend !== true || row.archived || row.deleted ||
+          row.sourceClientId !== auth.clientId || row.contentLocation && row.contentLocation !== 'source') continue;
+      const id = localHistory.aliases.get(row.sourceSessionId);
+      if (!native.has(id) || row.id === id) continue;
+      aliases.set(row.id, native.get(id));
+    }
+    // These aliases are presentation-only, recomputed from the current actor
+    // and confirmed native catalog. Never persist them or grant lifecycle rights.
+    return aliases;
+  }
   function hubIdentity(value) {
     try {
       const url = new URL(String(value || ''));
@@ -408,10 +431,10 @@
     let raw = null, state = normalized({ pins: legacyPins }), initialized = false, readError = null;
     let accountState = state;
     const device = createDevicePartition(deviceStorage, key);
-    let visibleRows = [];
+    let visibleRows = [], sourceRows = [];
     // Shared project entries can retain task identities for desktop cloud projections.
     // Resolve only an unambiguous projection, never titles or unrelated native chats.
-    function referenceMap(rows) {
+    function referenceMap(rows, includeSource = true) {
       const byId = new Map(rows.map(row => [String(row.id), row]));
       const tasks = new Map();
       for (const row of byId.values()) {
@@ -425,11 +448,12 @@
         for (const id of ['cloud-task:' + task, 'task:' + task])
           if (!byId.has(id)) byId.set(id, [...candidates][0]);
       }
+      if (includeSource) for (const [alias, row] of sourceDisplayAliases(sourceRows)) byId.set(alias, row);
       return byId;
     }
-    function references(ids, items = []) {
+    function references(ids, items = [], includeSource = true) {
       const result = new Set(ids);
-      const map = referenceMap([...state.rows, ...visibleRows, ...items]);
+      const map = referenceMap([...state.rows, ...visibleRows, ...items], includeSource);
       const resolved = new Set([...result].map(id => map.get(id)?.id).filter(Boolean));
       for (const [id, row] of map) if (resolved.has(row.id)) result.add(id);
       return result;
@@ -506,7 +530,8 @@
       next.rows = [...rows.values()];
     }
     function forgetMany(ids, { preserveArchivedProjects = false, preserveProjectIds = [] } = {}) {
-      const removed = references(unique(ids));
+      // Removing native history must retain organization of its independent account record.
+      const removed = references(unique(ids), [], false);
       if (!removed.size) return;
       const preserved = new Set(unique(preserveProjectIds));
       commit(next => {
@@ -520,11 +545,19 @@
     }
     function view(items) {
       refresh();
+      items = (items || []).filter(Boolean);
+      sourceRows = items;
       const current = new Map((items || []).filter(row => row?.id).map(row => [String(row.id), row]));
-      const rows = [...(items || []).filter(Boolean), ...state.rows.filter(row => !current.has(row.id))];
+      let rows = [...(items || []).filter(Boolean), ...state.rows.filter(row => !current.has(row.id))];
       visibleRows = rows;
       const byId = referenceMap(rows);
+      rows = [...new Map(rows.map(row => byId.get(String(row.id))).filter(Boolean).map(row => [row.id, row])).values()];
       const resolve = ids => [...new Map(ids.map(id => byId.get(id)).filter(Boolean).map(row => [row.id, row])).values()];
+      const projectOwners = new Map();
+      for (const project of [...state.projects, ...state.archivedProjects]) for (const id of project.chatIds) {
+        const row = byId.get(id);
+        if (row && (!projectOwners.has(row.id) || id === row.id)) projectOwners.set(row.id, project.id);
+      }
       const allocated = references([...state.pins, ...state.projects.flatMap(p => p.chatIds),
         ...state.archivedProjects.flatMap(p => p.chatIds)]);
       const recent = rows.filter(row => !allocated.has(String(row.id)));
@@ -535,7 +568,7 @@
         ? [...stableNewestFirst(recentFresh), ...recentKnown]
         : stableNewestFirst(recent);
       return { projects: state.projects.map(p => {
-        const items = resolve(p.chatIds);
+        const items = resolve(p.chatIds).filter(row => projectOwners.get(row.id) === p.id);
         return { ...copy(p), items: state.manualOrder.projects[p.id] ? items : stableNewestFirst(items) };
       }),
         pinned: resolve(state.pins),
@@ -647,9 +680,10 @@
       togglePin(id, row) { commit(next => {
         id = String(id || '');
         if (!id) return;
-        if (next.pins.includes(id)) {
-          next.pins = next.pins.filter(value => value !== id);
-          if (![...next.projects, ...next.archivedProjects].some(p => p.chatIds.includes(id)))
+        const same = references([id], row ? [row] : []);
+        if (next.pins.some(value => same.has(value))) {
+          next.pins = next.pins.filter(value => !same.has(value));
+          if (![...next.projects, ...next.archivedProjects].some(p => p.chatIds.some(value => same.has(value))))
             next.recent = unique([...next.recent, id]);
         } else next.pins = unique([...next.pins, id]);
         if (row?.id === id) remember(next, [row]);
@@ -682,17 +716,23 @@
         const same = references([id], [item]);
         const recentIds = visible.recent.filter(row => row.id).map(row => String(row.id));
         const projectIds = visible.projects.find(p => p.id === target)?.items.map(row => String(row.id)) || [];
+        const map = referenceMap(visibleRows), before = references([beforeId]);
+        // Sorting a neighbor must not persist a source's display identity into an account group.
+        const storedOrder = (ids, prior) => ids.flatMap(id => {
+          const stored = prior.filter(value => map.get(value)?.id === id);
+          return stored.length ? stored : [id];
+        });
         commit(next => {
           if (!['recent', 'pinned'].includes(target) && !next.projects.some(p => p.id === target)) throw Error('项目已移除，请重新选择');
           next.pins = next.pins.filter(v => !same.has(v));
-          next.recent = unique([...recentIds, ...next.recent]).filter(v => !same.has(v));
+          next.recent = unique([...storedOrder(recentIds, next.recent), ...next.recent]).filter(v => !same.has(v));
           next.projects.forEach(p => { p.chatIds = p.chatIds.filter(v => !same.has(v)); });
           const p = next.projects.find(p => p.id === target);
           // The first drag starts from the creation-sorted view, not the older
           // membership insertion order. Preserve hidden references at the end.
-          if (p) p.chatIds = unique([...projectIds, ...p.chatIds]).filter(v => !same.has(v));
+          if (p) p.chatIds = unique([...storedOrder(projectIds, p.chatIds), ...p.chatIds]).filter(v => !same.has(v));
           const list = p ? p.chatIds : target === 'pinned' ? next.pins : next.recent;
-          const at = list.indexOf(beforeId);
+          const at = list.findIndex(value => before.has(value));
           list.splice(at < 0 ? list.length : at, 0, id);
           next.manualOrder = normalizedManualOrder(next.manualOrder);
           if (target === 'recent') next.manualOrder.recent = true;

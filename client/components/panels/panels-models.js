@@ -236,10 +236,18 @@ function _mdNavGroupHtml(title, rows) {
     '</em></header><div>' + rows.map(_mdNavItemHtml).join('') + '</div></section>';
 }
 
+function _mdCatalogModels(p) {
+  // Local catalog definitions mirror the editable myModels snapshot. They are
+  // not organization-owned rows and must not outlive a local edit or removal.
+  if (p?.localOnly === true) return [];
+  return p?.modelDefs?.length ? p.modelDefs :
+    (p?.modelNames || []).map(name => ({ name, label: name, modality: 'chat', config: {} }));
+}
+
 function _mdNavItemHtml(p) {
   const state = _mdState(p);
   const own = _mdMyModels.filter((m) => m.providerId === p.id);
-  const count = (p.modelDefs || p.modelNames || []).length + own.length;
+  const count = _mdCatalogModels(p).length + own.length;
   const selected = String(_mdOpen) === String(p.id);
   return '<button type="button" class="cfg-nav-item md-nav-item st-' + state +
     (selected ? ' is-selected' : '') + '" data-mdselect="' + esc(p.id) + '" aria-pressed="' +
@@ -252,9 +260,7 @@ function _mdNavItemHtml(p) {
 
 function _mdDetailHtml(p) {
   const state = _mdState(p);
-  const models = (p.modelDefs || []).length
-    ? p.modelDefs
-    : (p.modelNames || []).map((name) => ({ name, label: name, modality: 'chat', config: {} }));
+  const models = _mdCatalogModels(p);
   const own = _mdMyModels.filter((m) => m.providerId === p.id);
   const test = _mdTest[p.id];
   const count = models.length + own.length;
@@ -409,12 +415,18 @@ function _mdBind(box) {
     _mdRender();
   }));
   box.querySelectorAll('[data-pdelete]').forEach(el => el.addEventListener('click', () => {
+    if (el.isConnected === false) return;
     const pid = el.getAttribute('data-pdelete');
+    if (!_mdProvider(pid)) return;
     if (_mdDeletePending !== pid) { _mdDeletePending = pid; _mdRender(); return; }
     _mdDeletePending = '';
     _mdData.providers = (_mdData.providers || []).filter((p) => p.id !== pid);
     _mdMyModels = _mdMyModels.filter((m) => m.providerId !== pid);
+    _mdDrafts.delete(pid);
+    if (_mdNew?.id === pid) _mdNew = null;
+    for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
     _mdKeyEdits[pid] = null; _mdDirty = true;
+    _mdRender();
     _mdSave(true);
   }));
   box.querySelectorAll('[data-peye]').forEach(el => el.addEventListener('click', () => {
@@ -439,11 +451,15 @@ function _mdBind(box) {
   }));
   box.querySelectorAll('[data-ptest]').forEach(el => el.addEventListener('click', () => _mdDoTest(el)));
   box.querySelectorAll('[data-mdel]').forEach(el => el.addEventListener('click', async () => {
+    if (el.isConnected === false) return;
     const [pid, i] = el.getAttribute('data-mdel').split('|');
     const own = _mdMyModels.filter(m => m.providerId === pid);
     const target = own[+i];
     const at = _mdMyModels.indexOf(target);
-    if (at >= 0) _mdMyModels.splice(at, 1);
+    if (at < 0) return;
+    _mdMyModels.splice(at, 1);
+    if (_mdDrafts.get(pid)?.original === target.name) _mdDrafts.delete(pid);
+    _mdChecks.delete(_mdCheckKey(pid, target.name));
     _mdDirty = true; _mdRender();
     // Removing a personal model is an explicit destructive action. Persist it
     // immediately so it does not reappear when the panel is reopened, and so a
