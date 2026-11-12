@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const { replaceFile } = require('../verified-file-replace.cjs');
 const { scope, scopeMatches } = require('../platform-connections/runtime.cjs');
 const harnesses = require('./used-harnesses');
+const metadataSnapshot = require('./metadata-snapshot.cjs');
 const root = app => path.join(app.getPath('userData'), 'conversation-runtime-segments');
 const location = (app, id) => path.join(root(app), crypto.createHash('sha256').update(String(id)).digest('hex') + '.json');
 const cache = new Map();
@@ -19,22 +20,33 @@ function read(app, id) {
   if (!app?.getPath || !id) return null;
   return readFile(app, location(app, id), id);
 }
-function stamp(stat) { return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':'); }
 function readFile(app, file, id) {
+  const record = snapshot(app, file).record;
+  if (record && id && record.id !== id) throw Error('无法读取会话的 Agent 切换记录，请检查本地存储');
+  return record;
+}
+function snapshot(app, file) {
   try {
-    const stat = fs.lstatSync(file);
-    require('../plugin-resources').assertNoLinks(root(app), file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw Error('invalid');
-    const revision = stamp(stat);
-    if (cache.has(file) && cacheStamps.get(file) === revision) return cache.get(file);
-    const row = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (row.version !== 1 || typeof row.id !== 'string' || !row.id || id && row.id !== id ||
+    if (path.dirname(path.resolve(file)) !== path.resolve(root(app)) || !/^[a-f0-9]{64}\.json$/.test(path.basename(file)))
+      throw Error('Invalid runtime manifest path');
+    // Prefix history can be large. A warm authority check hashes it in bounded
+    // chunks and reuses the parsed manifest only when its bytes still match.
+    const { revision, stat } = metadataSnapshot.digest(root(app), file);
+    if (cache.has(file) && cacheStamps.get(file) === revision) return { revision, record: cache.get(file) };
+    const observedSize = Number(stat.size);
+    if (!Number.isSafeInteger(observedSize)) throw Error('Invalid runtime manifest size');
+    const value = metadataSnapshot.read(root(app), file,
+      { maxBytes: observedSize, maxFileBytes: observedSize });
+    if (value.revision !== revision) throw Error('Runtime manifest changed');
+    const bytes = value.bytes;
+    const row = JSON.parse(bytes.toString('utf8'));
+    if (row.version !== 1 || typeof row.id !== 'string' || !row.id ||
         location(app, row.id) !== file || !row.active?.adapterId || !row.active?.sessionId ||
         !Array.isArray(row.segments) || row.segments.length > 1000) throw Error('invalid');
-    cache.set(file, row); cacheStamps.set(file, revision); return row;
+    cache.set(file, row); cacheStamps.set(file, revision); return { revision, record: row };
   } catch (error) {
     cache.delete(file); cacheStamps.delete(file);
-    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ENOENT') return { revision: 'missing', record: null };
     throw Error('无法读取会话的 Agent 切换记录，请检查本地存储');
   }
 }
@@ -52,7 +64,9 @@ async function write(app, row) {
         await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
       }
     }
-    cache.set(file, row); cacheStamps.set(file, stamp(await fsp.lstat(file)));
+    // A successful write is not a verified read snapshot. Revalidate its bytes
+    // before caching so timestamp collisions cannot reuse an older authority.
+    cache.delete(file); cacheStamps.delete(file);
   } finally { await fsp.unlink(temporary).catch(() => {}); }
 }
 function save(app, row) {
@@ -140,4 +154,4 @@ function brief(snapshot) {
     'Verify current files when needed; this bounded transcript may omit older details.\n' +
     lines.join('\n\n').slice(-28000) + '\nRecent operations:\n' + tools.join('\n').slice(-6000) + '\n[End handover]';
 }
-module.exports = { read, save, flush, assertOwner, list, identities, row, title, mergeHistory, remove, brief, scope, rowHistoryIds };
+module.exports = { read, snapshot, save, flush, assertOwner, list, identities, row, title, mergeHistory, remove, brief, scope, rowHistoryIds };

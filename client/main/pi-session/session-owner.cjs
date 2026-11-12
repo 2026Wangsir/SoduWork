@@ -80,9 +80,10 @@ function create({ app, cachedIdentity, localOwner, enrollmentIdentity } = {}) {
     const owner = source.owner, previous = owners.get(handle);
     const remote = options.connection === undefined ? Boolean(previous?.connection) : options.connection === true;
     const environment = remote ? connection(identity) : '';
+    const hub = options.hub || previous?.hub ? new URL(identity.hub).origin : '';
     if (disposed.has(handle) || quarantined.has(handle) || previous &&
-        (previous.owner !== owner || previous.connection !== environment)) throw changed();
-    if (!previous) owners.set(handle, Object.freeze({ owner, connection: environment }));
+        (previous.owner !== owner || previous.connection !== environment || previous.hub !== hub)) throw changed();
+    if (!previous) owners.set(handle, Object.freeze({ owner, connection: environment, hub }));
     return handle;
   }
   function canAccess(handle) {
@@ -91,7 +92,8 @@ function create({ app, cachedIdentity, localOwner, enrollmentIdentity } = {}) {
     if (!registered) return false;
     const active = current();
     if (!active.owner || active.owner !== registered.owner) return false;
-    try { return !registered.connection || registered.connection === connection(active.identity); }
+    try { return (!registered.connection || registered.connection === connection(active.identity)) &&
+      (!registered.hub || registered.hub === new URL(active.identity?.hub).origin); }
     catch (_) { return false; }
   }
   function assert(handle) {

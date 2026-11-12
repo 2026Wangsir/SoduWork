@@ -117,6 +117,7 @@ async function _ensureOnce(chatId, epoch) {
         if (got && got.ok && got.ref && typeof api.release === 'function') await api.release(got.ref);
         return false;
       }
+      if (got?.applicationOpened) return false; // Foreground navigation returned to the owning app.
       if (!got || !got.ok) {
         const reason = String(got && got.reason || '');
         const missing = Boolean(got && got.notFound === true);

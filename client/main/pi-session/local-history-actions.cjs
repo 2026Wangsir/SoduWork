@@ -1,7 +1,7 @@
 'use strict';
 
-// Ordinary native data is device-shared. Protected local copies retain their
-// account authority; no Hub mutation is needed for local lifecycle management.
+// Native history and cached copies retain their account and Hub authority.
+// Local lifecycle management does not require a Hub mutation.
 function create({ app, session, history, BrowserWindow, shell, trash, resolveAlias,
   identityOf = () => require('../conversation/requirement-context').cachedIdentity(app) }) {
   const queues = new Map();
@@ -27,8 +27,8 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
     await options.assertCurrent?.(true);
     const access = require('../conversation/history-access');
     const row = await history.resolve(id);
-    if (!row) return null;
     await options.assertCurrent?.(true);
+    if (!row) return null;
     access.assertLocalCurrent(app, captured, row, identityOf());
     const identity = captured.identity;
     access.assertLocalMutation(app, row.id, captured, row);
@@ -52,6 +52,7 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
     const active = session.findBySessionId?.(row.id);
     if (action !== 'restore' && active?.close && await active.close() === false)
       throw Error('会话仍在关闭，请稍后重试');
+    await options.assertCurrent?.(true);
     idle(row);
     // Stage deletion as an archive. A failed recycle leaves a visible retry
     // entry in archives; a stale directory refresh cannot reactivate it.
@@ -71,6 +72,9 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
           if (!result?.ok && !result?.notFound) throw Error(result?.reason || '清理会话记录失败，请重试');
         } else {
           const found = await session.historyEntry?.(app, row.id, { strict: true });
+          await options.assertCurrent?.(true);
+          if (found?.entry?.workOwner) require('../conversation/history-access').assertReadable(app, row.id,
+            require('../conversation/history-access').actor(app), { ...row, workOwner: found.entry.workOwner });
           if (found?.ok && found.entry?.path) await trash(shell, found.entry.path);
           else if (found?.ok === false && !found.notFound) throw Error(found.reason);
           else {
@@ -79,6 +83,7 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
           }
         }
       }
+      await options.assertCurrent?.(true);
       const deleted = await history.lifecycle(row.id, 'delete', identity);
       await assertResponseCurrent(row, captured, options);
       publish(deleted.conversation);
@@ -89,12 +94,20 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
     return { ...staged, id: row.id, localOnly: true, archived: action === 'archive' };
   }
   return async (action, id, options) => {
-    const settings = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const input = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const capturedScope = history.captureScope?.();
     const captured = require('../conversation/history-access').actor(app, identityOf());
+    const settings = { ...input, async assertCurrent(...args) {
+      if (capturedScope) history.guardScope(capturedScope);
+      await input.assertCurrent?.(...args);
+      if (capturedScope) history.guardScope(capturedScope);
+    } };
     let row = await history.resolve(id);
+    await settings.assertCurrent();
     let accountAlias = false;
     if (!require('../conversation/shared-history.cjs').isLocalIdentity(row, id)) {
       row = /^acct-/.test(id) && await resolveAlias?.(id);
+      await settings.assertCurrent();
       if (!row) return null;
       accountAlias = true;
     }
@@ -103,6 +116,7 @@ function create({ app, session, history, BrowserWindow, shell, trash, resolveAli
       const guarded = accountAlias ? { ...settings, assertCurrent: async force => {
         await settings.assertCurrent?.(force);
         const current = await resolveAlias(id);
+        await settings.assertCurrent?.(force);
         if (!current || current.id !== row.id) throw Error('会话已在其他窗口更新，请刷新后重试');
       } } : settings;
       const result = await run(action, row.id, guarded, captured);

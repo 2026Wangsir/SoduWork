@@ -10,7 +10,8 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-local-scope-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = { getPath: () => root }, a = identity(), b = identity('two');
-  const row = { id: 'ordinary', adapterId: 'pi', localReplica: true, count: 2, path: path.join(root, 'pi-agent', 'sessions', 'ordinary.jsonl') };
+  const row = { id: 'ordinary', adapterId: 'pi', localReplica: true, count: 2,
+    creator: { account: 'one', hub: a.hub }, path: path.join(root, 'pi-agent', 'sessions', 'ordinary.jsonl') };
   const save = (directory, id, value) => {
     const file = path.join(root, directory, crypto.createHash('sha256').update(id).digest('hex') + '.json');
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -20,18 +21,23 @@ function fixture(t) {
   return { app, root, a, b, row, save, binding, actor: value => access.actor(app, value) };
 }
 
-test('ordinary verified native data is shared without changing private memory ownership', t => {
+test('ordinary native data remains account and Hub scoped without changing private memory ownership', t => {
   const f = fixture(t), before = fs.readFileSync(f.binding, 'utf8');
   assert.equal(access.classifyLocal(f.app, f.row.id, f.row).kind, 'ordinary');
-  for (const actor of [f.a, f.b, f.a]) assert.doesNotThrow(() => access.assertLocalMutation(f.app, f.row.id, f.actor(actor), f.row));
+  assert.doesNotThrow(() => access.assertLocalMutation(f.app, f.row.id, f.actor(f.a), f.row));
+  for (const actor of [f.b, { ...f.a, hub: 'https://other.invalid' }, null]) {
+    assert.throws(() => access.assertLocalMutation(f.app, f.row.id, f.actor(actor), f.row));
+    assert.throws(() => access.assertReadable(f.app, f.row.id, f.actor(actor), f.row));
+  }
+  assert.doesNotThrow(() => access.assertLocalMutation(f.app, f.row.id, f.actor(f.a), f.row));
   assert.throws(() => access.assertOwner(f.app, f.row.id, f.actor(f.b), f.row), /账号/);
   assert.equal(fs.readFileSync(f.binding, 'utf8'), before);
   assert.throws(() => access.assertOwner(f.app, f.row.id, { owner: '', identity: null }, f.row));
-  assert.doesNotThrow(() => access.assertReadable(f.app, f.row.id, { owner: '', identity: null }, f.row));
+  assert.throws(() => access.assertReadable(f.app, f.row.id, { owner: '', identity: null }, f.row));
   assert.notEqual(access.classifyLocal(f.app, 'acct-source', f.row).kind, 'ordinary');
 });
 
-test('requirement read authority protects every native segment without transferring creator execution ownership', t => {
+test('conflicting requirement ownership cannot transfer native history read or execution authority', t => {
   const f = fixture(t), child = 'native-child';
   f.save('conversation-runtime-segments', f.row.id, { version: 1, id: f.row.id, owner: runtime.scope(f.a),
     segments: [{ sessionId: child, adapterId: 'pi' }], active: { sessionId: child, adapterId: 'pi' } });
@@ -41,11 +47,16 @@ test('requirement read authority protects every native segment without transferr
   assert.equal(access.classifyLocal(f.app, f.row.id, row).kind, 'protected');
   assert.throws(() => access.assertOwner(f.app, f.row.id, f.actor(f.a), row));
   assert.throws(() => access.assertOwner(f.app, f.row.id, f.actor(f.b), row), /当前账号/);
-  assert.doesNotThrow(() => access.assertReadable(f.app, f.row.id, f.actor(f.b), row));
-  assert.doesNotThrow(() => access.assertLocalMutation(f.app, f.row.id, f.actor(f.b), row));
+  assert.throws(() => access.assertReadable(f.app, f.row.id, f.actor(f.b), row));
+  assert.throws(() => access.assertLocalMutation(f.app, f.row.id, f.actor(f.b), row));
   assert.equal(JSON.parse(fs.readFileSync(f.binding, 'utf8')).owner, runtime.scope(f.a));
   assert.throws(() => access.assertOwner(f.app, f.row.id, f.actor(f.b), { ...row, workOwner: 'unrelated-owner' }));
   assert.throws(() => access.assertReadable(f.app, f.row.id, f.actor(f.a), row));
+  f.save('requirement-session-context', child, { version: 1, owner: runtime.scope(f.a), hub: f.a.hub, cwd: f.root,
+    projectId: 'project', repoId: 'repo', adapterId: 'pi' });
+  assert.doesNotThrow(() => access.assertReadable(f.app, f.row.id, f.actor(f.a), row));
+  assert.doesNotThrow(() => access.assertLocalMutation(f.app, f.row.id, f.actor(f.a), row));
+  assert.throws(() => access.assertReadable(f.app, f.row.id, f.actor(f.b), row));
 });
 
 test('persisted task, acceptance, handoff and corrupt metadata never become ordinary by changing title or aliases', t => {
@@ -90,13 +101,14 @@ test('native registration cannot adopt a downloaded origin locator in either dis
   }
 });
 
-test('a later requirement binding immediately revokes sharing without changing private memory or trusting a title', t => {
+test('a later conflicting requirement binding immediately revokes owner visibility without changing private memory', t => {
   const f = fixture(t), before = fs.readFileSync(f.binding, 'utf8');
-  assert.equal(access.visible(f.app, [f.row], f.b).length, 1);
-  f.save('requirement-session-context', f.row.id, { version: 1, owner: runtime.scope(f.a) });
+  assert.equal(access.visible(f.app, [f.row], f.a).length, 1);
+  assert.equal(access.visible(f.app, [f.row], f.b).length, 0);
+  f.save('requirement-session-context', f.row.id, { version: 1, owner: runtime.scope(f.b), hub: f.b.hub });
   assert.equal(access.visible(f.app, [f.row], f.b).length, 0);
   assert.throws(() => access.assertOwner(f.app, f.row.id, f.actor(f.b), f.row));
-  assert.equal(access.visible(f.app, [f.row], f.a).length, 1);
+  assert.equal(access.visible(f.app, [f.row], f.a).length, 0);
   assert.equal(fs.readFileSync(f.binding, 'utf8'), before);
 });
 
@@ -113,7 +125,7 @@ test('runtime segment traversal is cycle-safe and rejects oversized or malformed
 });
 
 test('a protected parent also protects raw children before history merging can reconstruct it', t => {
-  const f = fixture(t), child = { id: 'child', localReplica: true, adapterId: 'opencode' };
+  const f = fixture(t), child = { id: 'child', localReplica: true, adapterId: 'opencode', creator: f.row.creator };
   f.save('conversation-runtime-segments', f.row.id, { version: 1, id: f.row.id, owner: runtime.scope(f.a),
     segments: [{ sessionId: f.row.id, adapterId: 'pi' }], active: { sessionId: child.id, adapterId: 'opencode' } });
   f.save('requirement-session-context', f.row.id, { version: 1, owner: runtime.scope(f.a) });
@@ -125,12 +137,13 @@ test('a protected parent also protects raw children before history merging can r
   assert.equal(access.visible(f.app, [f.row, child], f.a).length, 2);
 });
 
-test('ordinary Runner and automation drafts are shared but requirement cards are protected', t => {
+test('ordinary Runner and automation drafts remain private alongside protected requirement cards', t => {
   const f = fixture(t), row = { ...f.row, adapterId: 'harness2', path: undefined };
   f.save('conversation-work-cards', row.id, { version: 1, sessionId: row.id, owner: runtime.scope(f.a),
     cards: [{ actionId: 'work.automation.create' }] });
   assert.equal(access.classifyLocal(f.app, row.id, row).kind, 'ordinary');
-  assert.doesNotThrow(() => access.assertLocalMutation(f.app, row.id, f.actor(f.b), row));
+  assert.doesNotThrow(() => access.assertLocalMutation(f.app, row.id, f.actor(f.a), row));
+  assert.throws(() => access.assertLocalMutation(f.app, row.id, f.actor(f.b), row));
   f.save('conversation-work-cards', row.id, { version: 1, sessionId: row.id, owner: runtime.scope(f.a),
     cards: [{ actionId: 'work.requirement.create' }] });
   assert.equal(access.classifyLocal(f.app, row.id, row).kind, 'protected');
@@ -144,18 +157,19 @@ test('large legacy runtime prefixes do not hide unrelated chats and revision cha
     segments: [{ sessionId: 'large', adapterId: 'pi' }], active: { sessionId: 'large-child', adapterId: 'pi' } };
   f.save('conversation-runtime-segments', manifest.id, manifest);
   assert.equal(segments.read(f.app, manifest.id).prefix.messages[0].text.length, 2300000);
-  const read = fs.readFileSync; let manifestReads = 0;
-  fs.readFileSync = function (file, ...args) {
-    if (String(file).includes('conversation-runtime-segments')) manifestReads++;
-    return read.call(this, file, ...args);
+  const parse = JSON.parse; let manifestParses = 0;
+  JSON.parse = function (...args) {
+    const value = parse.apply(this, args);
+    if (value?.version === 1 && value.id === manifest.id && Array.isArray(value.segments)) manifestParses++;
+    return value;
   };
   try {
-    for (let i = 0; i < 10; i++) assert.equal(access.visible(f.app, [f.row], f.b).length, 1);
-    assert.equal(manifestReads, 0, 'Warm permission checks reuse validated native identity metadata');
-  } finally { fs.readFileSync = read; }
-  f.save('requirement-session-context', manifest.id, { version: 1, owner: runtime.scope(f.a) });
+    for (let i = 0; i < 10; i++) assert.equal(access.visible(f.app, [f.row], f.a).length, 1);
+    assert.equal(manifestParses, 0, 'Warm permission checks hash current bytes and reuse the validated manifest parse');
+  } finally { JSON.parse = parse; }
+  f.save('requirement-session-context', manifest.id, { version: 1, owner: runtime.scope(f.b), hub: f.b.hub });
   f.save('conversation-runtime-segments', manifest.id, { ...manifest, active: { sessionId: f.row.id, adapterId: 'pi' } });
-  assert.equal(access.visible(f.app, [f.row], f.b).length, 0, 'A replaced manifest immediately protects its newly attached child');
+  assert.equal(access.visible(f.app, [f.row], f.a).length, 0, 'A replaced manifest immediately protects its newly attached child');
   f.save('conversation-runtime-segments', manifest.id, '{broken');
   assert.equal(access.classifyLocal(f.app, f.row.id, f.row).invalid, true);
 });
@@ -164,29 +178,44 @@ test('absent native metadata is unknown rather than corrupt and cannot authorize
   const f = fixture(t), app = { getPath: () => path.join(f.root, 'not-created') };
   assert.equal(access.classifyLocal(app, 'legacy', { id: 'legacy', path: path.join(f.root, 'missing.jsonl') }).invalid, false);
   assert.equal(access.classifyLocal(app, 'legacy', { id: 'legacy' }).kind, 'unknown');
+  const unknown = { id: 'legacy', localReplica: true, adapterId: 'pi' };
+  assert.throws(() => access.assertReadable(app, unknown.id, f.actor(f.a), unknown));
+  assert.throws(() => access.assertLocalMutation(app, unknown.id, f.actor(f.a), unknown));
+  assert.equal(fs.existsSync(app.getPath('userData')), false, 'Reading unknown history must not claim ownership');
 });
 
 test('repeated 1200-row directories use bounded metadata batches and never read transcript bodies', t => {
-  const f = fixture(t), rows = Array.from({ length: 1200 }, (_, i) => ({ id: 'local-' + i, localReplica: true, adapterId: 'pi' }));
-  for (let i = 0; i < 12; i++) f.save('requirement-session-context', rows[i].id, { version: 1, owner: runtime.scope(f.a) });
+  const f = fixture(t), rows = Array.from({ length: 1200 }, (_, i) => ({ id: 'local-' + i, localReplica: true,
+    adapterId: 'pi', creator: f.row.creator }));
+  for (let i = 0; i < 12; i++) f.save('requirement-session-context', rows[i].id, { version: 1, owner: runtime.scope(f.b), hub: f.b.hub });
   for (let i = 100; i < 220; i++) f.save('conversation-runtime-segments', rows[i].id, {
-    version: 1, id: rows[i].id, segments: [{ sessionId: rows[i].id, adapterId: 'pi' }], active: { sessionId: rows[i + 700].id, adapterId: 'pi' } });
-  const originals = { readdirSync: fs.readdirSync, readFileSync: fs.readFileSync };
-  let directoryReads = 0, contentReads = 0, manifestReads = 0;
+    version: 1, id: rows[i].id, owner: runtime.scope(f.a), hub: f.a.hub,
+    segments: [{ sessionId: rows[i].id, adapterId: 'pi' }], active: { sessionId: rows[i + 700].id, adapterId: 'pi' } });
+  const originals = { readdirSync: fs.readdirSync, readFileSync: fs.readFileSync, openSync: fs.openSync };
+  const parse = JSON.parse; let directoryReads = 0, contentReads = 0, manifestParses = 0;
   fs.readdirSync = function (...args) { directoryReads++; return originals.readdirSync.apply(this, args); };
   fs.readFileSync = function (file, ...args) {
     assert.ok(!String(file).endsWith('.jsonl'), 'Authorization must not scan transcript bodies');
     if (String(file).includes('requirement-session-context')) contentReads++;
-    if (String(file).includes('conversation-runtime-segments')) manifestReads++;
     return originals.readFileSync.call(this, file, ...args);
+  };
+  fs.openSync = function (file, ...args) {
+    assert.ok(!String(file).endsWith('.jsonl'), 'Bounded metadata reads must not open transcript bodies');
+    return originals.openSync.call(this, file, ...args);
+  };
+  JSON.parse = function (...args) {
+    const value = parse.apply(this, args);
+    if (value?.version === 1 && /^local-\d+$/.test(value.id) && Array.isArray(value.segments) && value.active?.sessionId)
+      manifestParses++;
+    return value;
   };
   const started = performance.now();
   try {
-    for (let run = 0; run < 3; run++) assert.equal(access.visible(f.app, rows, f.b).length, 1188);
+    for (let run = 0; run < 3; run++) assert.equal(access.visible(f.app, rows, f.a).length, 1188);
     assert.equal(directoryReads, 18, 'Each of six fixed metadata directories is read once per batch');
     assert.equal(contentReads, 36, 'Only the twelve existing metadata files are parsed per batch');
-    assert.equal(manifestReads, 120, 'The existing revision-validated native cache parses each cold manifest once, never per conversation');
-  } finally { Object.assign(fs, originals); }
+    assert.equal(manifestParses, 120, 'Content validation reuses each unchanged manifest parse, never parsing per conversation');
+  } finally { Object.assign(fs, originals); JSON.parse = parse; }
   assert.ok(performance.now() - started < 5000, 'A 3600-row directory check must remain bounded');
   f.save('requirement-session-context', rows[20].id, { version: 1, owner: runtime.scope(f.a) });
   assert.throws(() => access.assertOwner(f.app, rows[20].id, f.actor(f.b), rows[20]), 'Operations re-read newly protected metadata');

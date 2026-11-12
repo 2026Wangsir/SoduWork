@@ -797,5 +797,6 @@
   }
   const localHistoryId = id => localHistory?.aliases.get(String(id || '')) || '';
   const localHistoryRevision = workspace => localHistory?.workspace === workspace ? localHistory.revision : -1;
-  global.WorkspaceSidebarState = { create, normalized, storageKey, accountOptions, projectSync, setLocalHistory, localHistoryId, localHistoryRevision };
+  global.WorkspaceSidebarState = { create, normalized, storageKey, accountOptions, projectSync, setLocalHistory,
+    clearLocalHistory() { localHistory = null; }, localHistoryId, localHistoryRevision };
 })(window);

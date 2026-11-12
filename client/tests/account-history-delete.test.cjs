@@ -4,6 +4,7 @@
 // Strict Hub CAS/foreign-receipt/epoch coverage lives in account-sync-lifecycle.
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+const { identity } = require('./helpers/platform-session-fixture.cjs');
 async function fixture(t, language = 'zh-CN') {
   const locale = require('../main/native-locale.cjs'), previousLocale = locale.getLocale();
   locale.setLocale(language);
@@ -11,7 +12,13 @@ async function fixture(t, language = 'zh-CN') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-local-delete-'));
   const original = path.join(root, 'original.jsonl'), output = path.join(root, 'delivery.txt');
   fs.writeFileSync(original, 'retained native archive'); fs.writeFileSync(output, 'retained output');
-  const app = { getPath: () => root }, row = { id: 'native', title: 'Review', path: original, adapterId: 'pi' };
+  const app = { getPath: () => root }, row = { id: 'native', title: 'Review', path: original, adapterId: 'pi',
+    creator: { account: 'one', hub: identity().hub } };
+  const auth = require('../main/device-auth'), prior = Object.fromEntries(['identity', 'session', 'profiles', 'localOwner'].map(key => [key, auth[key]]));
+  let current = identity();
+  auth.identity = () => current; auth.session = () => current?.session || ''; auth.profiles = () => [];
+  auth.localOwner = () => current ? require('../main/platform-connections/runtime.cjs').scope(current) : '';
+  t.after(() => Object.assign(auth, prior));
   let busy = false, fail = false, history, actions, handlers, recycled = 0;
   const events = [], session = { findBySessionId: () => busy ? { inFlight: () => true } : null,
     historyEntry: async (_app, id) => id === row.id && fs.existsSync(original) ? { ok: true, entry: row } : { ok: false, notFound: true },
@@ -28,6 +35,7 @@ async function fixture(t, language = 'zh-CN') {
   await start();
   t.after(async () => { await history.close(); fs.rmSync(root, { recursive: true, force: true }); });
   return { root, row, original, output, events, app, session, history: () => history,
+    switch(value) { current = value; },
     action: (...args) => actions.localAction(...args),
     remove: options => handlers.get('pi-session-history-delete')({}, 'native', options),
     restart: async () => { await history.close(); await start(); }, recycled: () => recycled,
@@ -45,11 +53,13 @@ test('failed recycling retains bytes and a durable archived retry entry', async 
   await f.restart(); const row = await f.history().resolve('native');
   assert.equal(row.archived, true); assert.equal(row.deleted, false);
 });
-test('local deletion neither borrows nor changes another account checkpoint', async t => {
+test('local deletion refuses conflicting account ownership and retains the original bytes', async t => {
   const f = await fixture(t);
   await f.history().register([{ ...f.row, workOwner: 'different-account' }]);
-  assert.equal((await f.remove({ confirmed: true })).ok, true);
-  assert.equal((await f.history().resolve('native')).deleted, true);
+  assert.equal((await f.remove({ confirmed: true })).ok, false);
+  assert.equal(await f.history().resolve('native'), null);
+  assert.equal((await f.history().store.get('native')).deleted, false);
+  assert.equal(fs.existsSync(f.original), true);
 });
 test('production IPC requires confirmation before deleting local bytes', async t => {
   const f = await fixture(t), reply = await f.remove({});
@@ -91,9 +101,8 @@ test('account original lifecycle bypasses downloaded read locators while explici
   assert.deepEqual(writes, [{ id: original.id, action: 'archive' }, { id: original.id, action: 'restore' }]);
   current = null;
   assert.equal((await handlers.get('pi-session-history-archive')({}, original.id)).ok, false);
-  await assert.rejects(actions.localAction('archive', 'native-copy-alias'), /账号已切换|请先登录/);
-  assert.equal((await f.history().resolve(copy.id)).archived, false);
-  // A protected download needs its account even though its lifecycle stays local.
+  assert.equal(await actions.localAction('archive', 'native-copy-alias'), null, 'Logout cannot mutate a retained copy');
+  assert.equal((await f.history().store.get(copy.id)).archived, false);
   current = actor;
   assert.equal((await actions.localAction('archive', 'native-copy-alias')).ok, true);
   assert.equal((await f.history().resolve(copy.id)).archived, true);
@@ -135,11 +144,10 @@ test('stale phone archive cannot undo a newer restore', async t => {
   assert.equal((await f.history().resolve('native')).archived, false);
 });
 test('a tombstone fences only its own replica and leaves other account copies', async t => {
-  const f = await fixture(t); await f.history().register([{ id: 'other', cached: true }]);
+  const f = await fixture(t); await f.history().register([{ id: 'other', cached: true, creator: { account: 'two', hub: identity().hub } }]);
   await f.remove({ confirmed: true }); await f.restart();
-  assert.equal((await f.history().resolve('other')).deleted, false);
-  assert.deepEqual((await f.history().list()).items, [], 'unattributed protected copies are retained but hidden');
-  await assert.rejects(f.history().read('other'), /账号已切换|请先登录/);
+  assert.deepEqual((await f.history().list()).items, []);
+  assert.equal((await f.history().store.get('other')).deleted, false, 'Foreign copies remain retained but hidden');
 });
 test('phone rejects missing revisions and unknown identities before deletion', async t => {
   const f = await fixture(t);
@@ -148,4 +156,17 @@ test('phone rejects missing revisions and unknown identities before deletion', a
   await assert.rejects(remote({ action: 'delete', id: 'native', confirmed: true }, () => {}), /刷新/);
   await assert.rejects(remote({ action: 'delete', id: 'unknown', expectedRevision: 1, confirmed: true }, () => {}), /不存在/);
   assert.equal(fs.existsSync(f.original), true);
+});
+
+test('account change during native lookup aborts recycling and preserves the staged archive', async t => {
+  const f = await fixture(t), original = f.session.historyEntry; let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  f.session.historyEntry = async (...args) => { const result = await original(...args); entered();
+    await new Promise(resolve => { release = resolve; }); return result; };
+  const deleting = f.action('delete', 'native', { confirmed: true }); await started;
+  f.switch(identity('two')); release();
+  await assert.rejects(deleting, /切换/);
+  assert.equal(f.recycled(), 0); assert.equal(fs.existsSync(f.original), true);
+  const retained = await f.history().store.get('native');
+  assert.equal(retained.archived, true); assert.equal(retained.deleted, false);
 });

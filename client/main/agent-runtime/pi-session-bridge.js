@@ -382,10 +382,8 @@ function createPiSessionBridge(options) {
   }
   function historyPriority(row) {
     if (normalizeHistoryRow(row).cloud) return 4;
-    // A cached replica is a complete local read-only transcript. Prefer it
-    // over an account directory projection when both describe one origin, so
-    // a temporary Hub message read failure cannot leave an unusable sidebar
-    // row. Hub lifecycle metadata remains authoritative through the aliases.
+    // Explicitly aliased read-only transcripts remain preferable to directory
+    // metadata. Origin locators alone never make independent copies aliases.
     if (row?.cached === true || row?.localReplica === true) return 3;
     if (row?.accountProjection === true || row?.accountConversation === true) return 2;
     return 1;
@@ -397,9 +395,8 @@ function createPiSessionBridge(options) {
       ...(Array.isArray(value.historyAliasIds) ? value.historyAliasIds : []),
       ...(Array.isArray(value.aliasIds) ? value.aliasIds : []),
       value.accountId,
-      value.sourceSessionId,
-      value.source?.id,
-      value.source?.conversationId,
+      // Source locators can name independent copies on other devices/accounts.
+      // Only aliases already verified by the owning history provider join rows.
     ].filter(Boolean).map(String))];
   }
   function prefersHistoryRow(candidate, candidateSource, current, currentSource) {
@@ -658,11 +655,13 @@ function createPiSessionBridge(options) {
 
   async function localHistory(app, options) {
     if (!replicaHistory?.page) return { ok: false, chats: [], reason: 'Local history index is unavailable' };
+    const access = require('../conversation/history-access'), captured = replicaHistory.captureScope?.() || access.actor(app);
     const initial = await replicaHistory.page(options);
     if (options.refresh !== true) return initial;
     let refreshError = '';
     try { await refreshLocalHistory(app); }
     catch (error) { refreshError = _reason(error); }
+    if (replicaHistory.guardScope) replicaHistory.guardScope(captured); else access.assertCurrent(app, captured);
     const result = await replicaHistory.page({ ...options, catalogRevision: initial.localCatalog.revision });
     if (!result.localCatalog.items) result.localCatalog = initial.localCatalog;
     // Discovery failures cannot hide previously verified local transcripts.
@@ -753,7 +752,7 @@ function createPiSessionBridge(options) {
         archived: projected.archived === true, deleted: projected.deleted === true,
         revision: Number(projected.revision || 0), lifecycleRevision: Number(projected.lifecycleRevision || 0) };
     });
-    if (replicaHistory) lifecycleRows.push(...await replicaHistory.store.lifecycleRows());
+    if (replicaHistory) lifecycleRows.push(...await replicaHistory.lifecycleRows());
     return { ok, chats, ...(lifecycleRows.length ? { lifecycle: lifecycleRows } : {}),
       reason: ok ? '' : String(failed && failed.reason || '') };
   }
@@ -1032,6 +1031,7 @@ function createPiSessionBridge(options) {
 
   const api = {
     setReplicaHistory(source) { replicaHistory = source; },
+    indexedHistoryRow(id) { return replicaHistory?.indexedRow(id) || null; },
     setExternalHistory(source) { externalHistory = source; },
     async archivedConversation(app, id, options = {}) {
       const wanted = String(id || '');

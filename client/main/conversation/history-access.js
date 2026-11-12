@@ -1,7 +1,7 @@
 'use strict';
 
-// Ordinary local data belongs to this profile. Execution credentials and
-// protected requirement/cloud conversations remain account-bound.
+// Local transcripts and remote projections are account/Hub scoped. Reading an
+// archive never claims unknown ownership or grants execution permissions.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -20,11 +20,12 @@ function metadataReader(app, batch = false) {
     }
     return directories.get(directory);
   };
-  const contains = (directory, name) => !batch || names(directory).has(name);
+  const contains = (directory, name) => !batch ||
+    ['session-memory-bindings', LEGACY_OWNER_DIRECTORY].includes(directory) || names(directory).has(name);
   const load = file => {
     if (values.has(file)) return values.get(file);
     let stat;
-    try { stat = fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    try { stat = fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') { values.set(file, null); return null; } throw error; }
     assertNoLinks(root, file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw Error('Invalid conversation metadata');
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -77,7 +78,9 @@ function classify(app, id, row, metadata) {
     row.acceptanceReview || row.requirementContext || row.taskId || row.taskRef || row.activeTaskId ||
     row.taskIds?.length || row.taskBindings?.length || row.historyProtection === 'account');
   const result = (kind, invalid = false) => Object.freeze({ kind, id: canonical, ids: Object.freeze([...ids]), row,
-    authority: Object.freeze(authority), clouds: Object.freeze(clouds), invalid });
+    authority: Object.freeze(authority), clouds: Object.freeze(clouds), invalid,
+    ownership: target => ({ records: ['session-memory-bindings', 'requirement-session-context', 'conversation-runtime-segments']
+      .map(directory => metadata(directory, target)).filter(Boolean), legacy: metadata(LEGACY_OWNER_DIRECTORY, target) }) });
   if (!app?.getPath || !canonical || typeof id !== 'string' || ids.size > 1001) return result('unknown', true);
   try {
     // Follow explicit native segments only. Source locators are not aliases and
@@ -117,7 +120,7 @@ function classify(app, id, row, metadata) {
         protectedData ||= tasks.length > 0;
       }
       const forms = metadata.contains('conversation-work-cards', current)
-        ? require('./work-conversation-cards').protection(app, current) : null;
+        ? (metadata.protection ? metadata.protection(current) : require('./work-conversation-cards').protection(app, current)) : null;
       if (forms) {
         if (forms.invalid || forms.unknown && (typeof forms.owner !== 'string' || !forms.owner)) return result('unknown', true);
         if (forms.hasRequirement || forms.unknown) {
@@ -168,12 +171,59 @@ function classify(app, id, row, metadata) {
 function classifyLocal(app, id, row = {}) {
   return classify(app, id, row, app?.getPath ? metadataReader(app) : () => null);
 }
+function catalogChecker(app, captured, entries) {
+  const snapshots = new Map(entries.map(entry => [entry.name + '/' + entry.file, entry]));
+  const key = (directory, id) => directory + '/' + crypto.createHash('sha256').update(String(id)).digest('hex') + '.json';
+  const metadata = (directory, id) => {
+    const entry = snapshots.get(key(directory, id));
+    if (!entry) return null;
+    if (!Object.hasOwn(entry, 'value')) entry.value = JSON.parse(entry.bytes.toString('utf8'));
+    if (!entry.value || typeof entry.value !== 'object') throw Error('Invalid conversation metadata');
+    return entry.value;
+  };
+  metadata.contains = (directory, id) => snapshots.has(key(directory, id));
+  metadata.protection = id => metadata('conversation-work-cards', id);
+  let parents, parentFailure;
+  metadata.parents = id => {
+    if (parentFailure) throw parentFailure;
+    if (!parents) {
+      const index = new Map();
+      try {
+        for (const entry of entries) {
+          if (entry.name !== 'conversation-runtime-segments') continue;
+          const record = entry.value;
+          for (const part of [...record.segments, record.active]) {
+            if (typeof part?.sessionId !== 'string' || !part.sessionId || part.sessionId.length > 512)
+              throw Error('Invalid runtime segment identity');
+            if (!index.has(part.sessionId)) index.set(part.sessionId, new Set());
+            index.get(part.sessionId).add(record.id);
+          }
+        }
+        parents = index;
+      } catch (error) { parentFailure = error; throw error; }
+    }
+    return parents.get(id) || [];
+  };
+  // The stamp, ownership evidence and classification must describe the same
+  // bytes, even if a file changes and changes back while the query yields.
+  const snapshotActor = { ...captured, readMetadata: metadata };
+  return row => {
+    try { assertClassifiedReadable(app, row.id, snapshotActor, row, classify(app, row.id, row, metadata)); return true; }
+    catch (_) { return false; }
+  };
+}
 function actor(app, identity) {
   const auth = require('../device-auth');
   if (identity === undefined) identity = require('./requirement-context').cachedIdentity(app);
-  let owner = '';
-  try { owner = runtime.scope(identity); } catch (_) { owner = auth.localOwner(app); }
-  return { identity, owner, candidates: auth.profiles(app) };
+  let owner = '', authenticated = false;
+  try { owner = runtime.scope(identity); authenticated = true; } catch (_) { owner = auth.localOwner(app); }
+  // A retained offline owner is evidence from a previous Hub login, not an
+  // anonymous device identity. Logout clears it; token expiry alone does not.
+  if (!identity && owner) identity = auth.identity(app);
+  return { identity, owner, candidates: [identity, ...auth.profiles(app)].filter(Boolean), readScope: readScope(identity, owner),
+    // Credential expiry changes protected-read authority even when the saved
+    // account/Hub still permits ordinary offline history. Invalidate cached views.
+    epoch: JSON.stringify([auth.historyEpoch?.(identity), authenticated]) };
 }
 function saved(app, directory, id) {
   const file = path.join(app.getPath('userData'), directory,
@@ -203,27 +253,10 @@ function legacyOwner(app, id) {
   }
   return record;
 }
-function bindLegacyOwner(app, id, captured) {
-  const file = path.join(app.getPath('userData'), LEGACY_OWNER_DIRECTORY,
-    crypto.createHash('sha256').update(String(id)).digest('hex') + '.json');
-  const record = {
-    version: 1, sessionId: id, owner: captured.owner,
-    hub: String(captured.identity?.hub || ''), migratedAt: new Date().toISOString(),
-  };
-  assertNoLinks(app.getPath('userData'), file);
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  try {
-    fs.writeFileSync(file, JSON.stringify(record), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    return record;
-  } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    return legacyOwner(app, id);
-  }
-}
 function isOwnerlessNativeArchive(row) {
   // Native archive projections carry an absolute JSONL path and at least one
   // persisted message. Synthetic rows and cloud previews do not qualify for
-  // first-open migration, so they remain hidden until an owner is recorded.
+  // explicit import, so they remain hidden until the user imports a copy.
   return !!row && !row.workOwner && !row.cloud && typeof row.path === 'string' &&
     path.isAbsolute(row.path) && path.extname(row.path).toLowerCase() === '.jsonl' &&
     Number.isSafeInteger(Number(row.count)) && Number(row.count) > 0;
@@ -278,19 +311,21 @@ function assertClassifiedOwner(app, id, captured, row, options, classified) {
       // Adding a requirement to a shared ordinary draft does not transfer its
       // private memory binding. Preserve that creator proof, but reject an
       // unrelated or corrupt native form owner rather than trusting one file.
-      const original = metadataReader(app)('session-memory-bindings', local.id);
+      const original = (captured.readMetadata || metadataReader(app))('session-memory-bindings', local.id);
       if (!original?.owner || original.owner !== row.workOwner)
         throw Error('无法确认这条会话属于当前账号，请切回原账号');
     }
     if (options.readOnly) return;
   }
   const records = ['session-memory-bindings', 'requirement-session-context', 'conversation-runtime-segments']
-    .map(directory => saved(app, directory, id)).filter(Boolean);
+    .map(directory => captured.readMetadata ? captured.readMetadata(directory, id) : saved(app, directory, id)).filter(Boolean);
   const owners = records.map(record => record.owner);
   if (row.workOwner) owners.push(row.workOwner);
-  const legacy = legacyOwner(app, id);
+  const legacy = captured.readMetadata ? captured.readMetadata(LEGACY_OWNER_DIRECTORY, id) : legacyOwner(app, id);
+  if (legacy && (legacy.version !== 1 || legacy.sessionId !== id || !/^[a-f0-9]{32}$/.test(legacy.owner)))
+    throw Error('无法读取会话归属记录，请重新打开 SoduWork');
   if (legacy) owners.push(legacy.owner);
-  const cloud = saved(app, 'conversation-handoffs', id);
+  const cloud = captured.readMetadata ? captured.readMetadata('conversation-handoffs', id) : saved(app, 'conversation-handoffs', id);
   if (cloud) {
     const syncOwner = require('./cloud-execution-sync').scope(captured.identity);
     if (cloud.sessionId !== id || !cloud.owner || (cloud.owner !== runtime.connectionScope(captured.identity) &&
@@ -298,10 +333,6 @@ function assertClassifiedOwner(app, id, captured, row, options, classified) {
       throw Error('这条云端会话属于其他账号或服务，请切回原连接');
     // A verified cloud receipt also owns a remote-only conversation.
     if (!owners.length) return;
-  }
-  if (!owners.length && options.allowLegacy === true && isOwnerlessNativeArchive(row)) {
-    const migrated = bindLegacyOwner(app, id, captured);
-    if (migrated?.owner) owners.push(migrated.owner);
   }
   if (!owners.length) {
     const error = Error('无法确认这条会话属于当前账号，请切回原账号');
@@ -318,20 +349,68 @@ function assertReadable(app, id, captured = actor(app), row = {}) {
 function assertClassifiedReadable(app, id, captured, row, classified) {
   if (!id || typeof id !== 'string' || id.length > 512 || (row.id || row.sessionId) !== id)
     throw Error('会话标识无效');
-  // Callers resolve rows through trusted local indexes, never renderer-supplied
-  // paths. A downloaded replica is local data, not a remote permission grant.
+  if (!captured.readScope) throw Error('请先登录 SoduWork 后查看会话');
+  // Trusted local provenance is necessary even for offline native data.
+  // Requirement/work-card protection can add restrictions, never relax it.
   const local = classified || classifyLocal(app, id, row);
   if (local.invalid) throw Error('无法读取会话归属记录，请重新打开 SoduWork');
-  if (local.kind === 'ordinary') {
-    // Device-local transcripts retain their existing offline read behavior.
-    // They never grant access to account-bound execution credentials.
-    return;
-  }
-  if (local.kind === 'protected' || row.localReplica === true)
-    return assertClassifiedOwner(app, id, captured, row, { readOnly: true }, local);
   if (row.remoteProjection === true || row.accountProjection === true || row.accountConversation === true ||
-      row.adapterId === 'account-sync' || row.sourceClientId || row.cloud === true)
-    return assertOwner(app, id, captured, row);
+      (!row.localReplica && row.adapterId === 'account-sync') || row.cloud === true)
+    return assertClassifiedOwner(app, id, captured, row, {}, local);
+  const hub = new URL(captured.identity.hub).origin;
+  const provenance = row.creator || (row.cached && row.source?.account ? row.source : null);
+  let proven = false;
+  if (provenance) {
+    const owner = provenance.account && crypto.createHash('sha256').update('soduwork-account\0' + provenance.account).digest('hex').slice(0, 32);
+    if (owner !== captured.owner || origin(provenance.hub) !== hub)
+      throw Error('这条会话属于另一个账号或服务，请切回原账号');
+    proven = true;
+  }
+  // Check all persisted aliases for conflicting owners. Missing aliases do not
+  // create ownership; immutable capture/import provenance can own a read-only copy.
+  const owners = row.workOwner ? [row.workOwner] : [];
+  for (const alias of new Set([id, ...(row.historyAliasIds || [])])) {
+    const indexed = captured.ownership?.(alias) || local.ownership(alias);
+    const records = indexed ? indexed.records.slice() : ['session-memory-bindings', 'requirement-session-context', 'conversation-runtime-segments']
+      .map(directory => saved(app, directory, alias)).filter(Boolean);
+    const legacy = indexed ? indexed.legacy : legacyOwner(app, alias);
+    if (legacy && (legacy.version !== 1 || legacy.sessionId !== alias || !/^[a-f0-9]{32}$/.test(legacy.owner)))
+      throw Error('无法读取会话归属记录，请重新打开 SoduWork');
+    if (legacy) records.push(legacy);
+    for (const record of records) {
+      owners.push(record.owner);
+      if (record.hub) {
+        if (origin(record.hub) !== hub) throw Error('这条会话属于另一个账号或服务，请切回原账号');
+        proven = true;
+      }
+    }
+  }
+  if (owners.some(owner => !owner || owner !== captured.owner && !runtime.scopeMatches(owner, captured.identity, captured.candidates)))
+    throw Error('这条会话属于另一个账号或服务，请切回原账号');
+  // Older environment fingerprints can prove their original Hub without
+  // rewriting the archive. A newer account-only fingerprint cannot do so.
+  if (!proven) for (const candidate of captured.candidates || []) {
+    if (origin(candidate.hub) !== hub) continue;
+    try { if (owners.includes(runtime.legacyScope(hub, candidate.clientId, captured.identity))) proven = true; }
+    catch (_) { /* Expired tokens cannot establish new legacy provenance. */ }
+  }
+  if (!proven) {
+    if (owners.length) {
+      const error = Error('这条旧会话缺少服务归属信息，原文件已保留，暂时无法读取');
+      error.code = 'HISTORY_HUB_MISSING'; throw error;
+    }
+    const error = Error('无法确认这条会话属于当前账号，请明确导入后再查看');
+    error.code = 'HISTORY_OWNER_MISSING'; throw error;
+  }
+  if (local.kind === 'protected' || row.cached)
+    assertClassifiedOwner(app, id, captured, row, { readOnly: true }, local);
+}
+function origin(value) { try { return new URL(value).origin; } catch (_) { return ''; } }
+function readScope(identity, trustedOwner = '') {
+  let owner = trustedOwner;
+  try { owner = runtime.scope(identity); } catch (_) {}
+  const hub = origin(identity?.hub);
+  return /^[a-f0-9]{32}$/.test(owner) && hub ? crypto.createHash('sha256').update(JSON.stringify([hub, owner])).digest('hex') : '';
 }
 function assertLocalMutation(app, id, captured = actor(app), row = {}) {
   if (classifyLocal(app, id, row).kind !== 'ordinary' &&
@@ -365,17 +444,15 @@ function filterVisible(app, rows, captured, classification) {
   }).map(row => { const { workOwner, ...visible } = row; return visible; });
 }
 function assertLocalCurrent(app, captured, row, identity) {
-  if (classifyLocal(app, row.id || row.sessionId, row).kind !== 'ordinary')
-    assertCurrent(app, captured, identity);
+  assertCurrent(app, captured, identity);
 }
 function assertCurrent(app, captured, identity) {
   const current = actor(app, identity);
-  const connection = value => {
-    let hub = String(value.identity?.hub || '').replace(/\/+$/, '');
-    try { hub = new URL(hub).toString().replace(/\/+$/, ''); } catch (_) { /* Keep invalid identities distinct without trusting them. */ }
-    return JSON.stringify([hub, String(value.identity?.clientId || '')]);
-  };
-  if (!captured.owner || current.owner !== captured.owner || connection(current) !== connection(captured))
+  const connection = value => JSON.stringify([origin(value.identity?.hub), String(value.identity?.clientId || '')]);
+  if (connection(current) !== connection(captured)) throw Error('账号已切换，请在当前账号重新打开会话');
+  if (!captured.owner || current.owner !== captured.owner || current.readScope !== captured.readScope ||
+      captured.epoch !== undefined && current.epoch !== captured.epoch)
     throw Error('账号已切换，请在当前账号重新打开会话');
 }
-module.exports = { assertLocalCurrent, assertLocalMutation, actor, assertOwner, assertReadable, assertCurrent, visible, visibleAsync, isOwnerlessNativeArchive, classifyLocal };
+module.exports = { assertLocalCurrent, assertLocalMutation, actor, assertOwner, assertReadable, assertCurrent,
+  visible, visibleAsync, isOwnerlessNativeArchive, classifyLocal, catalogChecker, readScope };

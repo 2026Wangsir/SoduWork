@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -28,7 +29,7 @@ class AcceptanceSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(directory.cleanup)
         path = Path(directory.name) / "test.db"
         shutil.copy2(_schema_template(), path)
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
         self.engine = create_async_engine("sqlite+aiosqlite:///" + path.as_posix())
         self.addAsyncCleanup(self.engine.dispose)

@@ -48,6 +48,18 @@ test('account switch, logout and an unregistered ref cannot read or mutate an ow
   assert.equal(f.guard.canAccess(handle), false);
 });
 
+test('desktop history handles retain their original Hub while allowing same-Hub enrollment renewal', t => {
+  const f = fixture(t), handle = {};
+  f.guard.bind(handle, identity(), { hub: true });
+  f.expire(); assert.equal(f.guard.canAccess(handle), true);
+  f.switch({ ...identity(), clientId: 'device-two', session: sessions().otherDevice });
+  assert.equal(f.guard.canAccess(handle), true);
+  f.switch({ ...identity(), hub: 'https://other.invalid' });
+  assert.equal(f.guard.canAccess(handle), false);
+  assert.throws(() => f.guard.bind(handle, { ...identity(), hub: 'https://other.invalid' }), /服务已变化/);
+  f.switch(identity()); assert.equal(f.guard.canAccess(handle), true);
+});
+
 test('expired API tokens retain trusted offline ownership until explicit logout', t => {
   const f = fixture(t), handle = {};
   f.guard.bind(handle, identity());

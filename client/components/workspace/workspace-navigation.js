@@ -119,17 +119,31 @@
     const payload = { ...(raw || {}) }, saved = parseRestore(payload.workspaceRestore);
     delete payload.workspaceRestore;
     const ticket = ++epoch;
-    reportSequence++; view = viewKey; selected = String(payload.chatId || '');
-    restoring = saved ? ticket : 0;
-    if (saved) return restore(viewKey, payload, saved, opener, ticket).catch(() => {
-      if (!active(ticket)) return false;
-      restoring = 0;
-      return open('create', { newSession: true }, opener);
+    const begin = () => {
+      reportSequence++; view = viewKey; selected = String(payload.chatId || '');
+      restoring = saved ? ticket : 0;
+      if (saved) return restore(viewKey, payload, saved, opener, ticket).catch(() => {
+        if (!active(ticket)) return false;
+        restoring = 0;
+        return open('create', { newSession: true }, opener);
+      });
+      const opened = opener(viewKey, payload);
+      record(viewKey);
+      return opened;
+    };
+    const openApplication = api()?.conversationSession?.openApplication;
+    if (viewKey !== 'create' || !payload.chatId || payload.taskRef || payload.taskId || !openApplication) return begin();
+    const capturedScope = scope();
+    return Promise.resolve(openApplication(String(payload.chatId))).then(result => {
+      if (!active(ticket) || scope() !== capturedScope) return false;
+      if (!result?.ok) throw Error(result?.reason || '应用会话暂时无法打开');
+      // Keep the current main page, draft and attachment intact when another
+      // native application window owns this conversation.
+      return result.handled ? true : begin();
+    }).catch(error => {
+      if (active(ticket) && scope() === capturedScope) global.petSay?.(String(error.message || error));
+      return false;
     });
-    // Normal navigation remains synchronous; the existing opener owns async work.
-    const opened = opener(viewKey, payload);
-    record(viewKey);
-    return opened;
   }
 
   function scopeChanged() {

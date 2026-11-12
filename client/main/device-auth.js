@@ -736,4 +736,5 @@ function install({ app, ipcMain, safeStorage }) {
 }
 
 module.exports = { install, identity, session, localOwner, libraryWorkRoot, profiles, enroll, login, logout, clearSession,
+  historyEpoch: id => JSON.stringify(id?.hub && id?.clientId ? _generation(id) : { selection: _selectionVersion }),
   ensureSession, authenticatedIdentity, selectHub, accountAction, refreshProfile };

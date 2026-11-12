@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const { scope, connectionScope, scopeMatches } = require('../platform-connections/runtime.cjs');
 const memories = require('./session-memory');
 const titles = require('./titles');
+const metadataSnapshot = require('./metadata-snapshot.cjs');
 const ENTRY_TYPE = 'soduwork.work-entry';
 const MAX_FILES = 32, MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_BYTES = 8 * 1024 * 1024, MAX_STORE_BYTES = 256 * 1024 * 1024, MAX_CARDS = 100;
@@ -25,38 +26,50 @@ function protectionSummary(record) {
     hasRequirement: record.protection?.hasRequirement === true ||
       record.cards.some(card => card?.actionId === 'work.requirement.create') };
 }
-function protectionKey(stat) { return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':'); }
-function cacheProtection(file, stat, summary) {
-  protectionCache.delete(file); protectionCache.set(file, { key: protectionKey(stat), summary });
+function cacheProtection(file, revision, summary) {
+  protectionCache.delete(file); protectionCache.set(file, { revision, summary });
   if (protectionCache.size > 128) protectionCache.delete(protectionCache.keys().next().value);
   return summary;
 }
-function protection(app, id) {
-  const file = location(app, id);
+function protectionSnapshot(app, file) {
+  let revision = 'invalid';
   try {
-    require('../plugin-resources').assertNoLinks(app.getPath('userData'), file);
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STORE_BYTES) throw Error('Invalid work card metadata');
-    const cached = protectionCache.get(file);
-    if (cached?.key === protectionKey(stat)) return cached.summary;
-    const fd = fs.openSync(file, 'r'), bytes = Buffer.alloc(Math.min(PROTECTION_PREFIX_BYTES, stat.size));
-    try { fs.readSync(fd, bytes, 0, bytes.length, 0); } finally { fs.closeSync(fd); }
-    const prefix = bytes.toString('utf8');
+    if (path.dirname(path.resolve(file)) !== path.resolve(directory(app)) || !/^[a-f0-9]{64}\.json$/.test(path.basename(file)))
+      throw Error('Invalid work card path');
+    const snapshot = metadataSnapshot.read(app.getPath('userData'), file,
+      { maxBytes: PROTECTION_PREFIX_BYTES, prefix: true, maxFileBytes: MAX_STORE_BYTES });
+    revision = 'prefix:' + snapshot.revision;
+    const prefix = snapshot.bytes.toString('utf8');
     // New records place the small authoritative header before attachment data.
     const boundary = prefix.indexOf(',"cards":');
     let legacyOwner = '';
     if (boundary > 0) {
+      const cached = protectionCache.get(file);
+      if (cached?.revision === revision) return { revision, summary: cached.summary };
       const header = JSON.parse(prefix.slice(0, boundary) + '}'), summary = header.protection;
-      if (header.version === 1 && header.sessionId === id && typeof header.owner === 'string') legacyOwner = header.owner;
-      if (header.version === 1 && header.sessionId === id && typeof header.owner === 'string' &&
-          summary?.version === 1 && summary.owner === header.owner && typeof summary.hasRequirement === 'boolean')
-        return cacheProtection(file, stat, summary);
+      if (header.version !== 1 || typeof header.sessionId !== 'string' || !header.sessionId ||
+          location(app, header.sessionId) !== file || typeof header.owner !== 'string') throw Error('Invalid work card identity');
+      legacyOwner = header.owner;
+      if (summary?.version === 1 && summary.owner === header.owner && typeof summary.hasRequirement === 'boolean')
+        return { revision, summary: cacheProtection(file, revision, summary) };
     }
-    if (stat.size > 2 * 1024 * 1024) return { unknown: true, owner: legacyOwner };
-    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (record.sessionId !== id) throw Error('Invalid work card identity');
-    return cacheProtection(file, stat, protectionSummary(record));
-  } catch (error) { if (error.code === 'ENOENT') return null; return { invalid: true }; }
+    if (snapshot.stat.size > BigInt(2 * 1024 * 1024)) return { revision, summary: { unknown: true, owner: legacyOwner } };
+    const full = metadataSnapshot.read(app.getPath('userData'), file);
+    revision = 'full:' + full.revision;
+    const cached = protectionCache.get(file);
+    if (cached?.revision === revision) return { revision, summary: cached.summary };
+    const record = JSON.parse(full.bytes.toString('utf8'));
+    if (typeof record.sessionId !== 'string' || !record.sessionId || location(app, record.sessionId) !== file)
+      throw Error('Invalid work card identity');
+    return { revision, summary: cacheProtection(file, revision, protectionSummary(record)) };
+  } catch (error) {
+    protectionCache.delete(file);
+    if (error.code === 'ENOENT') return { revision: 'missing', summary: null };
+    return { revision, summary: { invalid: true } };
+  }
+}
+function protection(app, id) {
+  return protectionSnapshot(app, location(app, id)).summary;
 }
 
 const directory = app => path.join(app.getPath('userData'), 'conversation-work-cards');
@@ -166,8 +179,6 @@ async function diskRecord(app, id) {
       row.draftSelection = normalizeDraftSelection(row.draftSelection);
       if (!Number.isSafeInteger(row.draftSelectionRevision) || row.draftSelectionRevision < 1) throw Error('草稿执行选项版本无效');
     } else if (Object.hasOwn(row, 'draftSelectionRevision')) throw Error('草稿执行选项缺失');
-    const current = await fsp.lstat(file);
-    if (protectionKey(current) === protectionKey(stat)) cacheProtection(file, current, protectionSummary(row));
     return row;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
@@ -268,6 +279,9 @@ function create({ app, identityOf, session, accountHistory, sharedHistory, newCw
       throw Error('这条会话已经不存在，工作表单未保存');
     }
     await guard(captured);
+    const access = require('./history-access');
+    access.assertReadable(app, id, access.actor(app, captured.identity), { ...row, id });
+    if (row.cached === true) throw Error('这条会话是只读历史副本，不能保存工作表单');
     memories.binding(app, id, captured.identity);
     // usageIdentity contains Hub and client identifiers, not an account-signed credential.
     // Validate account ownership through persisted memory, requirement, and segment bindings rather than treating missing tokens as unauthorized history.
@@ -383,12 +397,16 @@ function create({ app, identityOf, session, accountHistory, sharedHistory, newCw
     return attempt(async () => {
       let id = sessionId(rawId);
       const captured = await auth();
-      const local = await sharedHistory?.store?.get(id);
+      // Cached local transcripts have no native work-card archive. Their scoped
+      // index authorizes passive preparation only, never card writes or execution.
+      const cached = sharedHistory?.store
+        ? await sharedHistory.store.get(id) : await session.indexedHistoryRow?.(id);
       await guard(captured);
-      if (local?.cached && !local.deleted && require('./shared-history.cjs').isLocalIdentity(local, id)) {
+      if (cached?.cached === true && require('./shared-history.cjs').isLocalIdentity(cached, id)) {
+        if (cached.deleted) throw Error('这条会话已经不存在，工作表单未保存');
         const access = require('./history-access');
-        access.assertReadable(app, local.id, access.actor(app, captured.identity), local);
-        return { ok: true, sessionId: id, cards: [], presence: publicPresence({ ...local, workOnly: false }),
+        access.assertReadable(app, cached.id, access.actor(app, captured.identity), cached);
+        return { ok: true, sessionId: cached.id, cards: [], presence: publicPresence({ ...cached, workOnly: false }),
           workOnly: false, draftSelection: null, draftSelectionRevision: 0 };
       }
       let row = await resolve(id, captured, { allowMissing: true });
@@ -509,4 +527,4 @@ function install({ ipcMain, BrowserWindow, ...options }) {
   }
   return controller;
 }
-module.exports = { protection, create, install, normalizeCard, visibleHistory, assertCreatedTask, location, ENTRY_TYPE, MAX_FILES, MAX_FILE_BYTES, MAX_STORE_BYTES };
+module.exports = { protection, protectionSnapshot, create, install, normalizeCard, visibleHistory, assertCreatedTask, location, ENTRY_TYPE, MAX_FILES, MAX_FILE_BYTES, MAX_STORE_BYTES };

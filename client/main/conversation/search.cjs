@@ -11,7 +11,7 @@ function excerpt(text, words) {
 // queries cloud message services, or writes an additional conversation store.
 function create({ app, session, access = accessDefault, read, maxSessions = 500, maxPages = 8, budgetMs = 15000, cacheTtl = 5000, maxCacheBytes = 8 * 1024 * 1024 }) {
   let epoch = 0, cacheOwner = '', cacheBytes = 0;
-  const pages = new Map();
+  const pages = new Map(), readable = access.assertReadable || access.assertOwner;
   function clear() { pages.clear(); cacheBytes = 0; }
   async function search(rawQuery) {
     const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 200) : '';
@@ -31,7 +31,7 @@ function create({ app, session, access = accessDefault, read, maxSessions = 500,
     const titles = require('./titles');
     const visible = access.visible ? access.visible(app, result.chats || [], captured.identity) : result.chats || [];
     const rows = visible.filter(row => {
-      try { access.assertOwner(app, row.id, captured, row); return true; } catch (_) { return false; }
+      try { readable(app, row.id, captured, row); return true; } catch (_) { return false; }
     }).map(row => titles.decorate(app, row));
     const hits = [], matches = value => words.every(word => value.toLocaleLowerCase().includes(word));
     let partial = rows.length > maxSessions, cursor = 0;
@@ -76,8 +76,9 @@ function create({ app, session, access = accessDefault, read, maxSessions = 500,
     };
     await Promise.all([work(), work()]); guard();
     // Ownership may have changed during an asynchronous archive read.
+    const checked = new Map(rows.map(row => [row.id, row]));
     return { ok: true, chats: hits.filter(row => {
-      try { access.assertOwner(app, row.id, captured); return true; } catch (_) { return false; }
+      try { readable(app, row.id, captured, checked.get(row.id)); return true; } catch (_) { return false; }
     }), partial: query ? partial : false };
   }
   return { search, cancel() { epoch++; }, dispose() { epoch++; clear(); } };
@@ -95,7 +96,20 @@ function localSession(local) {
 function install({ app, ipcMain, BrowserWindow, getRendererRoot }) {
   const trusted = require('../app-menu-info.cjs').createTrustedWindow({ app, BrowserWindow, getRendererRoot });
   const session = require('../agent-runtime/pi-session-bridge');
-  const local = localSession(require('../pi-session/session'));
+  const local = {
+    async history(app) {
+      const chats = []; let after;
+      do {
+        const page = await session.history(app, { source: 'local', limit: 200, after });
+        if (page.ok === false) return page;
+        chats.push(...page.chats); after = page.next;
+      } while (after);
+      return { ok: true, chats };
+    },
+    indexedHistoryRow: id => session.indexedHistoryRow(id),
+    archivedConversation: (_app, id) => session.indexedHistoryRow(id),
+    historyEntry: (...args) => require('../pi-session/session').historyEntry(...args),
+  };
   const metadata = require('../app-readonly-history.cjs').create({ app, session });
   const searches = new Map();
   ipcMain.handle('conversation-search', async (event, query) => {

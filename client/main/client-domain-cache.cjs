@@ -6,9 +6,9 @@ const DOMAINS = {
   'conversation-projects': { path: '/conversation-projects', legacyMs: 10000, valid: value => Array.isArray(value?.items) },
   models: { path: '/my-models', legacyMs: 0, valid: value => Array.isArray(value?.usable) && Array.isArray(value?.providers) },
   config: { path: '/config', legacyMs: 0, valid: value => value && typeof value === 'object' && !Array.isArray(value) },
-  'team-messages-received': { path: '/team/messages?folder=received&limit=200', topic: 'team-messages', requirePush: true,
+  'team-messages-received': { path: '/team/messages?folder=received&limit=200', topic: 'team-messages', requirePush: true, revalidate: true,
     legacyMs: 0, valid: value => Array.isArray(value?.items) },
-  'team-messages-sent': { path: '/team/messages?folder=sent&limit=200', topic: 'team-messages', requirePush: true,
+  'team-messages-sent': { path: '/team/messages?folder=sent&limit=200', topic: 'team-messages', requirePush: true, revalidate: true,
     legacyMs: 0, valid: value => Array.isArray(value?.items) },
 };
 const SAME_SCOPE = '当前账号或设备已切换，请重新打开后再操作';
@@ -99,7 +99,15 @@ function create({ identityOf, fetch = fetchWithDeviceAuthRetry, discovery = requ
         value = body;
         // A push or successful local write during the request requires a trailing read.
       } while (version !== entry.version && reads < 2);
-      const different = entry.value !== undefined && JSON.stringify(entry.value) !== JSON.stringify(value);
+      // Inbox revisions include authorization/receipt changes and periodic
+      // preview-ticket renewal. A newly signed URL alone must not cause a
+      // changed -> explicit read -> freshly signed URL refresh loop.
+      const revisioned = DOMAINS[domain].revalidate &&
+        typeof entry.value?.revision === 'string' && entry.value.revision.trim().length > 0 &&
+        typeof value?.revision === 'string' && value.revision.trim().length > 0;
+      const different = entry.value !== undefined && (revisioned
+        ? entry.value.revision !== value.revision
+        : JSON.stringify(entry.value) !== JSON.stringify(value));
       entry.value = value; entry.at = now(); entry.loadedVersion = version;
       entry.error = null; entry.errorUntil = 0; entry.failures = 0;
       // Continuous invalidations must not starve the waiting UI or produce a
@@ -128,7 +136,11 @@ function create({ identityOf, fetch = fetchWithDeviceAuthRetry, discovery = requ
     entry.usedAt = now();
     if (entry.error && entry.errorUntil > now()) throw entry.error;
     const ttl = confirmed ? reconcileMs : DOMAINS[domain].legacyMs;
-    const cached = entry.value !== undefined && (entry.retryAt > now() || entry.loadedVersion === entry.version && now() - entry.at < ttl);
+    // Inbox authorization can change without an account/device change or push.
+    // Revalidate explicit message reads before their revision is used to prune
+    // company-scoped notices; keep shared in-flight reads and bounded backoff.
+    const cached = entry.value !== undefined && (entry.retryAt > now() ||
+      !DOMAINS[domain].revalidate && entry.loadedVersion === entry.version && now() - entry.at < ttl);
     try {
       const value = cached ? entry.value : await load(domain, entry, captured);
       await guard(captured);

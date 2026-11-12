@@ -418,6 +418,89 @@ function create({ owners: OWNERS, getDeps, ownerFor, ownerSession, safeWebUrl,
     return null;
   }
 
+  function appConversationOrigin(sender) {
+    const found = composerOwnerBySender(sender);
+    if (!found || !liveContents(found.owner, found.item)) return null;
+    const item = found.item.appTabs?.active() || found.item;
+    if (!item.appBridge?.contributionId) return null;
+    appOwner.assertCurrent(item);
+    if (new URL(item.view.webContents.getURL()).origin !== item.appBridge.origin) return null;
+    return { pluginId: String(item.appBridge.appId || '').replace(/^plugin:/, ''),
+      contributionId: item.appBridge.contributionId, origin: item.appBridge.origin };
+  }
+
+  const navigations = new Map();
+  function composerNavigationResult(event, result) {
+    const pending = navigations.get(result?.id);
+    if (!pending || pending.sender !== event.sender || event.senderFrame !== event.sender.mainFrame) return { ok: false };
+    pending.finish(result.ok === true && result.sessionId === pending.sessionId ? null :
+      Error(String(result.reason || '原应用会话没有打开，请重试')));
+    return { ok: true };
+  }
+
+  async function openAppConversation(event, origin, sessionId, payload, assertCurrent, reattach) {
+    let found;
+    for (const owner of OWNERS.values()) for (const item of owner.views.values()) {
+      if (!item.composer || !liveContents(owner, item)) continue;
+      let candidate;
+      try { candidate = appConversationOrigin(item.composer.view.webContents); }
+      catch (_) { continue; } // A stale account's window is never adopted.
+      if (candidate && ['pluginId', 'contributionId', 'origin'].every(key => candidate[key] === origin[key])) found = { owner, item };
+    }
+    assertCurrent();
+    if (found && (found.item.appVersion !== String(payload.appVersion || '') ||
+        (!payload.package && (found.item.requested !== payload.url ||
+          JSON.stringify(found.item.appBridge) !== JSON.stringify(normalizeAppBridge(payload.appBridge, payload.url)))))) {
+      // Reuse the original host, but let the existing application opener retire
+      // outdated UI/bridge declarations using its normal version checks.
+      const { owner, item } = found;
+      const reopened = await showApplication({ sender: owner.sender, senderFrame: owner.sender.mainFrame },
+        { ...payload, tabId: item.id, bounds: item.embeddedBounds }, !!item.embeddedHost);
+      assertCurrent();
+      if (!reopened.ok) throw Error(reopened.reason || '应用入口已变化，请重新打开');
+      found = { owner, item: owner.views.get(reopened.tabId) };
+    }
+    if (!found) {
+      const opened = await showApplication(event, payload);
+      assertCurrent();
+      if (!opened.ok) throw Error(opened.reason || '应用窗口没有打开');
+      const owner = ownerFor(event), item = owner?.views.get(opened.tabId);
+      if (!item?.composer) throw Error('应用对话尚未就绪');
+      found = { owner, item };
+    }
+    const { owner, item } = found;
+    appOwner.assertCurrent(item);
+    await ensureComposer(owner, item);
+    assertCurrent();
+    appOwner.assertCurrent(item);
+    const host = hostFor(item);
+    if (!host || host.isDestroyed()) throw Error('应用窗口已关闭');
+    if (item.embeddedHost) { owner.active = item.id; syncVisibility(owner); }
+    if (host.isMinimized?.()) host.restore();
+    host.show?.(); host.focus();
+    item.composer.expanded = true;
+    layoutAllDetached(owner, item);
+    item.composer.view.webContents.send('app-composer-mode', composerModePayload(item));
+    const sender = item.composer.view.webContents;
+    await reattach?.(sender);
+    const id = require('node:crypto').randomUUID();
+    await new Promise((resolve, reject) => {
+      const finish = error => {
+        const pending = navigations.get(id);
+        if (!pending) return;
+        navigations.delete(id); clearTimeout(pending.timer);
+        sender.removeListener('destroyed', destroyed);
+        if (error) reject(error); else resolve();
+      };
+      const destroyed = () => finish(Error('应用窗口已关闭'));
+      const timer = setTimeout(() => finish(Error('原应用会话打开超时，请重试')), 30000);
+      navigations.set(id, { sender, sessionId, finish, timer });
+      sender.once('destroyed', destroyed);
+      try { sender.send('app-composer-session', { sessionId, navigationId: id }); }
+      catch (error) { finish(error); }
+    });
+  }
+
   function composerActivity(event, payload) {
     const found = composerOwnerBySender(event.sender);
     if (!found || typeof payload?.busy !== 'boolean') return { ok: false };
@@ -662,6 +745,6 @@ function create({ owners: OWNERS, getDeps, ownerFor, ownerSession, safeWebUrl,
   }
 
 
-  return { composerActivity, showDetached: (event, raw) => showApplication(event, raw), showEmbedded: (event, raw) => showApplication(event, raw, true), embeddedBounds, windowDisplay, appContextFor, appContextForPlugin, isAppComposer: sender => !!composerOwnerBySender(sender), composerTurnSettled, composerControl, composerSend, composerHello, composerWidth, composerModeSet, chromeAction, composerDock, composerStep, composerState, composerSent };
+  return { appConversationOrigin, openAppConversation, composerNavigationResult, composerActivity, showDetached: (event, raw) => showApplication(event, raw), showEmbedded: (event, raw) => showApplication(event, raw, true), embeddedBounds, windowDisplay, appContextFor, appContextForPlugin, isAppComposer: sender => !!composerOwnerBySender(sender), composerTurnSettled, composerControl, composerSend, composerHello, composerWidth, composerModeSet, chromeAction, composerDock, composerStep, composerState, composerSent };
 }
 module.exports = { create };

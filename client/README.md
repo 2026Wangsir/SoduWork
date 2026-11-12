@@ -28,7 +28,7 @@ The desktop rail opens the requirement pool directly. The old task board, detail
 
 HTML script order defines dependencies. When splitting scripts, verify resource references, shared state, loading order, and actual Electron behavior.
 
-Account-backed conversation replicas retain their account and Hub boundaries when read, restored, or changed. Cached content does not grant permission to execute a requirement or cloud conversation. Ordinary native history remains local to the device; resolving a native source must preserve its original runtime, model, and permissions.
+Native history and downloaded conversation replicas retain their account and Hub boundaries when listed, read, restored, or changed, including offline use. Unknown-owner archives require explicit import as separate read-only copies. Cached content does not grant permission to execute a requirement or cloud conversation; resolving a verified native source must preserve its original runtime, model, and permissions.
 
 Remote notice history and receipt markers use account-scoped IndexedDB transactions and Web Locks when both browser capabilities are available. Local reminders remain in the existing localStorage cache. Migration retires a legacy snapshot only after a successful durable commit, and a failed write preserves that snapshot for retry. Environments without these capabilities keep the existing cache behavior.
 

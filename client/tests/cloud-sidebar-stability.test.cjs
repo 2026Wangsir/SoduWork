@@ -32,10 +32,52 @@ function fixture(loadHistory, { authenticated = true } = {}) {
   return { history, ctx, api, ids: () => Array.from(ctx.chatItems, row => row.id) };
 }
 
-const cloud = { id: 'mobile:n1', taskId: 'task-n1', title: 'N1', cloud: true, adapterId: 'pi', at: 100 };
-const copy = { id: 'acct-n1', sourceSessionId: 'mobile:n1', title: 'N1', accountConversation: true,
-  at: '2026-10-31T06:57:33Z' };
+let cloud, copy;
+test.before(async () => {
+  // Build the alias through the same authenticated directory/projector path
+  // used by IPC. A cloud source ID without its owning device is not evidence.
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'soduwork-cloud-sidebar-'));
+  const actor = require('./helpers/platform-session-fixture.cjs').identity();
+  const app = { getPath: () => root };
+  const receipts = path.join(root, 'conversation-handoffs'); fs.mkdirSync(receipts);
+  fs.writeFileSync(path.join(receipts, require('node:crypto').createHash('sha256').update('mobile:n1').digest('hex') + '.json'),
+    JSON.stringify({ sessionId: 'mobile:n1', taskId: 'task-n1', transferId: 'transfer-n1', entryKind: 'cloud',
+      title: 'N1', at: 100, adapterId: 'pi', phase: 'committed',
+      owner: require('../main/platform-connections/runtime.cjs').connectionScope(actor) }));
+  const handoff = require('../main/conversation/cloud-handoff').create({ app, remoteDirectory: true,
+    identityOf: async () => actor, request: async () => ({ ok: true, chats: [{
+      sessionId: 'mobile:n1', taskId: 'task-n1', ref: 'run-n1', title: 'N1', adapterId: 'pi', at: 100,
+      ownerClientId: 'mobile-device', canSend: true,
+    }] }) });
+  const account = require('../main/conversation/account-sync');
+  const sync = account.create({ app, identityOf: () => actor, store: { jobs: () => [] },
+    fetch: async () => new Response(JSON.stringify({ items: [{ id: 'acct-n1', sourceSessionId: 'mobile:n1',
+      sourceClientId: 'mobile-device', title: 'N1', updatedAt: '2026-10-31T06:57:33Z', messageCount: 2 }], hasMore: false })) });
+  try {
+    const remote = (await handoff.history()).chats, accounts = (await sync.history({ source: 'account' })).chats;
+    assert.deepEqual(remote[0].historyAliasIds, [], 'cloud projector does not invent account IDs');
+    [cloud, copy] = account.linkCloudHistory([...remote, ...accounts]);
+    assert.deepEqual(cloud.historyAliasIds, [copy.id]);
+  } finally { await sync.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
 const other = { id: 'other', title: 'Other', at: 200 };
+
+test('cloud association requires the same authenticated connection, owning device, and exact source', () => {
+  const { linkCloudHistory } = require('../main/conversation/account-sync');
+  const original = { ...cloud, historyAliasIds: [] };
+  for (const patch of [{ sourceClientId: 'other-device' }, { owner: 'other-account-or-hub' },
+    { sourceSessionId: 'cloud-task:' + cloud.taskId }, { sourceClientId: '' }, { owner: '' },
+    { archived: true }, { deleted: true }]) {
+    assert.deepEqual(linkCloudHistory([original, { ...copy, ...patch }])[0].historyAliasIds, []);
+  }
+  assert.deepEqual(linkCloudHistory([{ ...original, ownerClientId: '' }, copy])[0].historyAliasIds, []);
+  const merged = linkCloudHistory([original, copy]);
+  const f = fixture(); f.api.setChats(merged);
+  assert.deepEqual(f.ids(), [cloud.id]);
+  const independent = { ...copy, id: 'foreign-account', sourceClientId: 'other-device' };
+  f.api.setChats(linkCloudHistory([original, copy, independent]));
+  assert.deepEqual(new Set(f.ids()), new Set([cloud.id, independent.id]));
+});
 
 test('signed-out cloud alias invalidation cannot start an authenticated history read', async () => {
   let reads = 0;
@@ -110,7 +152,7 @@ test('authenticated native aliases replace stale account rows during live rework
 
 test('native PC presence and its owned account projection remain one stable entry', () => {
   const f = fixture();
-  const native = {id: 'native-p1', title: 'P1', adapterId: 'pi', at: 100};
+  const native = {id: 'native-p1', title: 'P1', adapterId: 'pi', at: 100, historyAliasIds: ['acct-p1']};
   const alias = {...copy, id: 'acct-p1', sourceSessionId: native.id, accountCanSend: true, at: 150};
   f.api.setChats([other, native]);
   const key = f.ctx.chatItems[1]._uiKey;
@@ -125,7 +167,7 @@ test('native PC presence and its owned account projection remain one stable entr
 
 test('native arrival replaces an owned alias in place but preserves foreign and archived records', () => {
   const f = fixture();
-  const native = {id: 'native-p1', title: 'P1', adapterId: 'pi', at: 100};
+  const native = {id: 'native-p1', title: 'P1', adapterId: 'pi', at: 100, historyAliasIds: ['acct-p1']};
   const alias = {...copy, id: 'acct-p1', sourceSessionId: native.id, accountCanSend: true, at: 150};
   const foreign = {...alias, id: 'foreign', accountCanSend: false};
   const archived = {...alias, id: 'archived', archived: true};
@@ -179,7 +221,7 @@ test('missing cloud access, archived aliases and distinct sources remain visible
   const archived = { ...copy, id: 'acct-archived', archived: true };
   const legacy = { ...copy, id: 'acct-old-alias', sourceSessionId: 'cloud-task:task-n1' };
   f.api.setChats([cloud, archived, legacy]);
-  assert.deepEqual(new Set(f.ids()), new Set([cloud.id, archived.id]));
+  assert.deepEqual(new Set(f.ids()), new Set([cloud.id, archived.id, legacy.id]));
   assert.equal(f.history._chatAt({ at: '2026-10-31T06:57:33Z' }), Date.parse(copy.at));
   assert.equal(f.history._chatAt({ at: 'invalid' }), 0);
   assert.equal(f.history._chatAt({ at: 0 }), 0);
@@ -188,9 +230,9 @@ test('missing cloud access, archived aliases and distinct sources remain visible
 
 test('native review sync aliases do not appear and disappear during history and presence refreshes', () => {
   const f = fixture();
-  const native = { id: 'native-review', title: 'Review', adapterId: 'pi', at: 100 };
+  const native = { id: 'native-review', title: 'Review', adapterId: 'pi', at: 100, historyAliasIds: ['acct-review'] };
   const alias = { ...copy, id: 'acct-review', sourceSessionId: native.id, title: native.title };
-  const independent = { ...native, id: 'other-review', at: 50 };
+  const independent = { ...native, id: 'other-review', historyAliasIds: [], at: 50 };
   f.api.setChats([other, native, independent]);
   const key = f.ctx.chatItems[1]._uiKey;
   for (let i = 0; i < 6; i++) {

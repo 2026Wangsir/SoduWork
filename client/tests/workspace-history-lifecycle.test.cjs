@@ -365,7 +365,7 @@ test('empty review projections remove only exact sidebar aliases without lifecyc
   f.api.updateChatState(presence(row('native-empty')));
   f.api.updateChatState(presence(row('cloud-real')));
   const empty = { ...row('account-empty'), accountConversation: true,
-    sourceSessionId: 'native-empty', emptyPlaceholder: true };
+    sourceSessionId: 'native-empty', historyAliasIds: ['native-empty'], emptyPlaceholder: true };
   f.api.updateChatState(presence(empty));
   assert.deepEqual(f.ids(), ['cloud-real']);
   const read = f.api.refreshConversationHistory(); await tick();
@@ -374,4 +374,12 @@ test('empty review projections remove only exact sidebar aliases without lifecyc
   f.api.updateChatState(presence({ ...empty, emptyPlaceholder: false, title: 'Submitted review' }));
   assert.equal(f.ids().includes('account-empty'), true);
   assert.equal(f.ids().includes('cloud-real'), true);
+});
+
+test('an empty foreign account projection cannot hide a native row through a matching source locator', () => {
+  const f = fixture();
+  f.api.updateChatState(presence(row('native-visible')));
+  f.api.updateChatState(presence({ ...row('account-empty'), accountConversation: true,
+    sourceClientId: 'another-device', sourceSessionId: 'native-visible', emptyPlaceholder: true }));
+  assert.deepEqual(f.ids(), ['native-visible']);
 });

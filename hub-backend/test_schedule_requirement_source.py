@@ -37,6 +37,7 @@ class RequirementDraftHttp(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine("sqlite+aiosqlite:///" + str(Path(self.directory.name) / "test.db"))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.engine.begin() as connection:
+            await connection.exec_driver_sql("BEGIN")
             await connection.run_sync(Base.metadata.create_all)
         async with self.sessions() as session:
             session.add_all([models.User(id="alice", username="alice", is_active=True),

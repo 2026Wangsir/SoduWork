@@ -11,7 +11,8 @@ async function fixture(t) {
   const app = { getPath: () => root }, actor = identity();
   let current = actor;
   const native = { id: 'native-owned', adapterId: 'pi', title: 'Same synthetic title',
-    workOwner: runtime.scope(actor), at: 10, count: 2, cwd: root, path: path.join(root, 'native.jsonl') };
+    workOwner: runtime.scope(actor), creator: { account: 'one', hub: actor.hub },
+    at: 10, count: 2, cwd: root, path: path.join(root, 'native.jsonl') };
   const original = { id: 'acct-source', adapterId: 'account-sync', title: native.title,
     sourceClientId: 'other-device', sourceSessionId: 'other-native', accountProjection: true,
     accountConversation: true, owner: runtime.connectionScope(actor), at: 20 };
@@ -36,14 +37,19 @@ async function fixture(t) {
   return { app, bridge, shared, cards, original, copy, native, actor, setIdentity: value => { current = value; } };
 }
 
-test('legacy history winner can restore cached transcript without inventing a native work-form archive', async t => {
+test('independent cached transcript restores without joining its remote source or inventing a native work-form archive', async t => {
   const f = await fixture(t);
   const history = await f.bridge.history(f.app);
   assert.equal(history.ok, true);
-  assert.equal(history.chats.length, 2, 'unrelated same-title native conversation remains separate');
+  // Copies deliberately remain separate from remote source locators; this is
+  // not permission to merge unrelated native conversations with the same title.
+  assert.equal(history.chats.length, 3, 'Each independent identity appears exactly once');
+  assert.deepEqual(new Set(history.chats.map(row => row.id)), new Set([f.native.id, f.original.id, f.copy.id]),
+    'The native conversation, remote projection and independent local copy keep distinct identities');
   const selected = history.chats.find(row => row.cached);
   assert.equal(selected.id, f.copy.id);
-  assert.ok(selected.historyAliasIds.includes(f.original.id));
+  assert.equal(selected.historyAliasIds.includes(f.original.id), false, 'A source locator cannot grant local copy authority');
+  assert.ok(selected.historyAliasIds.includes('copy-native-alias'));
   assert.equal(await f.bridge.archivedConversation(f.app, selected.id), null);
   assert.equal((await f.shared.read(selected.id)).items.length, 2);
   const reply = await f.cards.read(selected.id);
@@ -58,7 +64,7 @@ test('legacy history winner can restore cached transcript without inventing a na
 test('cached cloud preflight is passive for its owner and denied across accounts or sign-out', async t => {
   const f = await fixture(t);
   const card = { id: 'draft', actionId: 'work.requirement.create', prompt: 'Private synthetic draft', seed: {}, state: {}, files: [], closed: false };
-  for (const actor of [f.actor, identity('two'), null]) {
+  for (const actor of [f.actor, identity('two'), { ...f.actor, hub: 'https://other.invalid' }, null]) {
     f.setIdentity(actor);
     for (const id of [f.copy.id, 'copy-native-alias']) {
       const result = await f.cards.read(id);
@@ -68,7 +74,9 @@ test('cached cloud preflight is passive for its owner and denied across accounts
       } else {
         assert.equal(result.ok, false, 'Cloud copy titles and content stay private');
         assert.equal(result.presence, undefined);
-        await assert.rejects(f.shared.read(id), /账号|登录/);
+        assert.equal(result.cards, undefined);
+        // Hiding existence is also an authorized denial; never accept content.
+        await assert.rejects(f.shared.read(id), /账号|登录|不存在/);
       }
       assert.equal((await f.cards.save(id, card)).ok, false);
       assert.equal((await f.cards.saveDraftSelection(id, { selection: { adapterId: 'pi' }, revision: 0 })).ok, false);
@@ -92,6 +100,9 @@ test('native form restore and its ownership checks are unchanged by cached trans
   const own = await f.cards.read(f.native.id);
   assert.equal(own.ok, true, own.reason); assert.equal(own.cards[0].state.marker, 'private');
   f.setIdentity(identity('two'));
+  assert.equal((await f.cards.read(f.native.id)).ok, false);
+  assert.equal(fs.readFileSync(cardsModule.location(f.app, f.native.id), 'utf8'), before);
+  f.setIdentity({ ...f.actor, hub: 'https://other.invalid' });
   assert.equal((await f.cards.read(f.native.id)).ok, false);
   assert.equal(fs.readFileSync(cardsModule.location(f.app, f.native.id), 'utf8'), before);
   f.setIdentity(null);

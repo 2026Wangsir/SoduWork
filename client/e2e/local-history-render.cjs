@@ -37,7 +37,8 @@ if (typeof electron === 'string') {
     const fixtureIdentity = require('../tests/helpers/platform-session-fixture.cjs').identity;
     let currentIdentity = fixtureIdentity();
     const file = path.join(app.getPath('userData'), 'pi-agent', 'sessions', 'native.jsonl');
-    const row = { id: 'native', path: file, adapterId: 'pi', title: 'Native history', count: 2 };
+    const row = { id: 'native', path: file, adapterId: 'pi', title: 'Native history', count: 2,
+      creator: { account: 'one', hub: currentIdentity.hub } };
     const store = require('../main/conversation/replica-store.cjs').createWorker(path.join(root, 'history.sqlite'));
     history = require('../main/conversation/shared-history.cjs').create({ app, store,
       identityOf: () => currentIdentity,
@@ -64,18 +65,17 @@ if (typeof electron === 'string') {
     const saved = JSON.stringify(await store.messages('copy'));
     for (const next of [fixtureIdentity('two'), { ...fixtureIdentity(), hub: 'https://another-fixture.invalid' }, null]) {
       currentIdentity = next;
-      assert.equal((await history.list()).items.some(item => item.id === 'copy'), false);
-      await assert.rejects(history.read('copy'), /账号|归属|登录/);
-      await assert.rejects(history.open('copy'), /账号|归属|登录/);
-      const native = await history.open('native');
-      assert.ok(native.snapshot().messages.some(message => message.text === 'Native saved answer'));
-      assert.equal((await native.send('Must remain read-only offline')).accepted, false);
-      await native.close();
+      const visible = (await history.list()).items;
+      for (const id of ['copy', 'native']) {
+        assert.equal(visible.some(item => item.id === id), false);
+        await assert.rejects(history.read(id), /账号|归属|登录|不存在/);
+        assert.equal(await history.open(id), null, 'Unauthorized history cannot expose a passive view');
+      }
     }
     currentIdentity = fixtureIdentity();
     assert.equal((await history.list()).items.some(item => item.id === 'copy'), true);
     report.cases.push('Cached transcript list, read and open reject other accounts and Hubs; returning to the original connection restores access.');
-    report.cases.push('Ordinary native history remains readable without login and across accounts, with no execution permission.');
+    report.cases.push('Owned native history is hidden from other accounts, other Hubs and signed-out sessions; returning to its original account restores read-only access.');
     const snapshots = {};
     for (const id of ['copy', 'native']) {
       const view = await history.open(id);

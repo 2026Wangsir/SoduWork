@@ -30,15 +30,16 @@ function eventsPage(data,p,segments){
  return {ok:true,format:'events',items:events.filter(x=>['user','say','text'].includes(x.kind)).map(x=>({id:String(x.seq),role:x.kind==='user'?'user':'assistant',text:String(x.full??x.text??''),delta:x.full==null&&x.delta===true,streamId:[x.round||x._round||1,x.seg||1,x.kind,x.streamId||x.seq].join(':'),done:x.done===true})),segments,cursor:end,nextAfter:latest>end?end:null};
 }
 function create({app,session=require('./agent-runtime/pi-session-bridge'),access=defaultAccess,runner=require('./runner-runtime'),readCloud,localOnly=false}){
+ const readable=access.assertReadable || access.assertOwner;
  const readNativePage=require('./conversation/native-transcript-pages.cjs').create();
  return async function handle(method,p,assertCurrent=()=>{}){
   const captured=access.actor(app);const guard=()=>{access.assertCurrent(app,captured);assertCurrent();};guard();
   if(method==='conversations.list'){
    const r=await (p.archived?session.archivedHistory(app,Number.MAX_SAFE_INTEGER):session.history(app,Number.MAX_SAFE_INTEGER));guard();
-   if(r.ok===false)throw Error(r.reason);const rows=(r.chats||[]).filter(row=>{try{access.assertOwner(app,row.id,captured,row);return true;}catch{return false;}});
+   if(r.ok===false)throw Error(r.reason);const rows=(r.chats||[]).filter(row=>{try{readable(app,row.id,captured,row);return true;}catch{return false;}});
    const end=(p.offset||0)+(p.limit||50);return {ok:true,items:rows.slice(p.offset||0,end).map(publicRow),nextOffset:end<rows.length?end:null};
   }
-  const row=await session.archivedConversation(app,p.id,localOnly?{nativeOnly:true,strict:true}:{});guard();if(!row)throw Error('会话不存在');access.assertOwner(app,p.id,captured,row);
+  const row=await session.indexedHistoryRow?.(p.id) || await session.archivedConversation(app,p.id,localOnly?{nativeOnly:true,strict:true}:{});guard();if(!row)throw Error('会话不存在');readable(app,p.id,captured,row);
   if(row.remoteProjection===true&&row.cloud===true){
    if(localOnly)throw Error('云端正文尚未保存到本机');
    const taskId=String(row.taskId||''),ref=String(row.ref||'');
@@ -83,10 +84,18 @@ function create({app,session=require('./agent-runtime/pi-session-bridge'),access
    return eventsPage(data,p,segments);
   }
   const found=await session.historyEntry(app,selected.id);guard();if(!found?.ok||!found.entry?.path)throw Error(found?.reason||'会话存档不可用');
+  if(found.entry.id && found.entry.id!==selected.id)throw Error('会话存档标识不匹配');
+  // The durable catalog supplies immutable creator provenance; the current
+  // native index supplies any ownership written into the actual transcript.
+  // Neither can override a conflicting owner from the other.
+  readable(app,p.id,captured,{...row,...(found.entry.workOwner?{workOwner:found.entry.workOwner}:{})});
   const base=path.join(app.getPath('userData'),'pi-agent'),file=found.entry.path;
   const real=await plainArchivePath(base,file);guard();
   const stat=await fs.promises.stat(real);if(!stat.isFile()||stat.size>128*1024*1024)throw Error('会话存档过大或不是普通文件');
   const page=await readNativePage(real,p,guard);
+  const latest=await session.historyEntry(app,selected.id);guard();
+  if(!latest?.ok||latest.entry?.path!==file)throw Error('会话存档已变化，请重新打开');
+  readable(app,p.id,captured,{...row,...(latest.entry.workOwner?{workOwner:latest.entry.workOwner}:{})});
   return {ok:true,format:'messages',...page,segments};
  };
 }

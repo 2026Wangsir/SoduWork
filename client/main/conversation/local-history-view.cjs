@@ -36,7 +36,10 @@ async function create({ row, read }) {
     }
     return { apply, has: index => messages.has(index), publish() {
       const indices = [...messages.keys()].sort((a, b) => a - b);
-      value = { ...value, messages: indices.map(index => messages.get(index)), history: {
+      const visible = indices.map(index => messages.get(index));
+      const tools = row.importedHistory === true ? visible.flatMap((message, after) =>
+        (Array.isArray(message.historyTools) ? message.historyTools : []).map(tool => ({ ...tool, after }))) : [];
+      value = { ...value, messages: visible, tools, history: {
         totalMessages: entries.length, messageLimit: limit, messageIndices: indices,
         messageStart: indices[0] ?? entries.length, truncated: indices.length < entries.length } };
     } };
@@ -98,7 +101,7 @@ async function create({ row, read }) {
   return { ref: 'local-history-' + row.id, sessionId: row.id, adapterId: value.adapterId,
     localReplica: true, readOnly: true, ui: { mode: 'readonly', title: row.title || '', capabilities: [] },
     snapshot: () => value, uiSnapshot: () => value, historyRow: () => row, loadHistory,
-    on: () => () => {}, inFlight: () => false, close: async () => { closed = true; streams.clear(); entries.length = 0; return true; },
+    status: () => 'idle', on: () => () => {}, inFlight: () => false, close: async () => { closed = true; streams.clear(); entries.length = 0; return true; },
     send: async () => ({ ok: false, accepted: false, reason: '本地历史为只读，请使用当前账号新建会话继续' }),
     stop: async () => ({ ok: false, reason: '本地历史没有正在执行的任务' }) };
 }

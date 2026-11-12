@@ -4,6 +4,7 @@ Only the database/transport fixture is substituted. Authentication, token
 verification, inbox/claim/state handlers, transaction hooks and socket routing
 are the production implementations. No model, external service or live DB is used.
 """
+import asyncio
 import json
 import os
 import tempfile
@@ -21,7 +22,7 @@ import anyio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from starlette.websockets import WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from app import models
 from app.api import personal_schedules, ws as websocket_api
@@ -29,6 +30,60 @@ from app.db import Base, get_session
 from app.realtime import Hub
 from app.services import automation_inbox_events, device_auth, native_discovery
 from app.services import schedule_conversations
+
+
+class FirstFrameDisconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def first_frame(self, frame, *, close_error=None):
+        """Use Starlette's real state transitions and production auth parsing.
+
+        The ASGI transport rejects sends after receiving a peer disconnect, as
+        Uvicorn does when its connection has already completed.
+        """
+        incoming = asyncio.Queue()
+        incoming.put_nowait({"type": "websocket.connect"})
+        if frame is not None:
+            incoming.put_nowait(frame)
+        sent, peer_disconnected = [], False
+
+        async def receive():
+            nonlocal peer_disconnected
+            message = await incoming.get()
+            peer_disconnected = message["type"] == "websocket.disconnect"
+            return message
+
+        async def send(message):
+            if peer_disconnected:
+                raise RuntimeError("Unexpected ASGI message 'websocket.close', after sending "
+                                   "'websocket.close' or response already completed.")
+            if message["type"] == "websocket.close" and close_error:
+                raise close_error
+            sent.append(message)
+
+        socket = WebSocket({"type": "websocket", "path": "/api/v1/ws"}, receive, send)
+        with patch.object(websocket_api, "SessionLocal", side_effect=AssertionError("Unauthenticated DB access")):
+            await websocket_api.ws(socket, "compat-pc", secret=None, device_session=None)
+        return sent
+
+    async def test_peer_disconnect_before_auth_does_not_send_another_close(self):
+        sent = await self.first_frame({"type": "websocket.disconnect", "code": 1000})
+        self.assertEqual([message["type"] for message in sent], ["websocket.accept"])
+
+    async def test_connected_invalid_auth_frame_still_closes_with_4401(self):
+        for text in ("invalid JSON", '{"t":"not-auth"}',
+                     '{"t":"auth","device":"another-device","session":"invalid"}'):
+            with self.subTest(text=text):
+                sent = await self.first_frame({"type": "websocket.receive", "text": text})
+                self.assertEqual(sent[-1], {"type": "websocket.close", "code": 4401, "reason": ""})
+
+    async def test_connected_auth_timeout_still_closes_with_4401(self):
+        with patch.object(device_auth, "WS_AUTH_FRAME_TIMEOUT", 0.01):
+            sent = await self.first_frame(None)
+        self.assertEqual(sent[-1], {"type": "websocket.close", "code": 4401, "reason": ""})
+
+    async def test_unrelated_close_transport_error_is_not_suppressed(self):
+        with self.assertRaisesRegex(RuntimeError, "unrelated transport failure"):
+            await self.first_frame({"type": "websocket.receive", "text": "invalid JSON"},
+                                   close_error=RuntimeError("unrelated transport failure"))
 
 
 class ClientPushCompatibilityTests(unittest.TestCase):

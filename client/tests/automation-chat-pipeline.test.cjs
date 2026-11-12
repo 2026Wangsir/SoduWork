@@ -99,7 +99,7 @@ test('automation and UI really call the same chat open/send pipeline; internal c
     const bindingFile = path.join(directory, 'session-memory-bindings', crypto.createHash('sha256').update('archived-chat').digest('hex') + '.json');
     fs.mkdirSync(path.dirname(bindingFile), { recursive: true });
     const bindingOwner = require('../main/platform-connections/runtime.cjs').scope({ ...identity, session: ownerSession });
-    fs.writeFileSync(bindingFile, JSON.stringify({ owner: bindingOwner, ids: ['memory-id'] }));
+    fs.writeFileSync(bindingFile, JSON.stringify({ owner: bindingOwner, hub: new URL(identity.hub).origin, ids: ['memory-id'] }));
     trustedOwner = bindingOwner;
     identity = { ...identity, session: expiredClaims + '.' + 'b'.repeat(64) };
     const archived = await handlers.get('pi-session-open')(event, { chatId: 'archived-chat' });
@@ -115,12 +115,11 @@ test('automation and UI really call the same chat open/send pipeline; internal c
     identity = { ...identity, session: require('./helpers/platform-session-fixture.cjs').sessions().two };
     trustedOwner = require('../main/platform-connections/runtime.cjs').scope(identity);
     const foreign = await handlers.get('pi-session-open')(event, { chatId: 'archived-chat' });
-    assert.equal(foreign.ok, true, foreign.reason);
-    assert.equal(foreign.localReplica, true);
-    assert.equal(handles.at(-1).readOnly, true);
-    assert.equal(handles.at(-1).snapshot().messages[0].text, 'Shared local history');
-    assert.equal(opens.length, count, 'shared local reads must not resume another account runtime');
-    const foreignSend = await handlers.get('pi-session-send')({ sender: {} }, foreign.ref, 'Must not execute', [], {});
+    assert.equal(foreign.ok, false);
+    assert.match(foreign.reason, /当前账号或服务/);
+    assert.equal(foreign.ref, undefined, 'a foreign account receives neither a transcript nor a new handle');
+    assert.equal(opens.length, count, 'foreign history must not resume another account runtime');
+    const foreignSend = await handlers.get('pi-session-send')({ sender: {} }, archived.ref, 'Must not execute', [], {});
     assert.equal(foreignSend.ok, false);
     // Exercise the registered production entry points. Loading a capability
     // menu or opening a Runner-backed chat must not initialize an unrelated Pi.

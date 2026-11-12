@@ -5,3 +5,15 @@
 .nchat.ncw-maximized [data-wb-maximize]>span{white-space:nowrap;font:500 14.5px/1.4 var(--font-ui)}
 .nchat [data-wb-maximize]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:960px){.nchat.ncw-open.ncw-maximized .ncw{width:100%;inset:0}}
+
+/* Reserve summary space only when the actual chat column is wide enough.
+   Narrow windows and split panes retain the overlay without squeezing the composer. */
+@container chat-column (min-width:1100px){
+  .nchat-summary-open .nchat-main>.nchat-content-area,
+  .nchat-summary-open .nchat-main>.nchat-foot{margin-right:328px}
+  /* cqw still measures the full chat column, including the reserved summary. */
+  .nchat-summary-open .nchat-inner{
+    width:min(var(--nchat-column-max),calc(100cqw - 328px - 2 * var(--nchat-column-gutter)));
+    margin-left:max(var(--nchat-column-gutter),calc((100cqw - 328px - var(--nchat-column-max)) / 2));
+  }
+}

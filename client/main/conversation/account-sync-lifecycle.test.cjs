@@ -260,7 +260,8 @@ async function multipleSources(t, options = {}) {
   const owner = require('../platform-connections/runtime.cjs').scope(identity());
   await require('./runtime-segments').save(app, { version: 1, id: 'native-1', owner,
     active: { adapterId: 'qwen', sessionId: 'native-2' }, segments: [{ adapterId: 'pi', sessionId: 'native-1' }] });
-  const session = { findBySessionId: id => ({ historyRow: () => ({ id, title: 'Fixture', workOwner: owner }) }) };
+  const session = { findBySessionId: id => ({ historyRow: () => ({ id, title: 'Fixture', workOwner: owner,
+    creator: { account: 'one', hub: identity().hub } }) }) };
   const f = fixture(t, { ...options, app, item: { sourceClientId: identity().clientId },
     resolveNativeSource: (item, identity) => require('./account-native-source.cjs').resolve({ app, session, item, identity }) });
   f.rows.set('acct-2', { ...f.rows.get('acct-1'), id: 'acct-2', sourceSessionId: 'native-2' });

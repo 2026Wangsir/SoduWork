@@ -61,3 +61,8 @@
   .model-chip-identity { flex-basis: 100%; }
   .model-chip-actions { margin-left: 0; }
 }
+
+.app .content .model-provider.is-new-provider {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}

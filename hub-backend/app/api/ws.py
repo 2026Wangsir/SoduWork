@@ -4,6 +4,7 @@ authentication; accept legacy query credentials only while DEVICE_AUTH_COMPAT is
 import time
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from ..db import SessionLocal
 from ..config import get_settings
@@ -25,7 +26,10 @@ async def ws(websocket: WebSocket, device: str, secret: str | None = None,
         accepted = True
         resolved = await device_auth.creds_from_first_frame(websocket, device)
         if resolved is None:
-            await websocket.close(code=4401)  # Unregistered device.
+            # A peer may disconnect while the first auth frame is pending.
+            # Only a still-connected unauthenticated socket needs rejection.
+            if websocket.client_state != WebSocketState.DISCONNECTED:
+                await websocket.close(code=4401)
             return
         secret, device_session = resolved
     # Reuse full REST device validation, including activation and disabled status, not only secret verification.

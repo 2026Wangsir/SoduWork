@@ -253,7 +253,11 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
     }
     return value;
   } catch (e) {
-    const why = e && e.name === 'AbortError' ? '超时' : String((e && e.message) || e);
+    // The isolated runtime reports this cancellation as RPC_ABORTED rather
+    // than AbortError. Only our deadline proves that this request timed out;
+    // an unrelated runtime cancellation must not become a quota refusal.
+    if (ctl.signal.aborted) return { ok: false, code: 'MODEL_CONFIG_TIMEOUT', reason: '服务响应超时，可稍后重试' };
+    const why = String((e && e.message) || e);
     return { ok: false, reason: '连不上后台（' + why + '）' };
   } finally {
     clearTimeout(timer);

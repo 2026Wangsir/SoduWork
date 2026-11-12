@@ -28,7 +28,7 @@ const OCCLUSION = new WeakMap();
 const WATCHED_DOCUMENTS = new WeakSet();
 let DEPS = null;
 let SESSION_POOL = null;
-const { composerActivity, showDetached, showEmbedded, embeddedBounds, windowDisplay, appContextFor, appContextForPlugin, isAppComposer, composerTurnSettled, composerControl, composerSend, composerHello, composerWidth, composerModeSet, chromeAction, composerDock, composerStep, composerState, composerSent } = require('./work-preview-app-window.cjs').create({
+const { appConversationOrigin, openAppConversation, composerNavigationResult, composerActivity, showDetached, showEmbedded, embeddedBounds, windowDisplay, appContextFor, appContextForPlugin, isAppComposer, composerTurnSettled, composerControl, composerSend, composerHello, composerWidth, composerModeSet, chromeAction, composerDock, composerStep, composerState, composerSent } = require('./work-preview-app-window.cjs').create({
   owners: OWNERS, getDeps: () => DEPS, ownerFor, ownerSession, safeWebUrl,
   normalizeAppBridge, cleanTabId, createView, destroyTab, liveContents, loadTarget, syncVisibility, clampBounds,
 });
@@ -738,6 +738,7 @@ function guardWorkbenchDownload(slot, item) {
 }
 
 function install(deps) {
+  deps.ipcMain.handle('app-composer-navigation-result', composerNavigationResult);
   deps.appAI = require('./app-ai-generate.cjs').create(deps);
   DEPS = deps;
   const appCaches = require('./app-cache-management.cjs').create({ getDeps: () => DEPS, ownerFor });
@@ -858,6 +859,7 @@ function install(deps) {
 }
 
 module.exports = {
+  appConversationOrigin, openAppConversation,
   appContextFor,
   appRequestContext,
   appContextForPlugin,
