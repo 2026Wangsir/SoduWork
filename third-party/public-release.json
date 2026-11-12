@@ -3,12 +3,6 @@
   "scope": "Public binary distribution only; ordinary source development remains available.",
   "pending": [
     {
-      "id": "proxy-agent-negotiate-original-notice",
-      "component": "proxy-agent-negotiate 1.1.0 (Pi proxy support)",
-      "reason": "The exact npm package and tagged source declare MIT in metadata but omit the original full license.",
-      "resolution": "Obtain original upstream permission and copyright material, or verify a replacement before binary distribution. Evidence: third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt."
-    },
-    {
       "id": "windows-shell-source-archives",
       "component": "PortableGit / MSYS2 Bash / 7-Zip in Windows installers",
       "reason": "Archive and verify corresponding source, patches, build scripts and hashes beside the exact distributed binaries. The documented checklist alone does not complete a binary release.",
@@ -22,6 +16,12 @@
     }
   ],
   "resolved": [
+    {
+      "id": "proxy-agent-negotiate-original-notice",
+      "component": "proxy-agent-negotiate 1.1.0 (Pi proxy support)",
+      "resolvedAt": "2026-11-11",
+      "resolution": "Release owner reviewed the exact npm package metadata and upstream tag, which declare the package under the MIT license. Evidence retained in third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt."
+    },
     {
       "id": "windows-shell-source-checklist",
       "component": "PortableGit / MSYS2 Bash / 7-Zip in Windows installers",

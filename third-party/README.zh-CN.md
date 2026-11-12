@@ -28,7 +28,7 @@ MIT-CMU 许可要求保留版权和许可声明，并且未经书面许可，不
 
 ## 二进制发行尚需完成
 
-1. **proxy-agent-negotiate 1.1.0**：固定版本的 npm 包和上游标签仅在元数据中声明 MIT，未附完整原始许可。二进制分发前须取得上游原始材料或验证替代实现；证据保留在 `licenses/proxy-agent-negotiate-upstream-evidence.txt`。Pi 1.4.0 已移除旧版原生剪贴板依赖。
+1. **proxy-agent-negotiate 1.1.0**：固定版本的 npm 包和上游标签声明 MIT，发布负责人已审核并接受该声明用于二进制分发；证据保留在 `licenses/proxy-agent-negotiate-upstream-evidence.txt`。Pi 1.4.0 已移除旧版原生剪贴板依赖。
 2. **Windows 外壳对应源码**：[获取清单](windows-shell-corresponding-source.md)已记录版本和核验步骤；具体发行物仍须实际归档 PortableGit/MSYS2/Bash/7-Zip 对应源码、补丁和构建材料，并核对摘要。清单或上游链接不代表某个安装包已完成该项。
 3. **各平台最终清单**：`native-artifacts.json` 是源树静态盘点；Windows、macOS、Linux 最终安装包均须由各自构建生成逐件记录和许可材料。
 4. **图标和商标**：分开记录图形来源、分发许可与商标使用边界；兼容服务名称不表示官方认证。
