@@ -101,6 +101,8 @@ async function open(opts) {
   const openStarted = performance.now();
   _openTiming('open-start', openStarted);
   const { app, identity, cwd } = opts || {};
+  try { await require('../local-model-privacy.cjs').prepare(app); }
+  catch (_) { return { ok: false, reason: '本地模型隐私保护初始化失败，请检查本机安全存储后重试' }; }
   const loaded = await loadSdk(app);
   _openTiming('sdk-loaded', openStarted);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
@@ -170,6 +172,7 @@ async function open(opts) {
     }
   }
   if (!prep.ok) return prep;
+  if (prep.model.localOnly) modelName = require('./local-model-runtime-privacy.cjs').reference(prep.model);
   const MODEL_TICKET_REFRESH_SKEW_MS = 2 * 60 * 1000;
   const MODEL_TICKET_FALLBACK_MS = 10 * 60 * 1000;
   const contextPrompts = Array.isArray(opts.contextPrompts)
@@ -216,8 +219,8 @@ async function open(opts) {
   let created;
   const configureLocalTransport = (target, next) => {
     if (!target) return target;
-    if (next?.localOnly && !String(next.key || '').trim()) target.headers = { Authorization: null };
-    else if (target.headers && Object.hasOwn(target.headers, 'Authorization')) delete target.headers.Authorization;
+    if (next?.localOnly) return require('./local-model-runtime-privacy.cjs').configure(runtime, target, next);
+    if (target.headers && Object.hasOwn(target.headers, 'Authorization')) delete target.headers.Authorization;
     return target;
   };
   try {
@@ -227,6 +230,8 @@ async function open(opts) {
     ]);
     _openTiming('runtime-prepared', openStarted);
     runtime = prepared[0];
+    if (prep.model.localOnly) runtime.registerProvider(prep.provider,
+      require('../conversation/model-selection').piProvider(prep.model));
     model = configureLocalTransport(runtime.getModel(prep.provider, prep.model.id), prep.model);
     if (!model) {
       return { ok: false, reason: '模型配置没被认出来（' + prep.provider + '/' + prep.model.id + '）' };
@@ -524,6 +529,7 @@ async function open(opts) {
       const target = configureLocalTransport(runtime.getModel('soduwork', next.id), next);
       if (!target) throw new Error('Model unavailable');
       await piSession.setModel(target);
+      model = target;
       require('./context-recovery').configure(resources.settingsManager, target.contextWindow);
       acc.push({ type: 'context_reset' });
       prep.model = next; handle.model = next;

@@ -3,6 +3,15 @@
 const contextWindow = require('./context-window');
 const thinkingCapabilities = require('./thinking-capabilities');
 const { replaceFileSync } = require('../verified-file-replace.cjs');
+const localPrivacy = require('../pi-session/local-model-runtime-privacy.cjs');
+
+function canonicalName(name, model) {
+  if (model?.localOnly) return localPrivacy.reference(model);
+  if (!String(name || '').startsWith('local:') || localPrivacy.OPAQUE_REFERENCE.test(name)) return name;
+  const canonical = require('../local-model-store.cjs').canonicalReference(name, { rememberMissing: true });
+  if (!canonical) throw new Error('Local model reference is unavailable');
+  return canonical;
+}
 
 // The previous fallback (16k/32k) was routinely consumed by hidden reasoning on
 // coding models before they emitted a tool call or a final answer. Keep an
@@ -29,6 +38,7 @@ function publicModel(model) {
 // A choice belongs to future submissions, never to the currently streaming turn.
 // Queue items capture a name, not credentials. The runtime changes only at a turn boundary.
 function create({ name = '', model, resolve, apply, persist = () => {}, changed = () => {}, generation = () => 0 }) {
+  name = canonicalName(name, model);
   let selected = name, active = name, selectedModel = model, activeModel = model;
   let selecting = false;
   let appliedGeneration = generation();
@@ -52,6 +62,7 @@ function create({ name = '', model, resolve, apply, persist = () => {}, changed 
           reason: require('../../core/token-quota').detail(resolved)
             ? '当前 AI 使用额度暂不可用，请查看额度详情' : '该模型当前不可用，请刷新模型列表后重试',
           ...require('../../core/token-quota').fields(resolved) };
+        name = canonicalName(name, resolved.model);
         await persist(name);
         selected = name; selectedModel = resolved.model; changed();
         return { ok: true, selection: this.view() };
@@ -68,7 +79,7 @@ function create({ name = '', model, resolve, apply, persist = () => {}, changed 
         require('../../core/token-quota').fields(resolved));
       try { await apply(resolved.model, name); }
       catch (_) { throw new Error('模型未能切换，队列已暂停，原会话与历史已保留'); }
-      active = name; activeModel = resolved.model;
+      active = canonicalName(name, resolved.model); activeModel = resolved.model;
       appliedGeneration = applyingGeneration;
       if (selected === name) selectedModel = resolved.model;
       changed();
@@ -82,17 +93,19 @@ function preference(app, ref) {
   const root = app && typeof app.getPath === 'function' ? app.getPath('userData') : '';
   const file = root && path.join(root, 'conversation-models', crypto.createHash('sha256').update(ref).digest('hex') + '.json');
   const readSelection = () => {
+    let value;
     try {
-      const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-      return { ...(typeof value.name === 'string' ? { name: value.name } : {}),
-        ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}) };
+      value = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (_) { return {}; }
+    return { ...(typeof value.name === 'string' ? { name: canonicalName(value.name) } : {}),
+      ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}) };
   };
   return {
     read() { return readSelection().name; },
     readSelection,
     write(name, reasoningEffort = readSelection().reasoningEffort) {
       if (!file) return;
+      name = canonicalName(name);
       // Reopening a conversation must not rewrite an unchanged saved choice.
       // A transient destination lock may block new choices, but not restoration.
       const current = readSelection();
@@ -125,7 +138,8 @@ function piProvider(next) {
     // creates a client. Session setup removes this marker from the wire request
     // after the model has been resolved.
     apiKey: localNoAuth ? 'soduwork-local-no-key' : next.key,
-    compat, models: [{ id: next.id, name: next.label || next.id,
+    compat, models: [{ id: next.localOnly ? localPrivacy.reference(next) : next.id,
+      name: next.localOnly ? localPrivacy.LOCAL_LABEL : next.label || next.id,
       input: next.input || ['text'], reasoning: thinking.reasoning,
       ...(thinking.reasoning && thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

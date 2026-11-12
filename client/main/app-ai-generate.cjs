@@ -1,7 +1,8 @@
 'use strict';
 
 // A bounded, stateless inference path. Never create an Agent/session, load a
-// workspace or register tools here. The existing Hub proxy owns auth and usage.
+// workspace or register tools here. Managed calls use Hub auth and usage;
+// authenticated local calls resolve their endpoint and credentials on-device.
 const crypto = require('node:crypto');
 const { scope } = require('./conversation/runtime-segments');
 const modelConfig = require('./pi-session/model-config');
@@ -27,7 +28,9 @@ function failure(code, reason, uncertain = false) { return { ok: false, code, re
 function payload(model, params) {
   const thinking = require('./conversation/thinking-capabilities').profile(model);
   const max = Math.min(params.maxOutputTokens, require('./conversation/model-selection').outputLimit(model));
-  const body = { model: model.id, stream: false,
+  const wireModel = model.localOnly ? model.wireModelId : model.id;
+  if (typeof wireModel !== 'string' || !wireModel.trim()) throw Error('Model request identity is unavailable');
+  const body = { model: wireModel, stream: false,
     [thinking.reasoning && thinking.format === 'openai' ? 'max_completion_tokens' : 'max_tokens']: max,
     messages: [{ role: 'system', content: params.instructions }, { role: 'user', content: params.input }] };
   // Match the supported off mappings in the bundled Pi completion transport.
@@ -64,13 +67,12 @@ function create({ app, authenticatedIdentityOf, authorizeAI, fetchImpl = global.
     try {
       assertCurrent();
       identity = await authenticatedIdentityOf?.(app);
-      owner = localRequested ? 'local' : scope(identity);
-      if ((!identity?.hub || !identity.clientId || !authorizeAI) && !localRequested) throw Error('login unavailable');
+      owner = scope(identity);
+      if (!identity?.hub || !identity.clientId || (!authorizeAI && !localRequested)) throw Error('login unavailable');
       assertCurrent();
     } catch (_) { return failure('APP_AI_UNAVAILABLE', '请先登录 SoduWork，并确认即用仍可使用'); }
     const current = async () => {
       assertCurrent();
-      if (localRequested) return;
       const next = await authenticatedIdentityOf(app);
       if (scope(next) !== owner || next.hub !== identity.hub || next.clientId !== identity.clientId)
         throw Error('account changed');

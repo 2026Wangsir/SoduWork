@@ -23,7 +23,8 @@ function errorWindow(value) {
 }
 async function restoreWindow(session, failure) {
   if (!session.model || typeof session.setModel !== 'function') return;
-  const key = [session.model.provider, session.model.id, session.model.baseUrl].join('|');
+  const key = [session.model.provider, session.model.id,
+    ...(String(session.model.id || '').startsWith('local:') ? [] : [session.model.baseUrl])].join('|');
   let known = learnedWindows.get(session);
   if (!known) {
     known = new Map(); learnedWindows.set(session, known);

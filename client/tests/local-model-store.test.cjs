@@ -25,7 +25,8 @@ test('local model configuration is encrypted and resolves without a Hub identity
   t.after(() => { store.configure(null); fs.rmSync(f.root, { recursive: true, force: true }); });
   const saved = store.save({ providers: [{ id: 'local', name: 'Local', baseUrl: 'http://127.0.0.1:8686/v1', authMode: 'none', localOnly: true }],
     models: [{ providerId: 'local', name: 'llama3', label: 'Llama 3', modality: 'chat', localOnly: true }], keys: {} });
-  assert.equal(saved.usable[0].name, 'local:local:llama3');
+  assert.match(saved.usable[0].name, /^local:model-[a-f0-9]{32}$/);
+  assert.equal(store.canonicalReference('local:local:llama3'), saved.usable[0].name);
   assert.equal(fs.readFileSync(path.join(f.root, 'local-models.secure.json'), 'utf8').includes('llama3'), false);
   const resolved = store.resolve('local:local:llama3');
   assert.equal(resolved.baseUrl, 'http://127.0.0.1:8686/v1');
@@ -55,12 +56,16 @@ test('long Unicode local model references survive creation, selection and saved 
   assert.equal(spec.modelName, modelRef);
   const selection = require('../main/conversation/model-selection');
   const preference = selection.preference({ getPath: () => f.root }, 'long-local-ref');
+  const opaque = store.canonicalReference(modelRef);
   const current = selection.create({ resolve: ref => modelConfig.fetchModel(null, ref),
-    persist: ref => preference.write(ref), apply: model => assert.equal(model.id, name) });
+    persist: ref => preference.write(ref), apply: model => {
+      assert.equal(model.id, opaque);
+      assert.equal(model.wireModelId, name);
+    } });
   assert.equal((await current.select(spec.modelName)).ok, true);
   await current.applyForTurn();
-  assert.equal(current.capture(), modelRef);
-  assert.equal(preference.read(), modelRef);
+  assert.equal(current.capture(), opaque);
+  assert.equal(preference.read(), opaque);
   assert.equal(store.resolve(preference.read()).name, name);
   assert.equal((await current.select('x'.repeat(301))).ok, false);
   assert.equal((await current.select('local:' + 'x'.repeat(1500))).ok, false);
@@ -250,8 +255,9 @@ test('local sessions prepare without Hub identity or MCP configuration', async t
   assert.equal(result.ok, true);
   assert.equal(result.mcpServers, '');
   assert.equal(result.model.localOnly, true);
-  assert.equal(result.model.id, 'qwen3');
-  assert.equal(modelConfig.configuredModel({ getPath: () => f.root }), 'local:local:qwen3');
+  assert.equal(result.model.id, store.canonicalReference('local:local:qwen3'));
+  assert.equal(result.model.wireModelId, 'qwen3');
+  assert.equal(modelConfig.configuredModel({ getPath: () => f.root }), store.canonicalReference('local:local:qwen3'));
   assert.equal(process.env.SODUWORK_PROXY_KEY, undefined);
   assert.equal(process.env.SODUWORK_MCP_KEY, undefined);
   assert.equal(process.env.SODUWORK_MCP_SERVERS, undefined);

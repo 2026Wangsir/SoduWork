@@ -263,6 +263,10 @@ function createProcessHost(app, options = {}) {
         async localModel(modelRef) {
           return require('../local-model-store.cjs').resolve(String(modelRef || ''));
         },
+        async prepareLocalModels() {
+          require('../local-model-privacy.cjs').ensure(app);
+          return true;
+        },
         async authRequest(id, url, init) {
           const auth = auths.get(id); if (!auth) throw Error('执行身份已失效');
           return auth.request(url, { ...init, body: toFormBody(init.body), signal: this.signal });
