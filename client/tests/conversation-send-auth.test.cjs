@@ -287,6 +287,33 @@ test('production installed cached readonly snapshots load the original transcrip
   assert.equal((await snapshot()).ok, true, 'renewing the same account preserves passive snapshot access');
 });
 
+test('an expired cached readonly view cannot publish a transcript before credentials are renewed', async t => {
+  const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
+  f.expire();
+  await assert.rejects(Promise.resolve().then(() => f.handlers.get('pi-session-snapshot')(f.event, handle.ref)),
+    /账号|服务|切换|失效|登录/);
+  assert.deepEqual(f.turns, []);
+});
+
+test('a pending cached readonly snapshot accepts same-account renewal without granting send authority', async t => {
+  const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
+  const original = handle.loadHistory.bind(handle);
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  handle.loadHistory = async options => { await original(options); entered(); await gate; };
+  const pending = Promise.resolve().then(() => f.handlers.get('pi-session-snapshot')(f.event, handle.ref));
+  await started;
+  f.expire(); await f.identity(); release();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.snapshot.messages.map(row => row.text), ['Cached private prompt', 'Cached private answer']);
+  assert.equal(result.snapshot.execution.readOnly, true);
+  const denied = await f.handlers.get('pi-session-send')(f.event, handle.ref, 'Cannot execute after renewal', [], {});
+  assert.equal(denied.ok, false); assert.equal(denied.notSent, true);
+  assert.deepEqual(f.turns, []);
+});
+
 test('closing the owning desktop window detaches a passive cached view without treating it as active execution', async t => {
   const f = await fixture(t, catalog.runtime('pi')), handle = await openCachedCopy(f);
   assert.doesNotThrow(() => f.closeWindow(), 'the installed window-close handler must detach a passive history view');

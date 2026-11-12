@@ -5,6 +5,8 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const repo = path.resolve(__dirname, '../../..');
 const files = [
   'client/api.js', 'client/preload.js', 'client/desk.html',
+  'client/core/i18n.js', 'client/core/i18n-dom.js', 'client/core/locales/manifest.json',
+  ...JSON.parse(fs.readFileSync(path.join(repo, 'client/core/locales/manifest.json'), 'utf8')).map(file => 'client/core/locales/' + file),
   'client/main/device-auth.js', 'client/main/account-auth-contract.cjs',
   ...['client-auth.js', 'client-auth.css', 'account-ui.js', 'email-auth.js', 'account-verification.js', 'account-center.js', 'account-center.css', 'personal-account.css']
     .map(file => 'client/components/client-auth/' + file),

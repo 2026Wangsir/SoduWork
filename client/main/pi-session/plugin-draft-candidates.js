@@ -19,18 +19,20 @@ function parseJson(bytes) {
   return JSON.parse(String(bytes).replace(/^\uFEFF/, ''));
 }
 
-function metadata(file, stat) {
+function metadata(file, stat, archive = false) {
   const key = file + ':' + stat.mtimeMs + ':' + stat.ctimeMs + ':' + stat.size;
   if (metadataCache.has(key)) return metadataCache.get(key);
   let body = null;
   if (stat.size <= MAX_BYTES) {
     try {
-      const parsed = parseJson(fs.readFileSync(file, 'utf8'));
+      const parsed = archive
+        ? require('../plugin-package-reader.cjs').readPersonalArchive(fs.readFileSync(file))
+        : parseJson(fs.readFileSync(file, 'utf8'));
       if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
         // Cache discovery metadata only, never the potentially large embedded resources.
         body = Object.fromEntries(['name', 'key', 'version', 'template', 'description', 'instructions']
           .map(key => [key, typeof parsed[key] === 'string' ? parsed[key].slice(0, 256) : '']));
-        body.resourcePaths = Array.isArray(parsed.resources) && parsed.resources.length <= resources.MAX_FILES
+        body.resourcePaths = !archive && Array.isArray(parsed.resources) && parsed.resources.length <= resources.MAX_FILES
           ? parsed.resources.map(item => item?.path).filter(value => typeof value === 'string' && value.length <= 240) : [];
       }
     } catch (_) { /* Validate malformed drafts on click. */ }
@@ -73,7 +75,7 @@ function describe(cwd, file) {
     stat = fs.statSync(target);
     if (!stat.isFile()) return null;
   } catch (_) { return null; }
-  const body = archive ? null : metadata(target, stat);
+  const body = metadata(target, stat, archive);
   if (!canonical && !archive && !(body && ['method', 'connector', 'workflow'].includes(body.template) &&
       ['name', 'description', 'instructions'].every(key => typeof body[key] === 'string' && body[key].trim()))) return null;
   return { ...file, path: target, name,
@@ -149,6 +151,8 @@ function packageSlug(row) {
 }
 
 function candidateIdentity(row) {
+  const key = String(row.pluginKey || '').trim();
+  if (key) return 'key:' + key;
   if (row.pluginPackage) {
     const slug = packageSlug(row);
     return slug ? 'name:' + slug : 'file:' + row.path.toLowerCase();
@@ -160,7 +164,8 @@ function candidateIdentity(row) {
 function mergePluginCandidates(rows) {
   // Same directory: the archive the turn packaged alongside its manifest is
   // that manifest's installable artifact, never a second candidate. A package
-  // only survives alone when no same-directory manifest claims its slug.
+  // only survives alone when no same-directory manifest claims its key (or
+  // legacy filename slug when package metadata is unavailable).
   const byDir = new Map();
   rows.forEach(row => {
     const dir = path.dirname(row.path).toLowerCase();
@@ -170,10 +175,14 @@ function mergePluginCandidates(rows) {
   const kept = [];
   byDir.forEach(group => {
     kept.push(...group.manifests);
+    const manifestKeys = new Set(group.manifests.map(row => row.pluginKey).filter(Boolean));
     const manifestSlugs = new Set(group.manifests.map(row => slugName(row.pluginName)).filter(Boolean));
     group.packages.forEach(row => {
       const slug = packageSlug(row);
-      if (!slug || !manifestSlugs.has(slug)) kept.push(row);
+      // Stable package metadata takes precedence over display names or filenames.
+      // Keep the filename fallback for legacy/unreadable archives only.
+      const matched = row.pluginKey ? manifestKeys.has(row.pluginKey) : slug && manifestSlugs.has(slug);
+      if (!matched) kept.push(row);
     });
   });
   // Across directories the newest copy of one identity stays current; older

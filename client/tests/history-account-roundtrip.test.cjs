@@ -46,7 +46,7 @@ async function fixture(t, { accountAlias = true } = {}) {
       setArchived: (_app, id, value) => archiveState.setArchived(root, id, value),
     } });
     const store = createStore(path.join(root, 'replicas.sqlite'));
-    history = create({ app, session: bridge, store });
+    history = create({ app, session: bridge, store, identityOf: () => account === 'a' ? actor : identity('two') });
     bridge.setReplicaHistory(history);
     await history.projectRows(rows);
     // Use the production authenticated mapper. A bare sourceSessionId is not
@@ -67,7 +67,7 @@ async function fixture(t, { accountAlias = true } = {}) {
   t.after(async () => { await sync.close(); await history.close(); await bridge.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   return { app, actor, record, get history() { return history; },
     read: () => bridge.history(app),
-    action: (action, id) => require('../main/pi-session/local-history-actions.cjs').create({ app, session: bridge, history })(action, id),
+    action: (action, id) => require('../main/pi-session/local-history-actions.cjs').create({ app, session: bridge, history, identityOf: () => account === 'a' ? actor : identity('two') })(action, id),
     switch(value) { account = value; rows = []; },
     async restart() { await sync.close(); await history.close(); await bridge.dispose(); await start(); },
   };

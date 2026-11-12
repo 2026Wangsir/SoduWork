@@ -31,7 +31,12 @@ test('authenticated imported and ordinary cached copies prepare empty work cards
   const f=await fixture(t);
   for(const imported of [true,false]){
     const id=imported?'imported-copy':'ordinary-copy';await f.copy(id,{imported});
-    assert.deepEqual(await f.cards.read(id),empty(id));
+    const {presence,...result}=await f.cards.read(id);
+    assert.deepEqual(result,empty(id));
+    assert.equal(presence.id,id);
+    assert.equal(presence.title,imported?'Imported':'Cached');
+    assert.equal(presence.cached,true);
+    assert.equal(presence.workOnly,false);
     assert.equal((await f.cards.save(id,{id:'must-not-save',actionId:'work.requirement.create',prompt:'do not execute',state:{},files:[]})).ok,false);
     assert.equal((await f.cards.saveDraftSelection(id,{selection:{adapterId:'pi'},revision:0})).ok,false);
     for(const directory of ['work-conversation-cards','session-memory-bindings','requirement-session-context','conversation-runtime-segments'])
@@ -42,7 +47,8 @@ test('authenticated imported and ordinary cached copies prepare empty work cards
 test('cached card preparation refuses foreign account, different Hub, signed-out, unknown and deleted copies',async t=>{
   const f=await fixture(t);await f.copy('imported-copy',{imported:true});const original=f.current;
   for(const account of [identity('two'),{...original,hub:'https://other.invalid'},null]){
-    f.current=account;assert.equal((await f.cards.read('imported-copy')).ok,false);
+    f.current=account;const denied=await f.cards.read('imported-copy');
+    assert.equal(denied.ok,false);assert.equal(denied.presence,undefined);
   }
   f.current=original;assert.equal((await f.cards.read('absent')).ok,false);
   await f.store.lifecycle('imported-copy','delete');assert.equal((await f.cards.read('imported-copy')).ok,false);

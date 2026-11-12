@@ -92,6 +92,139 @@ test('卡片与二进制材料跨存储实例完整恢复，修改与关闭状�
   assert.equal(Buffer.from(restored.cards[0].files[0].data, 'base64').toString(), '原材料完整末尾');
 });
 
+test('cached work-card preparation preserves canonical presence and requires current account and Hub ownership', async t => {
+  const f = await fixture(t);
+  const index = require('../main/conversation/replica-store.cjs').createWorker(path.join(f.root, 'replicas', 'history.sqlite'));
+  const shared = require('../main/conversation/shared-history.cjs').create({ app: f.app,
+    session: f.dependencies.session, store: index, identityOf: f.current });
+  try {
+    await index.register([{ id: 'imported-copy', cached: true, importedHistory: true, archived: true,
+      title: 'Explicit imported history', adapterId: 'pi', contentLocation: 'replica',
+      creator: { account: 'account-a', hub: f.current().hub }, historyAliasIds: ['copy-alias'] }]);
+    for (const dependencies of [
+      { ...f.dependencies, sharedHistory: { store: index } },
+      { ...f.dependencies, session: { ...f.dependencies.session, indexedHistoryRow: id => index.get(id) } },
+    ]) {
+      const controller = f.module.create(dependencies);
+      for (const id of ['imported-copy', 'copy-alias']) {
+        const result = await controller.read(id);
+        assert.equal(result.ok, true, result.reason);
+        assert.equal(result.sessionId, 'imported-copy');
+        assert.equal(result.presence.id, 'imported-copy');
+        assert.equal(result.presence.contentLocation, 'replica');
+        assert.equal(result.presence.importedHistory, true);
+        assert.deepEqual(result.cards, []);
+        assert.equal(result.workOnly, false);
+        assert.equal(result.draftSelection, null);
+        assert.equal((await controller.save(id, card())).ok, false);
+        assert.equal((await controller.saveDraftSelection(id, { selection: {}, revision: 0 })).ok, false);
+      }
+      for (const actor of [identity('account-b'), identity('account-a', 'device-a', 'https://other.invalid'), null]) {
+        f.changeIdentity(actor);
+        const denied = await controller.read('copy-alias');
+        assert.equal(denied.ok, false);
+        assert.equal(denied.presence, undefined);
+      }
+      f.changeIdentity(identity());
+      assert.equal((await controller.read('imported-copy')).ok, true, 'returning to the original account restores its copy');
+    }
+    const view = await shared.open('imported-copy');
+    assert.equal(view.snapshot().execution.readOnly, true);
+    f.live.set('imported-copy', view);
+    const opened = f.module.create({ ...f.dependencies, sharedHistory: shared });
+    assert.equal((await opened.read('imported-copy')).ok, true);
+    for (const rejected of [await opened.save('imported-copy', card()),
+      await opened.saveDraftSelection('imported-copy', { selection: {}, revision: 0 })]) {
+      assert.equal(rejected.ok, false);
+      assert.match(rejected.reason, /只读历史副本/);
+    }
+    assert.equal(fs.existsSync(f.module.location(f.app, 'imported-copy')), false,
+      'opening a passive history handle cannot create a work-card archive');
+    f.live.delete('imported-copy');
+    view.close?.();
+    await index.lifecycle('imported-copy', 'delete');
+    const removed = await f.module.create({ ...f.dependencies, sharedHistory: { store: index } }).read('copy-alias');
+    assert.equal(removed.ok, false);
+    assert.equal(removed.presence, undefined);
+    assert.equal(fs.existsSync(f.module.location(f.app, 'imported-copy')), false);
+  } finally { await shared.close(); }
+});
+
+test('native work-card reads and writes require the original Hub and never claim unknown live history', async t => {
+  const f = await fixture(t), made = await f.store.reserve({ title: 'Original Hub draft' });
+  assert.equal((await f.store.save(made.sessionId, card())).ok, true);
+  const file = f.module.location(f.app, made.sessionId), before = fs.readFileSync(file);
+  f.changeIdentity(identity('account-a', 'device-a', 'https://other.invalid'));
+  for (const result of [await f.store.read(made.sessionId), await f.store.save(made.sessionId, card()),
+    await f.store.saveDraftSelection(made.sessionId, { selection: {}, revision: 0 })]) {
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /账号|服务/);
+  }
+  assert.deepEqual(fs.readFileSync(file), before);
+  f.changeIdentity(identity());
+  assert.equal((await f.store.read(made.sessionId)).cards.length, 1);
+  f.live.set('unknown', { historyRow: () => ({ id: 'unknown', adapterId: 'pi', workOnly: true }) });
+  assert.equal((await f.store.read('unknown')).ok, false);
+  assert.equal((await f.store.save('unknown', card())).ok, false);
+  assert.equal((await f.store.saveDraftSelection('unknown', { selection: {}, revision: 0 })).ok, false);
+  assert.equal(fs.existsSync(f.module.location(f.app, 'unknown')), false);
+});
+
+for (const actionId of ['work.automation.create', 'work.requirement.create']) {
+  test(`large ${actionId} records persist a bounded protection header before intact attachments`, async t => {
+    const f = await fixture(t), made = await f.store.reserve({ title: 'Large synthetic work card' });
+    const bytes = Buffer.alloc(1700000, 65), data = bytes.toString('base64');
+    const saved = await f.store.save(made.sessionId, card({ actionId,
+      files: [{ name: 'synthetic.txt', type: 'text/plain', lastModified: 1, data }] }));
+    assert.equal(saved.ok, true, saved.reason);
+    const file = f.module.location(f.app, made.sessionId), text = fs.readFileSync(file, 'utf8');
+    assert.ok(Buffer.byteLength(text) > 2 * 1024 * 1024);
+    const boundary = text.indexOf(',"cards":');
+    assert.ok(boundary > 0 && boundary < 8192);
+    const header = JSON.parse(text.slice(0, boundary) + '}');
+    assert.deepEqual(header.protection, { version: 1, owner: scope(f.current()),
+      hasRequirement: actionId === 'work.requirement.create' });
+    assert.deepEqual(f.module.protection(f.app, made.sessionId), header.protection);
+    const row = (await sessions.historyEntry(f.app, made.sessionId)).entry;
+    assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0,
+      'classifying an automation as ordinary never grants another account access');
+    assert.deepEqual(f.module.visibleHistory(f.app, [row], f.current()).map(item => item.id), [made.sessionId]);
+    const restored = await f.module.create(f.dependencies).read(made.sessionId);
+    assert.equal(restored.ok, true, restored.reason);
+    assert.equal(restored.cards[0].files[0].data, data);
+    assert.deepEqual(Buffer.from(restored.cards[0].files[0].data, 'base64'), bytes);
+    if (actionId === 'work.requirement.create') {
+      const changed = await f.store.save(made.sessionId, { ...saved.card, actionId: 'work.automation.create' });
+      assert.equal(changed.ok, true, changed.reason);
+      const selected = await f.store.saveDraftSelection(made.sessionId, { selection: {}, revision: 0 });
+      assert.equal(selected.ok, true, selected.reason);
+      assert.equal(f.module.protection(f.app, made.sessionId).hasRequirement, true,
+        'editing the card type or draft selection cannot downgrade existing requirement protection');
+      assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0);
+    }
+  });
+}
+
+test('large legacy automation records stay conservative until a verified full read warms their classification', async t => {
+  const f = await fixture(t), made = await f.store.reserve({ title: 'Legacy synthetic automation' });
+  const saved = await f.store.save(made.sessionId, card({ actionId: 'work.automation.create',
+    files: [{ name: 'synthetic.txt', type: 'text/plain', lastModified: 1, data: Buffer.alloc(1700000, 66).toString('base64') }] }));
+  assert.equal(saved.ok, true, saved.reason);
+  const file = f.module.location(f.app, made.sessionId), legacy = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete legacy.protection;
+  fs.writeFileSync(file, JSON.stringify(legacy));
+  assert.equal(f.module.protection(f.app, made.sessionId).unknown, true);
+  const row = (await sessions.historyEntry(f.app, made.sessionId)).entry;
+  assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0);
+  assert.equal((await f.store.read(made.sessionId)).ok, true);
+  assert.equal(f.module.protection(f.app, made.sessionId).hasRequirement, false);
+  assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0,
+    'warming classification cannot bypass account and Hub isolation');
+  assert.deepEqual(f.module.visibleHistory(f.app, [row], f.current()).map(item => item.id), [made.sessionId]);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).protection, undefined,
+    'reading a legacy record does not rewrite its bytes');
+});
+
 test('account history restores cards from its owned native archive before any runtime starts', async t => {
   let item;
   const f = await fixture(t, { accountHistory: { row: async id => id === item?.id ? item : null } });
@@ -416,8 +549,14 @@ test('已初始化但零消息的工作会话保留标题、历史和卡片，�
   assert.ok(row, '初始化不能让零消息会话从历史消失');
   assert.equal(row.title, '首条消息前关闭的会话');
   assert.equal(row.count, 0);
-  // Reading local history follows the same account boundary as its work card.
+  // A requirement form remains protected after its native runtime initializes.
   assert.deepEqual(f.module.visibleHistory(f.app, [row], identity('other')), []);
+  assert.deepEqual(f.module.visibleHistory(f.app, [row], f.current()).map(item => item.id), [made.sessionId]);
+  f.changeIdentity(identity('other'));
+  const denied = await f.store.read(made.sessionId);
+  assert.equal(denied.ok, false);
+  assert.match(denied.reason, /当前账号|另一个账号/);
+  f.changeIdentity(identity());
   await sessions.archiveHistory(f.app, made.sessionId);
   const archived = (await sessions.archivedHistory(f.app, 50)).chats.find(item => item.id === made.sessionId);
   assert.equal(archived.title, row.title);
@@ -626,6 +765,7 @@ test('已有 Runner 与云端会话也能持久化卡片，不初始化对应底
 
 test('没有卡片的既有会话返回空列表，不伪报丢失', async t => {
   const f = await fixture(t);
+  memories.bind(f.app, 'legacy', f.current(), [], true);
   f.live.set('legacy', { sessionId: 'legacy', usageIdentity: { hub: f.current().hub, clientId: f.current().clientId },
     historyRow: () => ({ id: 'legacy', count: 3 }) });
   assert.deepEqual((await f.store.read('legacy')).cards, []);

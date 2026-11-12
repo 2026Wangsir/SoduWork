@@ -132,6 +132,7 @@ async def parse_task(
     async def parse():
         return await svc.parse_task_text(session, str(body.get("text") or ""),
                                        client=client, model=str(body.get("model") or ""),
+                                       **({"locale": body["locale"]} if "locale" in body else {}),
                                        **({"attachments": body["attachments"]} if "attachments" in body else {}),
                                        **({"instruction": str(body.get("instruction") or "")} if "instruction" in body else {}),
                                        **({"automation": body} if body.get("kind") == "automation" else {}))
@@ -1859,6 +1860,19 @@ async def task_acceptance_context(
     """Read fixed review outputs, acceptance criteria, and authorized reference materials."""
     from ..services import task_acceptance_review
     return await task_acceptance_review.context(session, client, tid)
+
+
+@router.get("/tasks/{tid}/acceptance-summary")
+async def task_acceptance_summary(
+    tid: str,
+    artifactVersionId: str | None = Query(default=None, max_length=36),
+    requirementVersion: int | None = Query(default=None, ge=1),
+    client: Client = Depends(current_client),
+):
+    """Export authorized delivery facts without changing their recorded acceptance state."""
+    from ..services import acceptance_summary
+    return await acceptance_summary.export(
+        client, tid, artifact_version_id=artifactVersionId, requirement_version=requirementVersion)
 
 
 @router.post("/tasks/{tid}/auto-review")

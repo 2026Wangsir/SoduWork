@@ -33,15 +33,17 @@ async function until(code, label) {
   }
   throw Error('Timed out: ' + label);
 }
-async function click(selector, allowDisabled = false) {
+async function click(selector, allowDisabled = false, count = 1) {
   const point = await js(`(async()=>{const n=[...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.getClientRects().length);
     if(!n||(!${allowDisabled}&&n.disabled))throw Error('Unavailable '+${JSON.stringify(selector)});
     n.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const b=n.getBoundingClientRect(),x=Math.round(b.x+b.width/2),y=Math.round(b.y+b.height/2);
     if(!n.contains(document.elementFromPoint(x,y)))throw Error('Occluded '+${JSON.stringify(selector)});return{x,y}})()`);
-  for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({type, ...point,
-    ...(type === 'mouseMove' ? {} : {button: 'left', clickCount: 1})});
+  for (let index = 0; index < count; index++) {
+    for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({type, ...point,
+      ...(type === 'mouseMove' ? {} : {button: 'left', clickCount: index + 1})});
+  }
   await wait(80);
 }
 async function shot(name) {
@@ -171,9 +173,38 @@ app.whenReady().then(async () => {
     await until(`!!document.querySelector('[data-rq-submit-review]')`, 'stopped execution can submit');
     assert.equal(await js(`!!document.querySelector('[data-rq-edit]')`), false);
 
+    await js(`window.manualDrawer=document.querySelector('.rq-detail-backdrop');
+      window.acceptManualReview=SoduWorkAPI.submitTaskReview;
+      SoduWorkAPI.submitTaskReview=id=>{fixtureCalls.push(['submit-review-attempt',id]);
+        return new Promise((resolve,reject)=>{window.pendingManualReview={id,resolve,reject}})};void 0`);
     await click('.rq-detail-more>summary');
-    await click('[data-rq-submit-review]');
+    await click('[data-rq-submit-review]', false, 2);
+    await until(`!!window.pendingManualReview`, 'one manual review request');
+    assert.equal(await js(`document.querySelector('[data-rq-submit-review]').disabled`), true);
+    assert.equal(await js(`fixtureCalls.filter(x=>x[0]==='submit-review-attempt').length`), 1);
+    await js(`pendingManualReview.reject(new Error('Submission unavailable'));void 0`);
+    await until(`document.querySelector('[data-rq-error]')?.textContent.includes('Submission unavailable')`, 'manual review failure');
+    assert.equal(await js(`document.querySelector('.rq-detail-backdrop')===manualDrawer`), true);
+    assert.equal(await js(`document.querySelector('[data-rq-submit-review]').disabled`), false);
+    report.cases.push('Native double click sends one manual submission; a rejected request keeps the same details, error and retry action');
+
+    await js(`window.originalBoardRefresh=RequirementsBoard.refresh;
+      RequirementsBoard.refresh=()=>new Promise(resolve=>{window.finishManualRefresh=async()=>{
+        await originalBoardRefresh();window.manualRefreshFinished=true;resolve()}});void 0`);
+    await click('.rq-detail-more>summary');
+    await click('[data-rq-submit-review]', false, 2);
+    assert.equal(await js(`fixtureCalls.filter(x=>x[0]==='submit-review-attempt').length`), 2);
+    await js(`acceptManualReview(pendingManualReview.id).then(pendingManualReview.resolve);void 0`);
+    await until(`!document.querySelector('.rq-detail-backdrop')`, 'accepted manual review closes its details');
+    assert.equal(await js(`typeof finishManualRefresh`), 'function');
+    assert.equal(await js(`!!window.manualRefreshFinished`), false);
+    assert.equal(await js(`fixtureCalls.filter(x=>x[0]==='submit-review').length`), 1);
+    await click('[data-rq-open="lifecycle"]');
     await until(`document.querySelector('.rq-delivery-state')?.textContent==='待验收'`, 'manual review submission');
+    await js(`window.reviewingDrawer=document.querySelector('.rq-detail-backdrop');finishManualRefresh();void 0`);
+    await until(`window.manualRefreshFinished===true`, 'delayed board refresh');
+    assert.equal(await js(`document.querySelector('.rq-detail-backdrop')===reviewingDrawer`), true);
+    await js(`RequirementsBoard.refresh=originalBoardRefresh;SoduWorkAPI.submitTaskReview=acceptManualReview;void 0`);
     await click('[data-rq-execution]>summary');
     await until(`document.querySelector('.tfd-hero h3')?.textContent==='等待验收'`, 'reviewing lifecycle');
     const reviewing = await snapshot('reviewing');
@@ -181,7 +212,7 @@ app.whenReady().then(async () => {
     assert.equal(reviewing.progress, '流程进度 2/4');
     assert.equal(await js(`fixtureCalls.filter(x=>x[0]==='submit-review').length`), 1);
     await shotHero('reviewing');
-    report.cases.push('Native manual submission opens reviewing state without edit or generic execution-chat entry');
+    report.cases.push('Accepted manual submission closes before list refresh; reopening shows reviewing without edit or generic execution-chat entry and a late refresh preserves the new drawer');
     // Simulate delayed controls from a stale rendered snapshot; handlers must recheck the current DTO.
     await js(`document.querySelector('.rq-detail-actions').append(staleEdit);
       const staleChat=document.createElement('button');staleChat.dataset.rqChat='';staleChat.textContent='过期会话入口';
@@ -204,8 +235,9 @@ app.whenReady().then(async () => {
     await js(`RequirementsDetail.close(true);setPhase('ready');RequirementsDetail.open('lifecycle')`);
     await click('[data-rq-edit]');
     await click('#rqEditForm [name=title]');
-    win.webContents.sendInputEvent({type: 'keyDown', keyCode: 'A', modifiers: ['control']});
-    win.webContents.sendInputEvent({type: 'keyUp', keyCode: 'A', modifiers: ['control']});
+    // Offscreen macOS windows do not dispatch native menu accelerators.
+    // Use Chromium's edit command, then insert text through the native input path.
+    win.webContents.selectAll();
     win.webContents.insertText('尚未保存的需求草稿');
     await wait(80);
     assert.equal(await js(`document.querySelector('#rqEditForm [name=title]').value`), '尚未保存的需求草稿');
@@ -278,6 +310,29 @@ app.whenReady().then(async () => {
     await until(`!!document.querySelector('.rq-rework-pending')`, 'reviewer can read feedback');
     assert.equal(await js(`!!document.querySelector('[data-rq-rework]')`), false);
     report.cases.push('Rejected work stays actionable across refreshes, starts only on the executor click, and hides continuation from reviewers');
+
+    await js(`RequirementsDetail.close(true);setPhase('doing');Object.assign(tasks[0],{
+      maintenanceBlocked:false,canContinueExecution:false,workRouting:{},ai:{state:'done'}});
+      SoduWorkAPI.submitTaskReview=async()=>({ok:true,already:true});RequirementsDetail.open('lifecycle')`);
+    await click('.rq-detail-more>summary');
+    await click('[data-rq-submit-review]');
+    await until(`!document.querySelector('.rq-detail-backdrop')`, 'already-submitted receipt closes details');
+    assert.equal(await js(`fixtureCalls.some(x=>x[0]==='notice'&&x[1].includes('已经在待验收'))`), true);
+    report.cases.push('An idempotent already-submitted receipt closes the original drawer and explains the pending review');
+
+    await js(`SoduWorkAPI.submitTaskReview=()=>new Promise(resolve=>{window.finishStaleReview=resolve});
+      tasks.push({...structuredClone(tasks[0]),id:'next-requirement',title:'Another requirement'});
+      RequirementsDetail.open('lifecycle')`);
+    await click('.rq-detail-more>summary');
+    await click('[data-rq-submit-review]');
+    await until(`typeof finishStaleReview==='function'`, 'delayed manual submission');
+    await js(`RequirementsDetail.open('next-requirement')`);
+    await until(`document.querySelector('.rq-detail-content')?.dataset.taskId==='next-requirement'`, 'next requirement detail');
+    await js(`window.nextDrawer=document.querySelector('.rq-detail-backdrop');finishStaleReview({ok:true});void 0`);
+    await wait(80);
+    assert.equal(await js(`document.querySelector('.rq-detail-backdrop')===nextDrawer`), true);
+    assert.equal(await js(`document.querySelector('#rqDetailTitle').textContent`), 'Another requirement');
+    report.cases.push('A response to a submission from a replaced drawer cannot close or reopen the new requirement');
     assert.deepEqual(await js('fixtureErrors'), []); assert.deepEqual(report.errors, []);
     assert.deepEqual(report.failures, []);
     report.ok = true;

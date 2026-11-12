@@ -133,7 +133,10 @@
         return {
           items: [...(local.items || []), ...(remote.items || [])].map(presentPlugin),
           submissions: (remote.submissions || []).map(presentPlugin), categories: remote.categories || [],
-          remoteError: remote.remoteError || ''
+          remoteError: remote.remoteError || '',
+          personalComplete: Boolean(bridge && typeof bridge.list === 'function' &&
+            results[0].status === 'fulfilled' && results[0].value?.ok !== false &&
+            Array.isArray(results[0].value?.items))
         };
         })();
         try { return await flight.promise; }
@@ -269,8 +272,10 @@
         return result;
       },
       async deletePersonalPlugin(pluginId) {
+        var scope = taskStorageKey('ops'), epoch = registrationEpoch();
         var result = await global.soduWorkAPI.personalPlugins.remove(pluginId);
-        pluginsChanged(pluginId);
+        if (scope !== taskStorageKey('ops') || epoch !== registrationEpoch()) throw staleTaskScope();
+        if (result?.ok === true) pluginsChanged(pluginId, true);
         return result;
       },
       async taskPluginRuns(taskId) {

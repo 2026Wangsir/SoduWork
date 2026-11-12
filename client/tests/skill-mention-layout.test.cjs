@@ -18,7 +18,7 @@ function element() {
     classList: { add: name => classes.add(name), remove: name => classes.delete(name),
       contains: name => classes.has(name), toggle: (name, on) => on ? classes.add(name) : classes.delete(name) },
     setAttribute: (name, value) => attributes.set(name, value), removeAttribute: name => attributes.delete(name),
-    getAttribute: name => attributes.get(name), appendChild(child) { this.children.push(child); },
+    getAttribute: name => attributes.get(name) ?? null, appendChild(child) { this.children.push(child); },
     contains(target) { assert.equal(target.nodeType, 1); return target === this; },
   };
 }
@@ -77,7 +77,8 @@ test('scrolling the menu does not schedule a layout and a removed composer relea
   assert.equal(f.frames.size, 0);
   f.host.isConnected = false;
   f.observers[0].callback([]); f.flush();
-  assert.equal(f.input.getAttribute('aria-expanded'), 'false');
+  assert.equal(f.input.getAttribute('aria-expanded'), null);
+  assert.equal(menu.classList.contains('show'), false);
   assert.equal(f.context.listenerCount(), 0);
   assert.equal(f.context.visualViewport.listenerCount(), 0);
   assert.equal(f.observers[0].active, false);
@@ -89,7 +90,7 @@ test('late catalog, loading and error updates cannot reopen a detached skill pic
     const f = fixture(); f.open(); f.host.isConnected = false;
     update(f.picker);
     assert.equal(f.host.children[1].classList.contains('show'), false);
-    assert.equal(f.input.getAttribute('aria-expanded'), 'false');
+    assert.equal(f.input.getAttribute('aria-expanded'), null);
     assert.equal(f.context.listenerCount(), 0);
     assert.equal(f.context.visualViewport.listenerCount(), 0);
     assert.equal(f.observers.filter(observer => observer.active).length, 0);

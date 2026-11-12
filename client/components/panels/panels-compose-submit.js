@@ -148,7 +148,7 @@
               targetName: assigned.targetName || mate?.name || '同事',
               assigneeName: assigned.task.assigneeName || assigned.targetName || mate?.name,
               assigneeUserId: assigned.task.assigneeUserId || w.id, priority: assigned.task.priority || base.priority,
-              kind: assigned.task.kind || base.kind, createdAt: assigned.task.createdAt, updatedAt: assigned.task.updatedAt };
+              kind: assigned.task.kind || base.kind, createdAt: assigned.task.createdAt ?? assigned.task.created, updatedAt: assigned.task.updatedAt };
           }
           if (typeof Store === 'undefined' || typeof Store.persistTask !== 'function') throw Error('需求同步服务暂时不可用，请重新打开窗口');
           if (!tasks.some(task => task.id === id)) tasks.push({ ...base, id, source: options.source || '自己',
@@ -157,10 +157,10 @@
           if (typeof save === 'function') save();
           if (!await Store.persistTask(id)) throw Error('SoduWork 服务尚未确认创建需求，请检查连接后重试');
           const canonical = tasks.find(task => task.id === id);
-          return { id, title: base.title, directlyAssigned: false,
+          return { id, title: canonical?.title ?? base.title, directlyAssigned: false,
             assigneeName: canonical?.assigneeName, assigneeUserId: canonical?.assigneeUserId,
             priority: canonical?.priority || base.priority, kind: canonical?.kind || base.kind,
-            createdAt: canonical?.createdAt, updatedAt: canonical?.updatedAt };
+            createdAt: canonical?.createdAt ?? canonical?.created, updatedAt: canonical?.updatedAt };
         },
         dispatch: stored => stored.directlyAssigned ? { who: stored.targetName, warn: '' } : { who: '', warn: '' },
       });

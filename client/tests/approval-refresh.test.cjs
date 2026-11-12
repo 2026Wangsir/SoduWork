@@ -105,12 +105,12 @@ test('failed navigation restores the row so the user can retry', async () => {
 
 test('complete lightweight references retain approvals beyond the detailed first page', async () => {
   const refs = Array.from({length: 105}, (_, index) => ({id: 'approval-' + index,
-    taskId: 'task-' + index, action: 'review', privateEvidence: 'must not be retained'}));
+    taskId: 'task-' + index, action: 'review', artifactVersionId: 'artifact-' + index, privateEvidence: 'must not be retained'}));
   const x = runtime(async () => ({pendingCount: 105, pendingTasks: refs, items: refs.slice(0, 60)}));
   await x.ctx.TaskApprovalInbox.refresh();
   const result = x.ctx.TaskApprovalInbox.snapshot();
   assert.equal(result.length, 105);
-  assert.deepEqual(JSON.parse(JSON.stringify(result.at(-1))), {id: 'approval-104', taskId: 'task-104', action: 'review'});
+  assert.deepEqual(JSON.parse(JSON.stringify(result.at(-1))), {id: 'approval-104', taskId: 'task-104', action: 'review', artifactVersionId: 'artifact-104'});
   result[0].taskId = 'changed'; result.pop();
   assert.equal(x.ctx.TaskApprovalInbox.snapshot().length, 105);
   assert.equal(x.ctx.TaskApprovalInbox.snapshot()[0].taskId, 'task-0');

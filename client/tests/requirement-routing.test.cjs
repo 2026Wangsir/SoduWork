@@ -12,7 +12,10 @@ const explicit = name => ({ assignee: name, assigneeExplicit: true, assigneeSour
 function fixture({ parsed = {}, mates = { mates: [mate] }, execution = options } = {}) {
   const fields = new Map(), handlers = {}, calls = [], alerts = [], checks = [], serverEvents = []; let html = '';
   const decode = s => String(s || '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const node = value => ({ value, disabled: false, addEventListener() {} });
+  const node = value => ({ value, disabled: false, attributes: new Map(), addEventListener() {},
+    setAttribute(name, next) { this.attributes.set(name, String(next)); },
+    getAttribute(name) { return this.attributes.get(name) ?? null; },
+    removeAttribute(name) { this.attributes.delete(name); }, focus() { this.focused = true; } });
   const box = { classList: { add() {}, remove() {} }, addEventListener: (type, fn) => { handlers[type] = fn; },
     querySelector: s => fields.get(s.replace(/^#/, '')) || null,
     querySelectorAll: s => s === '[data-rq-tag-editor]' ? [{querySelector: child =>

@@ -172,6 +172,8 @@ require('./main/app-settings-ipc.cjs').install({ app, ipcMain, safeStorage,
 require('./main/local-model-ipc.cjs').install({ app, ipcMain, safeStorage });
 _attachmentFiles.install({ app, ipcMain, BrowserWindow, dialog, net, shell, identityOf: _deviceAuth.identity,
   authenticatedIdentityOf: _deviceAuth.authenticatedIdentity });
+require('./main/acceptance-summary-export.cjs').install({ app, ipcMain, BrowserWindow, dialog,
+  identityOf: _deviceAuth.identity, authenticatedIdentityOf: _deviceAuth.authenticatedIdentity });
 _libraryExternal.install({ app, ipcMain, BrowserWindow, shell });
 require('./main/library-local.cjs').install({ app, ipcMain, BrowserWindow, shell, dialog, nativeImage });
 require('./main/pi-session/attachment-materialize').install({ app, ipcMain,

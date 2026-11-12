@@ -14,6 +14,9 @@
 .rq-connection{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;padding:7px 16px;border-bottom:1px solid var(--line);background:var(--bg-1);color:var(--ink-2);font-size:var(--font-min-readable,14.5px)}
 .rq-connection[hidden]{display:none}
 .rq-connection button{flex-shrink:0;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg-0)}
+.rq-scope-hint{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;flex-shrink:0;padding:8px 24px;border-bottom:1px solid var(--line);background:var(--bg-1);color:var(--ink-2);font-size:var(--font-min-readable,14.5px);line-height:1.5}
+.rq-scope-hint[hidden]{display:none}
+.rq-scope-hint button{flex-shrink:0;padding:4px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg-0);color:var(--accent)}
 .requirements-board :is(button,input,select):focus-visible,.rq-detail :is(button,input,select,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .requirements-board svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .requirements-board .hb-body>.gv{height:100%;min-height:0}
@@ -219,6 +222,7 @@ html[data-desk-panel="workspace"] .rq-detail :is(input,textarea,select):not([dat
 .rq-detail textarea{resize:vertical;min-height:80px}
 .rq-field-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .rq-field-hint{color:var(--ink-3);font-size:max(var(--font-min-readable, 14.5px), 12px)}
+.rq-visibility-hint{display:block;margin:6px 0 12px;color:var(--ink-3);font-size:13px;line-height:1.55;font-weight:400;overflow-wrap:anywhere}
 /* Native select line boxes vary by platform; share the tag editor's single-row minimum. */
 .cp-requirement-fields select,.cp-requirement-fields>input{min-height:36px}
 .cp-requirement-fields select{min-width:0;max-width:180px;flex:1 1 auto;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-0);color:var(--ink-2);font:inherit}
@@ -492,6 +496,7 @@ html[data-window-menu] .rq-detail{max-height:100%;}
 .rq-material .rq-attachment{width:auto;max-width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--accent);font-size:14px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;}
 .rq-material .rq-attachment:hover{text-decoration:underline;text-underline-offset:3px;}
 .rq-material-meta{color:var(--ink-3);font-size:12px;line-height:1.3;}
+.rq-material-status{overflow-wrap:anywhere;color:var(--ink-2);}
 .rq-material-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;margin-left:auto;}
 .rq-material-icon{display:grid;place-items:center;width:30px;height:30px;padding:0!important;border:1px solid var(--line);border-radius:50%;background:var(--bg-0);color:var(--ink-3);font-size:17px!important;line-height:1;}
 .rq-material-icon:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 38%,var(--line));background:var(--accent-soft);}
@@ -570,7 +575,9 @@ html[data-window-menu] .rq-detail{max-height:100%;}
 .rq-detail .rq-detail-tag-block h4{font-size:var(--rq-label)!important}
 .rq-detail .rq-detail-tags>span{font-size:var(--rq-label)}
 html .rq-detail #rqEditForm :is(input,textarea,select){font-size:var(--rq-text);font-family:var(--font-ui);line-height:1.65}
-html .rq-detail #rqEditForm input[name="title"]{font-size:18px;font-weight:600}
+html .rq-detail #rqEditForm input[name="title"]{font-size:17px;font-weight:600}
+.rq-detail.is-editing{--rq-section:15px}
+.rq-detail.is-editing .rq-detail-header h2{font-size:20px!important}
 .rq-detail .rq-detail-actions>button,.rq-detail .rq-edit-actions>button{font-size:14px;min-height:40px;padding:8px 14px}
 .rq-detail .rq-edit-actions>button:disabled{background:var(--bg-2)!important;color:var(--ink-3)!important;border-color:var(--line);box-shadow:none;opacity:.65}
 .rq-detail .rq-detail-actions>[data-rq-ready]{order:-3}

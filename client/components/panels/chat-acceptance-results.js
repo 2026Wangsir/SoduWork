@@ -1,6 +1,7 @@
 /* Acceptance results and approvals share the original conversation state without duplicating task facts. */
 (function (global) {
   'use strict';
+  let errorSequence = 0;
   function readableResult(text) {
     // Only presentation prose is normalized. Links, code and persisted evidence stay intact.
     return String(text || '').split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`|!?\[[^\]\n]*\]\([^\n]*?\)|https?:\/\/[^\s<>]+)/g)
@@ -23,6 +24,7 @@
     const resultOutcomes = new Map();
     const pendingActions = new Set();
     const approvalAnchors = new Map();
+    const errorFields = new WeakMap();
     let epoch = 0;
     const acceptanceKey = (taskId, approvalId) => String(taskId || '') + ':' + String(approvalId || '');
     function reset() {
@@ -40,8 +42,41 @@
       return outcome.status === 'pending' ? '确认意见已提交，等待其他审批人' : '确认验收意见已提交';
     }
     function outcomeHtml(outcome) {
-      return '<p class="nacceptance-result-followup">' + ctx.esc(outcomeLabel(outcome)) + '</p>' +
-        (outcome.note ? '<p class="nacceptance-result-outcome-note" data-user-content>' + ctx.esc(outcome.note) + '</p>' : '');
+      return '<div class="nacceptance-result-outcome"><p class="nacceptance-result-followup">' + ctx.esc(outcomeLabel(outcome)) + '</p>' +
+        (outcome.note ? '<p class="nacceptance-result-outcome-note" data-user-content>' + ctx.esc(outcome.note) + '</p>' : '') + '</div>';
+    }
+    function clearError(card) {
+      const output = card.querySelector('[data-acceptance-result-error]');
+      if (!output) return;
+      const field = errorFields.get(output);
+      if (field) {
+        field.removeAttribute('aria-invalid');
+        const descriptions = String(field.getAttribute('aria-describedby') || '').split(/\s+/)
+          .filter(id => id && id !== output.id).join(' ');
+        if (descriptions) field.setAttribute('aria-describedby', descriptions);
+        else field.removeAttribute('aria-describedby');
+      }
+      output.remove();
+    }
+    function showError(card, text, field) {
+      clearError(card);
+      const output = document.createElement('p');
+      output.className = 'nacceptance-result-error';
+      output.dataset.acceptanceResultError = '';
+      output.id = 'acceptance-result-error-' + ++errorSequence;
+      output.setAttribute('role', 'alert');
+      output.textContent = text;
+      if (field) {
+        errorFields.set(output, field);
+        field.setAttribute('aria-invalid', 'true');
+        field.setAttribute('aria-describedby', [field.getAttribute('aria-describedby'), output.id].filter(Boolean).join(' '));
+        field.parentElement.append(output);
+        field.focus();
+      } else {
+        const buttons = card.querySelector('.nacceptance-result-buttons');
+        if (buttons) card.insertBefore(output, buttons);
+        else card.append(output);
+      }
     }
     function operationResults(entry) {
       const results = new Map();
@@ -230,21 +265,17 @@
       const currentEpoch = epoch;
       const decision = button.getAttribute('data-acceptance-result-action');
       if (!['analyze', 'approve', 'reject'].includes(decision)) return;
+      clearError(card);
       if (decision === 'analyze') {
         const analysisInput = card.querySelector('[data-acceptance-result-analysis]');
         const prompt = String(analysisInput?.value || '').trim();
         if (!prompt) {
-          if (analysisInput) analysisInput.focus();
-          let error = card.querySelector('[data-acceptance-result-error]');
-          if (!error) { error = document.createElement('p'); error.dataset.acceptanceResultError = ''; card.append(error); }
-          error.textContent = '请填写需要补充核对的内容，再继续分析。';
+          showError(card, '请填写需要补充核对的内容，再继续分析。', analysisInput);
           return;
         }
         const composer = ctx._mount()?.querySelector?.('#nchatInput');
         if (!composer) {
-          let error = card.querySelector('[data-acceptance-result-error]');
-          if (!error) { error = document.createElement('p'); error.dataset.acceptanceResultError = ''; card.append(error); }
-          error.textContent = '当前对话输入框不可用，请刷新后重试。';
+          showError(card, '当前对话输入框不可用，请刷新后重试。');
           return;
         }
         const followUp = '请补充验收分析：\n' + prompt;
@@ -263,10 +294,7 @@
       const note = String(card.querySelector('[data-acceptance-result-note]')?.value || '').trim();
       if (decision === 'reject' && !note) {
         const input = card.querySelector('[data-acceptance-result-note]');
-        if (input) input.focus();
-        let error = card.querySelector('[data-acceptance-result-error]');
-        if (!error) { error = document.createElement('p'); error.dataset.acceptanceResultError = ''; card.append(error); }
-        error.textContent = '请写明需要修改的内容，再退回。';
+        showError(card, '请写明需要修改的内容，再退回。', input);
         return;
       }
       const files = [...(card.querySelector('[data-acceptance-result-file]')?.files || [])];
@@ -323,9 +351,7 @@
         if (currentEpoch !== epoch || acceptanceResultActions.has(key)) return;
         card.removeAttribute('aria-busy');
         card.querySelectorAll('button,input,textarea').forEach(node => { node.disabled = false; });
-        let output = card.querySelector('[data-acceptance-result-error]');
-        if (!output) { output = document.createElement('p'); output.dataset.acceptanceResultError = ''; card.append(output); }
-        output.textContent = String(error?.message || '验收意见没有提交成功，请刷新后重试');
+        showError(card, String(error?.message || '验收意见没有提交成功，请刷新后重试'));
       } finally {
         if (currentEpoch === epoch) pendingActions.delete(key);
       }
@@ -371,6 +397,11 @@
         list.addEventListener('click', event => {
           const button = event.target.closest?.('[data-acceptance-result-action]');
           if (button) { event.preventDefault(); void _acceptanceResultAction(button); }
+        });
+        list.addEventListener('input', event => {
+          const card = event.target.closest?.('[data-acceptance-result-key]');
+          const output = card?.querySelector('[data-acceptance-result-error]');
+          if (output && (!errorFields.has(output) || errorFields.get(output) === event.target)) clearError(card);
         });
     }
     }

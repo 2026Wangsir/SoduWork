@@ -102,6 +102,7 @@ test('account original lifecycle bypasses downloaded read locators while explici
   current = null;
   assert.equal((await handlers.get('pi-session-history-archive')({}, original.id)).ok, false);
   assert.equal(await actions.localAction('archive', 'native-copy-alias'), null, 'Logout cannot mutate a retained copy');
+  assert.equal((await f.history().store.get(copy.id)).archived, false);
   current = actor;
   assert.equal((await actions.localAction('archive', 'native-copy-alias')).ok, true);
   assert.equal((await f.history().resolve(copy.id)).archived, true);

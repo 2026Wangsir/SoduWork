@@ -12,17 +12,28 @@ const harnesses = require('./used-harnesses');
 const root = app => path.join(app.getPath('userData'), 'conversation-runtime-segments');
 const location = (app, id) => path.join(root(app), crypto.createHash('sha256').update(String(id)).digest('hex') + '.json');
 const cache = new Map();
+const cacheStamps = new Map();
 const writes = new Map();
 
 function read(app, id) {
   if (!app?.getPath || !id) return null;
-  const file = location(app, id);
-  if (cache.has(file)) return cache.get(file);
+  return readFile(app, location(app, id), id);
+}
+function stamp(stat) { return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':'); }
+function readFile(app, file, id) {
   try {
+    const stat = fs.lstatSync(file);
+    require('../plugin-resources').assertNoLinks(root(app), file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw Error('invalid');
+    const revision = stamp(stat);
+    if (cache.has(file) && cacheStamps.get(file) === revision) return cache.get(file);
     const row = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (row.version !== 1 || row.id !== id || !row.active?.adapterId || !Array.isArray(row.segments)) throw Error('invalid');
-    cache.set(file, row); return row;
+    if (row.version !== 1 || typeof row.id !== 'string' || !row.id || id && row.id !== id ||
+        location(app, row.id) !== file || !row.active?.adapterId || !row.active?.sessionId ||
+        !Array.isArray(row.segments) || row.segments.length > 1000) throw Error('invalid');
+    cache.set(file, row); cacheStamps.set(file, revision); return row;
   } catch (error) {
+    cache.delete(file); cacheStamps.delete(file);
     if (error.code === 'ENOENT') return null;
     throw Error('无法读取会话的 Agent 切换记录，请检查本地存储');
   }
@@ -41,7 +52,7 @@ async function write(app, row) {
         await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
       }
     }
-    cache.set(file, row);
+    cache.set(file, row); cacheStamps.set(file, stamp(await fsp.lstat(file)));
   } finally { await fsp.unlink(temporary).catch(() => {}); }
 }
 function save(app, row) {
@@ -72,13 +83,13 @@ function assertOwner(app, row, identity) {
 function list(app) {
   if (!app?.getPath) return [];
   try {
-    return fs.readdirSync(root(app)).filter(n => /^[a-f0-9]{64}\.json$/.test(n)).map(n => {
-      const file = path.join(root(app), n);
-      if (cache.has(file)) return cache.get(file);
-      const row = JSON.parse(fs.readFileSync(file, 'utf8'));
-      return read(app, row.id);
-    }).filter(Boolean);
+    return fs.readdirSync(root(app)).filter(n => /^[a-f0-9]{64}\.json$/.test(n))
+      .map(n => readFile(app, path.join(root(app), n))).filter(Boolean);
   } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+function identities(app) {
+  return list(app).map(record => ({ version: record.version, id: record.id, owner: record.owner,
+    segments: record.segments.map(part => ({ sessionId: part.sessionId })), active: { sessionId: record.active.sessionId } }));
 }
 function title(record) {
   return require('./automatic-title').resolve(record?.title, record?.prefix);
@@ -115,6 +126,7 @@ async function remove(app, id) {
   await flush(app, id);
   await fsp.unlink(location(app, id)).catch(e => { if (e.code !== 'ENOENT') throw e; });
   cache.delete(location(app, id));
+  cacheStamps.delete(location(app, id));
 }
 function brief(snapshot) {
   const lines = (snapshot.messages || []).filter(m => ['user', 'assistant'].includes(m.role)).map(m => {
@@ -128,4 +140,4 @@ function brief(snapshot) {
     'Verify current files when needed; this bounded transcript may omit older details.\n' +
     lines.join('\n\n').slice(-28000) + '\nRecent operations:\n' + tools.join('\n').slice(-6000) + '\n[End handover]';
 }
-module.exports = { read, save, flush, assertOwner, list, row, title, mergeHistory, remove, brief, scope, rowHistoryIds };
+module.exports = { read, save, flush, assertOwner, list, identities, row, title, mergeHistory, remove, brief, scope, rowHistoryIds };

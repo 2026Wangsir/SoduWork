@@ -70,6 +70,8 @@ The PostgreSQL value is a placeholder. Use a dedicated database and a minimally 
 - Administrators sign in at `/api/v1/admin/login` and use bearer tokens for administrator APIs, including clients, tasks, and dispatch.
 - Long-term device keys must not enter renderers, logs, or URLs. Server state is authoritative; offline client caches must not overwrite it.
 
+Account conversation directory and source projections include `contentLocation`: `hub` for legacy Hub content, `source` for content retained by the original endpoint, `replica` for a valid migrated copy at the current source revision, or `unknown` when the reference cannot be established. The field does not expose private replica identifiers or grant access; clients must retain existing account, Hub, and execution checks. An unknown location must not be used to discard a potentially independent local copy.
+
 See [OAuth deployment and validation](CONNECTOR_OAUTH.en.md) for connector credentials and authorization.
 
 ## Requirement migration and access
@@ -90,3 +92,11 @@ python3 -B tests/unified_requirements_upgrade.py
 The second command creates and tears down an isolated local PostgreSQL instance. Do not point it at a business database. `test_unified_requirements_acl.py` exercises access controls through authenticated HTTP identities and WebSocket projections after real migration.
 
 See [release scope](../docs/release-scope.en.md) for distribution boundaries.
+
+## Requirement automation drafts
+
+An authorized manager of an unarchived requirement can copy its public content into an independent automation draft. Opening or canceling the form creates nothing. Saving always creates a disabled schedule and never changes the source requirement, its version, or its existing automation link. Later schedule edits and enabling are independent of the requirement.
+
+`POST /api/v1/schedules` accepts `sourceRequirement: {id, requirementVersion}` and a stable `creationRequestId` for this path. Hub checks current management access, archive state and the expected version, then stores a server-derived `source_requirement` snapshot of the source ID, public title and version. The response exposes these three fields as `sourceRequirement`; ordinary schedule edits cannot replace them, and provenance grants no additional task access. No execution routing, credentials or local model references are copied.
+
+Repeating the same creation request for the same account and device returns its existing schedule. Reusing its ID with different content returns 409. This also recovers a lost response after the source changes. Migration `0088_schedule_requirement_source` adds an empty JSON default for existing schedules; it does not infer historical sources or rewrite old links.

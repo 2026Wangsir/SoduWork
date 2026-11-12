@@ -351,6 +351,7 @@
     "企业发布进度": "Company publication progress",
     "管理员修改要求": "Administrator’s requested changes",
     "最近审查结论": "Latest review decision",
+    "审核记录": "Review history",
     "企业插件管理员": "Company plugin administrator",
     "打开个人插件继续改进": "Open personal plugin to continue improvements",
     "重新导入源包": "Reimport source package",

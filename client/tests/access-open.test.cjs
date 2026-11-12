@@ -338,7 +338,8 @@ test('opening a synchronized local alias reattaches the native runtime without a
   const identity = automationIdentity();
   let projections = 0;
   const live = { ref: 'native-ref', sessionId: 'native-session', cwd: os.tmpdir(),
-    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity) }) };
+    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity),
+      creator: { account: 'owner', hub: identity.hub } }) };
   const f = fixture({ live, identityOf: async () => identity, accountSync: {
     isAccountConversation: id => id === 'account-copy',
     row: async () => ({ id: 'account-copy', sourceClientId: identity.clientId, sourceSessionId: live.sessionId }),
@@ -354,7 +355,8 @@ test('opening a synchronized local alias reattaches the native runtime without a
 test('an alias restored before the history cache is ready still opens the native conversation', async () => {
   const identity = automationIdentity();
   const live = { ref: 'native-ref', sessionId: 'native-session', cwd: os.tmpdir(),
-    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity) }) };
+    historyRow: () => ({ id: 'native-session', workOwner: require('../main/platform-connections/runtime.cjs').scope(identity),
+      creator: { account: 'owner', hub: identity.hub } }) };
   const f = fixture({ live, identityOf: async () => identity, accountSync: {
     isAccountConversation: () => false,
     openProjection: async () => ({ historyRow: () => ({ id: 'account-copy',

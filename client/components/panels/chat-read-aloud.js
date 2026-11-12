@@ -120,7 +120,7 @@
   }
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
-    const wrap = event.target.closest('[data-read-aloud]');
+    const wrap = event.target?.closest?.('[data-read-aloud]');
     const open = wrap?.querySelector('[data-speech-options]:not([hidden])');
     if (!open) return;
     event.preventDefault(); event.stopPropagation(); closeMenus();

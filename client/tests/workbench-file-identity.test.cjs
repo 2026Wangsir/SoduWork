@@ -107,6 +107,41 @@ test('textarea fallback retains edited text, selection, scroll and focus during 
   assert.equal(f.window.document.activeElement, f.textarea);
 });
 
+for (const codeMirror of [true, false]) test('a follow-up without file changes keeps the selected Markdown source populated (' + (codeMirror ? 'CodeMirror' : 'textarea') + ')', async () => {
+  const f = fixture('C:/project', codeMirror);
+  f.render(journal(), [artifact()]);
+  f.reads[0].resolve({ ok: true, text: '# Original' }); await f.flush();
+  f.click('data-wb-code-view', { wbCodeView: 'code' }); await f.flush();
+  const tabs = f.tabs(), previous = codeMirror ? f.editors.length : f.textarea;
+  f.render({ messages: [{ role: 'user', at: 2000, blocks: [{ kind: 'text', text: 'Explain the result without changing it' }] }], tools: [] },
+    [artifact('report.md', { changedInTurn: false })]);
+  await f.flush();
+  assert.deepEqual(f.tabs(), tabs, 'the retained title still identifies the same document');
+  assert.match(f.body.innerHTML, /data-wb-code-copy/, 'source controls remain usable after the change journal clears');
+  if (codeMirror) {
+    assert.ok(f.editors.length > previous, 'the replacement source textarea must be mounted');
+    assert.equal(f.editors.at(-1).getValue(), '# Original');
+  } else {
+    assert.notEqual(f.textarea, previous);
+    assert.equal(f.textarea.value, '# Original');
+    assert.equal(f.textarea.className, 'ncw-editor-fallback');
+  }
+});
+
+test('a retained Markdown diff can switch to source after a follow-up clears the journal', async () => {
+  const f = fixture();
+  f.render(journal(), [artifact()]);
+  f.reads[0].resolve({ ok: true, text: '# Original' }); await f.flush();
+  f.click('data-wb-code-view', { wbCodeView: 'diff' }); await f.flush();
+  f.render({ messages: [{ role: 'user', at: 2000, blocks: [{ kind: 'text', text: 'Explain only' }] }], tools: [] },
+    [artifact('report.md', { changedInTurn: false })]);
+  await f.flush();
+  assert.match(f.body.innerHTML, /ncw-diff-empty/);
+  f.click('data-wb-code-view', { wbCodeView: 'code' }); await f.flush();
+  assert.match(f.body.innerHTML, /data-code-editor/);
+  assert.equal(f.editors.at(-1).getValue(), '# Original');
+});
+
 test('native preview reuses the existing tab without navigation when only identity changes', async () => {
   const f = fixture(), snapshot = journal('index.html'); f.render(snapshot, []); await f.flush();
   const first = f.shows.at(-1); assert.equal(first.kind, 'file');

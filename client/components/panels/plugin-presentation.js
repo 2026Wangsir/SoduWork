@@ -103,13 +103,43 @@
       ? item.ui.contributions : [];
     return contributions.some(row => row && row.slot === 'workspace.navigation');
   }
-  function libraryModel(catalog, filters, matches, stateFor) {
+  function managedPlugins(catalog) {
     const seen = new Set();
     const managed = (catalog.items || []).filter(item => {
       if (!item || !item.pluginId || isWorkspaceApp(item) ||
           !(item.personal || item.installed || item.permissions?.canEdit === true) || seen.has(item.pluginId)) return false;
       seen.add(item.pluginId); return true;
     });
+    const grouped = new Map(), hidden = new Set();
+    for (const personal of managed.filter(item => item.personal && !item.builtIn && item.key)) {
+      // A name or edit permission is not evidence that this user published a
+      // local draft. Only the current account's organization receipts link it.
+      if (managed.filter(item => item.personal && item.key === personal.key).length !== 1) continue;
+      const receipts = (catalog.submissions || []).filter(row => row && row.pluginId &&
+        row.scope === 'organization' && row.key === personal.key);
+      if (!receipts.length || new Set(receipts.map(row => row.pluginId)).size !== 1) continue;
+      if (receipts.some(row => typeof row.qualifiedKey !== 'string' ||
+          !/^org:[^/]+\/[^/]+$/.test(row.qualifiedKey) || !row.qualifiedKey.endsWith('/' + personal.key))) continue;
+      const qualified = new Set(receipts.map(row => row.qualifiedKey));
+      if (qualified.size > 1) continue;
+      receipts.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) ||
+        Number(b.reviewedAt || 0) - Number(a.reviewedAt || 0) ||
+        String(b.version || '').localeCompare(String(a.version || ''), 'en', { numeric: true }));
+      const submission = receipts[0];
+      const company = (catalog.items || []).find(item => item && !item.personal && !item.builtIn &&
+        !isWorkspaceApp(item) && item.pluginId === submission.pluginId);
+      if (company && (company.key !== personal.key || company.scope !== 'organization' ||
+          company.qualifiedKey !== submission.qualifiedKey)) continue;
+      // These are display associations only: every action still resolves its
+      // original catalog record, permission checks and immutable version.
+      grouped.set(personal.pluginId, { ...personal,
+        creatorPublication: { submission, ...(company ? { company } : {}) } });
+      if (company) hidden.add(company.pluginId);
+    }
+    return managed.filter(item => !hidden.has(item.pluginId)).map(item => grouped.get(item.pluginId) || item);
+  }
+  function libraryModel(catalog, filters, matches, stateFor) {
+    const managed = managedPlugins(catalog);
     const source = ['personal', 'enterprise'].includes(filters.source) ? filters.source : 'all';
     const status = ['ready', 'attention', 'disabled'].includes(filters.status) ? filters.status : 'all';
     const query = String(filters.query || '').trim();
@@ -120,11 +150,13 @@
       count: managed.filter(item => directory.categoryFor(item, catalog).key === category.key).length,
     }));
     const items = view.items.filter(item =>
-      (source === 'all' || Boolean(item.personal) === (source === 'personal')) &&
-      (status === 'all' || stateFor(item) === status) && matches(item, query));
+      (source === 'all' || (source === 'personal' ? item.personal : !item.personal || item.creatorPublication)) &&
+      (status === 'all' || stateFor(item) === status) &&
+      (matches(item, query) || (item.creatorPublication?.company && matches(item.creatorPublication.company, query))));
     const personal = managed.filter(item => item.personal).length;
+    const enterprise = managed.filter(item => !item.personal || item.creatorPublication).length;
     return { managed, items, categories, source, status, query, category: view.selected,
-      counts: { all: managed.length, personal, enterprise: managed.length - personal },
+      counts: { all: managed.length, personal, enterprise },
       filtered: source !== 'all' || status !== 'all' || !!view.selected || !!query };
   }
   function libraryToolbar(model, submissions) {
@@ -165,11 +197,14 @@
     const list = layer.querySelector('#capRecordList');
     function renderRecords() {
       const needle = query.trim().toLowerCase();
-      const shown = rows.filter(item => [item.name, item.version, item.reviewNote].some(value => String(value || '').toLowerCase().includes(needle)));
+      const shown = rows.filter(item => [item.name, item.version, item.reviewNote,
+        ...(Array.isArray(item.reviewHistory) ? item.reviewHistory.flatMap(review => [review?.note, review?.reviewedBy]) : []),
+      ].some(value => String(value || '').toLowerCase().includes(needle)));
       list.innerHTML = shown.length ? shown.map(item => {
         const state = trustName(item.trustState, item.enabled, item.reviewDecision);
         const step = global.SoduWorkPluginPublication.currentStep(item);
-        return '<button type="button" class="cap-record" data-submission="' + h(item.pluginId) + '">' +
+        return '<button type="button" class="cap-record" data-submission="' + h(item.pluginId) +
+          '" data-submission-version="' + h(item.versionId || item.version) + '">' +
           '<span class="cap-record-name"><b data-user-content>' + h(item.name) + '</b><small data-user-content>v' + h(item.version) +
           '</small></span><em class="' + h(state[1]) + '">' + h(state[0]) + '</em><span class="cap-record-note"' +
           (item.reviewNote ? ' data-user-content' : '') + '>' + h(item.reviewNote || step.detail) +
@@ -177,8 +212,9 @@
       }).join('') : '<div class="cap-record-empty"><b>' + (query ? '没有匹配的申请' : '还没有提交申请') +
         '</b><p>' + (query ? '试试其他插件名称或版本。' : '在个人插件详情中提交到企业后，可以在这里跟进审核。') + '</p></div>';
       list.querySelectorAll('[data-submission]').forEach(button => button.addEventListener('click', () => {
-        const item = rows.find(row => row.pluginId === button.dataset.submission);
-        openSubmission(item, recordContext, () => records(rows, ctx, trustName, openSubmission, query));
+        const item = rows.find(row => row.pluginId === button.dataset.submission &&
+          String(row.versionId || row.version || '') === button.dataset.submissionVersion);
+        if (item) openSubmission(item, recordContext, () => records(rows, ctx, trustName, openSubmission, query));
       }));
     }
     input.addEventListener('input', () => { query = input.value; renderRecords(); });
@@ -200,5 +236,5 @@
       if (event.key === 'Escape' && !menu.hidden) { toggle(false); button.focus(); event.preventDefault(); event.stopPropagation(); }
     });
   }
-  global.SoduWorkPluginPresentation = { tabs, detail, dialog, libraryModel, libraryToolbar, libraryEmpty, records, addMenu, isWorkspaceApp };
+  global.SoduWorkPluginPresentation = { tabs, detail, dialog, managedPlugins, libraryModel, libraryToolbar, libraryEmpty, records, addMenu, isWorkspaceApp };
 })(window);

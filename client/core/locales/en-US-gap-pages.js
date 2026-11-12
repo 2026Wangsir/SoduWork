@@ -6,6 +6,17 @@
   // Product localization uses the same app concept in Chinese and English.
   // This is intentional, not a literal translation; keep app/jiyong IDs stable.
   const messages = {
+    '按设定时间创建普通会话，发送提示词并在对话中查看过程与结果。': 'Start a chat at the scheduled time, send the prompt, and view progress and results in the conversation.',
+    '记录目标与完成标准，保存到需求池或交办给同事': 'Record the goal and completion criteria, then save the issue or assign it to a teammate',
+    '阶段：': 'Stage: ',
+    '类型：': 'Type: ',
+    '优先级：': 'Priority: ',
+    '项目：': 'Project: ',
+    '标签：': 'Tag: ',
+    '截止日期：': 'Due date: ',
+    '关注事项：': 'Attention: ',
+    '/调试插件': '/debug-plugin',
+    '/制作插件': '/plugin',
     '按规则内时区执行 · 触发精度约两分钟': 'Uses the rule time zone · Trigger precision is about two minutes',
     '按天、周、月重复时，夏令时跳过的时刻顺延，重复时刻执行一次': 'For daily, weekly, and monthly rules, times skipped by daylight saving time move forward; repeated times run once.',
     '执行时间需要确认': 'Check the scheduled time',
@@ -200,6 +211,10 @@
     '网页即用': 'Web app',
     '桌面客户端': 'Desktop app',
     "创建即用": "Create app",
+    '创建即用：': 'Create app: ',
+    '创建网页类即用：': 'Create web app: ',
+    '创建桌面客户端：': 'Create desktop app: ',
+    '开发即用：': 'Develop app: ',
     "轻量": "Lightweight",
     '数据存储（必选）': 'Data storage (required)',
     '数据云端化': 'Cloud data',

@@ -48,7 +48,7 @@ function readEntries(input) {
     if (entries.has(name)) throw new Error('插件包包含重复文件路径');
     const compressed = data.subarray(dataStart, dataEnd);
     let bytes;
-    try { bytes = method === 0 ? Buffer.from(compressed) : zlib.inflateRawSync(compressed); }
+    try { bytes = method === 0 ? Buffer.from(compressed) : zlib.inflateRawSync(compressed, { maxOutputLength: Math.max(1, size) }); }
     catch (_) { throw new Error('插件包中的文件无法解压'); }
     if (bytes.length !== size) throw new Error('插件包文件大小校验失败：' + name);
     entries.set(name, bytes);

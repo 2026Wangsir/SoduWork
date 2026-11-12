@@ -13,6 +13,12 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     session: new Proxy(session, { get: (target, key) => key === 'archivedConversation'
       ? (_app, id) => store.get(id) : target[key] }), localOnly: true,
     access: { actor: () => scoped.actor(), assertCurrent: (_app, actor) => scoped.guard(actor), assertOwner: access.assertReadable } });
+  function currentActor(captured) {
+    scoped.guard(captured);
+    const current = scoped.actor();
+    if (captured.readScope) access.assertCurrent(app, captured, current.identity);
+    return current;
+  }
   const isNative = row => row && !row.accountProjection && !row.remoteProjection && !row.cloud;
   async function register(rows) {
     const result = [];
@@ -51,14 +57,17 @@ function create({ app, session, identityOf = () => require('./requirement-contex
   }
   async function resolve(id, captured = scoped.actor()) {
     const row = await resolveRaw(id);
-    scoped.guard(captured);
-    return row && scoped.readable(row, captured) ? row : null;
+    const current = currentActor(captured);
+    return row && scoped.readable(row, current) ? row : null;
   }
   async function lifecycle(id, action, identity) {
     const captured = scoped.actor();
     if (identity && access.readScope(identity) !== captured.readScope) throw Error('账号或服务已切换，请重新读取会话');
     const row = await resolve(id, captured);
     if (!row) return null;
+    if (!isLocalIdentity(row, id)) return null;
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    access.assertLocalMutation(app, row.id, captured, row);
     for (const alias of [row.id, ...row.historyAliasIds]) {
       if (session.findBySessionId(alias)?.inFlight?.()) throw Error('这条会话还在执行，完成或停止后再操作');
     }
@@ -142,11 +151,14 @@ function create({ app, session, identityOf = () => require('./requirement-contex
   async function read(id, options = {}, captured = scoped.actor()) {
     const row = await resolve(id, captured);
     if (!row || row.deleted) throw Error('这条会话已经不存在了');
+    access.assertLocalCurrent(app, captured, row, identityOf());
+    access.assertReadable(app, row.id, currentActor(captured), row);
     const after = Number(options.after || 0);
     if (!Number.isSafeInteger(after) || after < 0) throw Error('Invalid local history cursor');
     if (row.cached) {
       const page = await store.messages(row.id, { after: after - 1, limit: options.limit || 100 });
       if (!await resolve(row.id, captured)) throw Error('会话归属已变化，请重新打开');
+      access.assertLocalCurrent(app, captured, row, identityOf());
       return { ...page, nextCursor: page.next == null ? null : page.next + 1, cursor: page.items.at(-1)?.position + 1 || after };
     }
     // Encode the segment in the cursor so phones and passive desktop views
@@ -159,6 +171,7 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     const page = await localReader('conversations.read', { id: row.id, offset, after: offset,
       limit: options.limit || 100, segmentId: parts[segment] });
     if (!await resolve(row.id, captured)) throw Error('会话归属已变化，请重新打开');
+    access.assertLocalCurrent(app, captured, row, identityOf());
     const next = page.nextOffset ?? page.nextAfter;
     const cursor = segment * span + (page.cursor ?? offset + (page.items || []).length);
     return { ...page, cursor,
@@ -174,7 +187,7 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     scoped.guard(captured);
     for (const name of ['snapshot', 'uiSnapshot', 'historyRow']) {
       const original = view[name];
-      view[name] = (...args) => { scoped.guard(captured); access.assertReadable(app, row.id, captured, row); return original(...args); };
+      view[name] = (...args) => { access.assertReadable(app, row.id, currentActor(captured), row); return original(...args); };
     }
     const load = view.loadHistory;
     view.loadHistory = async (...args) => { scoped.guard(captured); await load(...args); scoped.guard(captured); };
@@ -216,6 +229,8 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     const displayed = remote ? original : require('./acceptance-session').projectHistory(app, original);
     const [row] = await register([{ ...displayed, id, cloud: false, accountProjection: false,
       accountConversation: false,
+      ...(remote ? { historyProtection: 'account' } : {}),
+      ...(original.taskProjectionId && !original.taskId ? { taskId: original.taskProjectionId } : {}),
       remoteProjection: false, cached: !!remote, source: remote ? { hub: identity?.hub, id: original.id, account: accountId(identity) } : null,
       creator: { account: accountId(identity), hub: identity?.hub }, historyAliasIds: remote ? [] : original.historyAliasIds || [] }]);
     if (row.deleted || !remote) return;
@@ -299,7 +314,7 @@ function create({ app, session, identityOf = () => require('./requirement-contex
         const page = await scoped.list({ archived, after, limit: Math.min(200, Math.max(1, limit - items.length)) }, captured);
         items.push(...page.items); after = page.next;
       } while (after && items.length < limit);
-      return items;
+      return access.visible(app, items, identityOf());
     },
     close() { return closing ||= (async () => {
       for (const entry of observed.values()) entry.dispose();

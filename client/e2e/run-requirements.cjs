@@ -2,7 +2,7 @@
 // Bounded child process with its own profile and an explicitly isolated Hub.
 const fs = require('node:fs'), path = require('node:path'), {spawnSync} = require('node:child_process');
 const [spec, output, hub] = process.argv.slice(2);
-if (!['requirements-board', 'requirements-workspace', 'requirements-navigation', 'requirements-integration', 'project-conversation', 'issue-terminology', 'requirements-acceptance-live'].includes(spec) ||
+if (!['requirements-board', 'requirements-workspace', 'requirements-form-typography', 'requirements-navigation', 'requirements-integration', 'project-conversation', 'issue-terminology', 'requirements-acceptance-live', 'requirements-delivery-rework', 'requirements-acceptance-preflight'].includes(spec) ||
     !path.isAbsolute(output || '') || (!['requirements-board','project-conversation','issue-terminology'].includes(spec) && !/^http:\/\/127\.0\.0\.1:\d+$/.test(hub || ''))) throw Error('Explicit isolated test arguments required');
 const env = {...process.env};
 for (const key of ['ELECTRON_RUN_AS_NODE','NODE_OPTIONS','CHROME_CRASHPAD_PIPE_NAME','CHROME_CRASHPAD_PIPE_HANDLE']) delete env[key];

@@ -53,7 +53,7 @@ async def identity(request: Request):
     if authorization.startswith('Device '):
         async with sessions() as session:
             return await authenticated_client(authorization=authorization,
-                x_box_device=None, x_box_secret=None, session=session)
+                x_soduwork_device=None, x_soduwork_secret=None, session=session)
     key = request.headers.get('X-Soduwork-Device', '')
     if key not in ('e2e-sender', 'e2e-recipient', 'e2e-other'):
         raise HTTPException(401, 'Unknown isolated identity')

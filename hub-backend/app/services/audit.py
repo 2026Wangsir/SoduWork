@@ -1,7 +1,11 @@
-"""Administrative operation audit with scoped queries. Logging is best-effort in its own
-transaction; super administrators see all entries and other administrators see actors in their
-department subtree.
+"""Administrative operation audit with scoped queries.
+
+``add`` joins required history to a caller's transaction; ``log`` retains the
+best-effort standalone behavior. Super administrators see all entries and
+other administrators see actors in their department subtree.
 """
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,16 +14,25 @@ from ..schemas import _ms
 from . import rbac
 
 
+def add(session: AsyncSession, actor, action: str, target_type: str = "",
+        target_id: str | None = None, target_label: str = "", detail: dict | None = None):
+    """Include required history in the caller's transaction without committing."""
+    row = models.AuditLog(
+        actor_id=getattr(actor, "id", None),
+        actor_name=(getattr(actor, "display_name", "") or getattr(actor, "username", "")) if actor else "",
+        actor_org_id=getattr(actor, "org_id", None),
+        action=action, target_type=target_type, target_id=target_id,
+        target_label=(target_label or "")[:200], detail=detail or {},
+        at=datetime.now(timezone.utc),
+    )
+    session.add(row)
+    return row
+
+
 async def log(session: AsyncSession, actor, action: str, target_type: str = "",
               target_id: str | None = None, target_label: str = "", detail: dict | None = None) -> None:
     try:
-        session.add(models.AuditLog(
-            actor_id=getattr(actor, "id", None),
-            actor_name=(getattr(actor, "display_name", "") or getattr(actor, "username", "")) if actor else "",
-            actor_org_id=getattr(actor, "org_id", None),
-            action=action, target_type=target_type, target_id=target_id,
-            target_label=(target_label or "")[:200], detail=detail or {},
-        ))
+        add(session, actor, action, target_type, target_id, target_label, detail)
         await session.commit()
     except Exception:
         await session.rollback()

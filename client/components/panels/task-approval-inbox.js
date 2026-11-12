@@ -23,7 +23,8 @@
       const id = String(item.id);
       if (seen.has(id)) continue;
       seen.add(id);
-      pendingTasks.push({taskId: String(item.taskId), id, action: String(item.action || '')});
+      pendingTasks.push({taskId: String(item.taskId), id, action: String(item.action || ''),
+        ...(item.artifactVersionId ? {artifactVersionId: String(item.artifactVersionId)} : {})});
     }
     waitingRows = (Array.isArray(result?.mineWaiting) ? result.mineWaiting : [])
       .filter(row => row?.taskId && String(row.action || '') === 'review')

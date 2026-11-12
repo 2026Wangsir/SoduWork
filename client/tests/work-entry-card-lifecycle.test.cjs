@@ -12,7 +12,7 @@ function fixture(inline = true) {
     querySelector(selector) { if (!children.has(selector)) children.set(selector, node()); return children.get(selector); },
     appendChild() {}, append() {}, replaceChildren() {}, addEventListener() {}, focus() {},
     showModal() { this.open = true; }, close() { this.open = false; }, remove() { this.isConnected = false; } });
-  const ctx = { window: null, document: { body: node(), addEventListener() {}, createElement: tag => {
+  const ctx = { window: null, document: { documentElement: { dataset: {} }, body: node(), addEventListener() {}, createElement: tag => {
     const element = node(); if (tag === 'dialog') calls.dialogs.push(element); return element;
   }, getElementById: () => node() },
     addEventListener() {}, SoduWorkAPI: { taskStorageKey: () => owner },

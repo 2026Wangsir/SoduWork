@@ -141,7 +141,7 @@
       const current = revision;
       emit();
       try {
-        const catalog = await opts.refreshCatalog();
+        const catalog = await opts.refreshCatalog(detail);
         // A catalog requested before a click must not erase that newer choice.
         if (current !== revision || isDirty()) return false;
         if (opts.onRefreshed) opts.onRefreshed(catalog);

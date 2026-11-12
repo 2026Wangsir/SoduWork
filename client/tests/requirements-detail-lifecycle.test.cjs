@@ -70,6 +70,60 @@ function fixture(overrides = {}) {
     content: () => active().querySelector('.rq-detail-content')};
 }
 
+test('acceptance summary export uses the displayed requirement version and reports native results beside its action', async () => {
+  const f = fixture({ getTask: async id => ({ ...task(id), requirementVersion: 4 }) });
+  const pending = deferred(), calls = [];
+  f.context.soduWorkAPI.exportAcceptanceSummary = input => { calls.push(input); return pending.promise; };
+  await f.api.open('export-task');
+  assert.match(f.content().innerHTML, /data-rq-export-summary/);
+  f.click('[data-rq-export-summary]'); f.click('[data-rq-export-summary]');
+  assert.equal(calls.length, 1); assert.equal(calls[0].taskId, 'export-task'); assert.equal(calls[0].requirementVersion, 4);
+  assert.equal(f.active().querySelector('[data-rq-export-summary]').disabled, true);
+  pending.resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.active().querySelector('[data-rq-export-status]').textContent, '验收摘要已保存');
+  assert.equal(f.active().querySelector('[data-rq-export-summary]').disabled, false);
+});
+
+test('acceptance summary cannot be exported from a requirement-only view', async () => {
+  const f = fixture({ getTask: async id => ({ ...task(id), canViewExecution: false }) });
+  f.context.soduWorkAPI.exportAcceptanceSummary = () => { throw Error('must not export'); };
+  await f.api.open('restricted');
+  assert.doesNotMatch(f.content().innerHTML, /data-rq-export-summary/);
+  f.click('[data-rq-export-summary]');
+});
+
+test('summary export pins the visible approval and suppresses receipts after a same-task version refresh', async () => {
+  let version = 4;
+  const f = fixture({ getTask: async id => ({ ...task(id), requirementVersion: version }) });
+  const pending = deferred(); let sent;
+  f.context.RequirementsBoard.context = () => ({ approvals: new Map([['export-task',
+    { id: 'review', taskId: 'export-task', action: 'review', status: 'pending', artifactVersionId: 'fixed-artifact' }]]) });
+  f.context.soduWorkAPI.exportAcceptanceSummary = input => { sent = input; return pending.promise; };
+  await f.api.open('export-task'); f.click('[data-rq-export-summary]');
+  assert.equal(sent.requirementVersion, 4);
+  assert.equal(sent.artifactVersionId, 'fixed-artifact');
+  version = 5; await f.api.refresh('export-task');
+  pending.resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.active().querySelector('[data-rq-export-status]').textContent, '');
+  assert.equal(f.active().querySelector('[data-rq-export-summary]').disabled, false);
+});
+
+test('canceled, failed and stale exports preserve the current detail and permit retry', async () => {
+  const f = fixture();
+  await f.api.open('first');
+  f.context.soduWorkAPI.exportAcceptanceSummary = async () => ({ ok: false, reason: 'Version changed' });
+  f.click('[data-rq-export-summary]'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.active().querySelector('[data-rq-export-status]').textContent, 'Version changed');
+  f.context.soduWorkAPI.exportAcceptanceSummary = async () => ({ ok: false, canceled: true });
+  f.click('[data-rq-export-summary]'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.active().querySelector('[data-rq-export-status]').textContent, '');
+  const pending = deferred(); f.context.soduWorkAPI.exportAcceptanceSummary = () => pending.promise;
+  f.click('[data-rq-export-summary]'); await f.api.open('second');
+  const current = f.active().querySelector('[data-rq-export-status]'); current.textContent = 'current';
+  pending.resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(current.textContent, 'current');
+});
+
 test('intake details offer preparation instead of execution and show the real delivery state', async () => {
   const f = fixture({getTask: async id => ({...task(id),triageStage:'intake',canEditRequirement:true})});
   await f.api.open('intake');
@@ -182,6 +236,92 @@ test('contract kind without deliverables still exposes manual completion', async
   }), submitTaskReview: async () => ({ok: true})});
   await f.api.open('kind-only-contract');
   assert.match(f.active().querySelector('.rq-detail-footer').innerHTML, /data-rq-submit-review>提交验收/);
+});
+
+function submitReviewClick(f, button = {disabled: false, isConnected: true}) {
+  f.active().listeners.click({target: {closest: selector =>
+    selector.split(',').includes('[data-rq-submit-review]') ? button : null}});
+  return button;
+}
+
+for (const already of [false, true]) test(`manual review ${already ? 'retry receipt' : 'success'} closes its drawer before board refresh`, async () => {
+  const receipt = deferred(), refreshed = deferred(), submissions = [], reads = [];
+  const f = fixture({getTask: async id => { reads.push(id); return {...task(id), status: 'doing', canSubmitReview: true}; },
+    submitTaskReview: (...args) => { submissions.push(args); return receipt.promise; }});
+  let refreshes = 0;
+  f.context.RequirementsBoard.refresh = () => { refreshes++; return refreshed.promise; };
+  await f.api.open('submitted');
+  const button = submitReviewClick(f);
+  submitReviewClick(f, button);
+  await new Promise(setImmediate);
+  assert.equal(button.disabled, true);
+  assert.deepEqual(submissions, [['submitted', '']]);
+  receipt.resolve({ok: true, already});
+  await new Promise(setImmediate);
+  assert.equal(f.active(), undefined, 'the successful receipt closes the submitted requirement immediately');
+  assert.equal(refreshes, 1);
+  assert.ok(f.calls.some(row => row[0] === 'notice' && (already ? /已经在待验收/ : /已提交验收/).test(row[1])));
+  await f.api.open('next');
+  const next = f.active();
+  refreshed.resolve();
+  await new Promise(setImmediate);
+  assert.equal(f.active(), next, 'a late board refresh must not reopen or replace another requirement');
+  assert.deepEqual(reads, ['submitted', 'next']);
+});
+
+test('board refresh failure cannot turn accepted manual submission into a retryable failure', async () => {
+  const f = fixture({getTask: async id => ({...task(id), status: 'doing', canSubmitReview: true}),
+    submitTaskReview: async () => ({ok: true})});
+  f.context.RequirementsBoard.refresh = async () => { throw new Error('List unavailable'); };
+  await f.api.open('accepted');
+  submitReviewClick(f);
+  await new Promise(setImmediate);
+  assert.equal(f.active(), undefined);
+  assert.ok(f.calls.some(row => row[0] === 'notice' && /已提交验收/.test(row[1])));
+});
+
+for (const changed of ['close', 'requirement', 'identity']) test(`a stale manual review receipt cannot affect the drawer after ${changed}`, async () => {
+  const receipt = deferred(); let refreshes = 0;
+  const f = fixture({getTask: async id => ({...task(id), status: 'doing', canSubmitReview: true}),
+    submitTaskReview: () => receipt.promise});
+  f.context.RequirementsBoard.refresh = async () => { refreshes++; };
+  await f.api.open('submitted');
+  submitReviewClick(f);
+  await new Promise(setImmediate);
+  if (changed === 'close') f.api.close(true);
+  else if (changed === 'identity') f.events['soduwork-data-scope-changed']();
+  else await f.api.open('next');
+  const current = f.active();
+  receipt.resolve({ok: true});
+  await new Promise(setImmediate);
+  assert.equal(f.active(), current);
+  assert.equal(refreshes, 0);
+  assert.equal(f.calls.filter(row => row[0] === 'notice').length, 0);
+});
+
+for (const failure of ['asynchronous', 'synchronous', 'business']) test(`manual review ${failure} failure retains details and permits one retry`, async () => {
+  let attempts = 0;
+  const f = fixture({getTask: async id => ({...task(id), status: 'doing', canSubmitReview: true}),
+    submitTaskReview: () => {
+      if (++attempts > 1) return Promise.resolve({ok: true});
+      const error = new Error('Submission unavailable');
+      if (failure === 'synchronous') throw error;
+      if (failure === 'business') return {ok: false, reason: error.message};
+      return Promise.reject(error);
+    }});
+  await f.api.open('retry');
+  const drawer = f.active(), content = f.content().innerHTML, button = {disabled: false, isConnected: true};
+  assert.doesNotThrow(() => submitReviewClick(f, button));
+  await new Promise(setImmediate);
+  assert.equal(f.active(), drawer);
+  assert.equal(f.content().innerHTML, content);
+  assert.equal(button.disabled, false);
+  assert.match(drawer.querySelector('[data-rq-error]').textContent, /Submission unavailable/);
+  submitReviewClick(f, button);
+  submitReviewClick(f, button);
+  await new Promise(setImmediate);
+  assert.equal(attempts, 2);
+  assert.equal(f.active(), undefined);
 });
 
 test('live updates do not replace the optimistic version of an open editing draft', async () => {
@@ -498,8 +638,9 @@ test('revoking execution visibility closes evidence and invalidates pending acti
 });
 
 test('automation uses fresh authorized requirements and opens the exact existing schedule', async () => {
-  let value = {...task('a'), canEditRequirement: true, title: 'Opened snapshot'};
-  const f = fixture({getTask: async () => value}), seeds = [], routes = [];
+  let value = {...task('a'), canEditRequirement: true, title: 'Opened snapshot', requirementVersion: 7};
+  const writes = [];
+  const f = fixture({getTask: async () => value, patchTask: async (...args) => writes.push(args)}), seeds = [], routes = [];
   f.context.WorkAutomationSheet = {open: async seed => seeds.push(seed)};
   f.context.openSchedulesEntry = options => routes.push(options);
   await f.api.open('a');
@@ -507,9 +648,41 @@ test('automation uses fresh authorized requirements and opens the exact existing
   f.click('[data-rq-automation]'); await new Promise(setImmediate);
   assert.equal(seeds[0].proposal.title, value.title);
   assert.deepEqual(Array.from(seeds[0].proposal.acceptance), ['Fresh criterion']);
+  assert.equal(seeds[0].proposal.enabled, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(seeds[0].sourceRequirement)), {
+    id: 'a', title: 'Updated by teammate', requirementVersion: 7,
+  });
+  await seeds[0].onCreated?.({id: 'new-independent-draft'});
+  assert.deepEqual(writes, []);
   await f.api.open('a'); value = {...value, automationScheduleId: 'schedule-existing'};
   f.click('[data-rq-automation]'); await new Promise(setImmediate);
   assert.equal(routes[0].scheduleId, 'schedule-existing'); assert.equal(seeds.length, 1);
+});
+
+test('archived requirements cannot open a new automation draft', async () => {
+  let value = {...task('a'), canManageRequirementAutomation: true};
+  const f = fixture({getTask: async () => value}); let launched = 0;
+  f.context.WorkAutomationSheet = {open: async () => {launched++;}};
+  await f.api.open('a');
+  value = {...value, archivedAt: Date.now()};
+  f.click('[data-rq-automation]'); await new Promise(setImmediate);
+  assert.equal(launched, 0);
+  assert.match(f.active().querySelector('[data-rq-error]').textContent, /无法管理.*自动化/);
+  await f.api.open('a');
+  assert.doesNotMatch(f.content().innerHTML + f.active().querySelector('.rq-detail-footer').innerHTML, /data-rq-automation/);
+});
+
+test('archived requirements retain authorized viewing of an existing automation without writes', async () => {
+  const calls = [], value = {...task('a'), archivedAt: Date.now(), canManageRequirementAutomation: true,
+    automationScheduleId: 'existing-automation'};
+  const f = fixture({getTask: async () => value, patchTask: async () => calls.push('patch'),
+    createSchedule: async () => calls.push('create')});
+  f.context.WorkAutomationSheet = {open: async () => calls.push('draft')};
+  f.context.openSchedulesEntry = options => calls.push(options);
+  await f.api.open('a');
+  assert.match(f.content().innerHTML + f.active().querySelector('.rq-detail-footer').innerHTML, /查看自动化/);
+  f.click('[data-rq-automation]'); await new Promise(setImmediate);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{scheduleId: 'existing-automation'}]);
 });
 
 test('automation rechecks revoked edit permission and ignores a late response after account change', async () => {
@@ -535,6 +708,85 @@ test('material actions resolve the listed attachment and use narrow authenticate
   for (const kind of ['preview', 'download']) {
     const rows = f.calls.filter(row => row[0] === kind);
     assert.equal(rows.length, 1); assert.equal(rows[0][1].url, '/authorized/file');
+  }
+});
+
+function downloadRow(f, id) {
+  const status = {textContent:'',hidden:true}, button = {disabled:false, attributes:{},
+    setAttribute(name,value) { this.attributes[name] = value; }};
+  const row = {dataset:{rqFileId:id},querySelector: selector => selector === '[data-rq-download]' ? button : status};
+  f.active().querySelectorAll = selector => selector === '.rq-material' ? [row] : [];
+  return {status,button};
+}
+
+test('attachment downloads expose row feedback and reject repeat clicks while saving', async () => {
+  const pending = deferred(), f = fixture({listAttachments:async()=>[{id:'file',filename:'完整产出-review.zip',role:'output'}]});
+  let downloads = 0;
+  f.context.soduWorkAPI.downloadAttachment = async () => { downloads++; return pending.promise; };
+  await f.api.open('review');
+  assert.match(f.active().querySelector('#rqAttachments').innerHTML, /data-rq-download-status role="status" aria-live="polite"/);
+  const row = downloadRow(f, 'file');
+  f.click('[data-rq-download]',{rqDownload:'file'});
+  f.click('[data-rq-download]',{rqDownload:'file'});
+  assert.equal(downloads,1);assert.equal(row.button.disabled,true);
+  assert.equal(row.button.attributes['aria-busy'],'true');
+  assert.equal(row.status.hidden,false);assert.match(row.status.textContent,/正在准备下载/);
+  pending.resolve({ok:true});await new Promise(setImmediate);
+  assert.match(row.status.textContent,/文件已保存/);assert.equal(row.button.disabled,false);
+  assert.equal(row.button.attributes['aria-busy'],'false');
+});
+
+test('failed attachment downloads retain visible errors, retry, and clear canceled saves', async () => {
+  const f = fixture({listAttachments:async()=>[{id:'file',filename:'report.txt'}]});
+  let attempt = 0;
+  f.context.soduWorkAPI.downloadAttachment = async () => {
+    if (++attempt === 1) throw Error("Error invoking remote method 'attachment-download': Error: 源文件已丢失，请恢复后重试");
+    if (attempt === 2) return {ok:true};
+    return {ok:false,canceled:true};
+  };
+  await f.api.open('review');const row = downloadRow(f,'file');
+  f.click('[data-rq-download]',{rqDownload:'file'});await new Promise(setImmediate);
+  assert.equal(row.status.textContent,'源文件已丢失，请恢复后重试');assert.equal(row.status.hidden,false);
+  assert.equal(row.button.disabled,false);
+  f.click('[data-rq-download]',{rqDownload:'file'});
+  assert.doesNotMatch(row.status.textContent,/已丢失/);
+  await new Promise(setImmediate);assert.match(row.status.textContent,/文件已保存/);
+  f.click('[data-rq-download]',{rqDownload:'file'});await new Promise(setImmediate);
+  assert.equal(row.status.textContent,'');assert.equal(row.status.hidden,true);assert.equal(row.button.disabled,false);
+});
+
+test('live material refresh keeps pending downloads disabled and updates the current row', async () => {
+  const pending = deferred(), f = fixture({listAttachments:async()=>[{id:'file',filename:'report.md'}]});
+  f.context.soduWorkAPI.downloadAttachment = () => pending.promise;
+  await f.api.open('review');downloadRow(f,'file');f.click('[data-rq-download]',{rqDownload:'file'});
+  await f.api.refresh('review');
+  const html = f.active().querySelector('#rqAttachments').innerHTML;
+  assert.match(html,/data-rq-download="file"[^>]*disabled/);assert.match(html,/正在准备下载/);
+  const replacement = downloadRow(f,'file');pending.resolve({ok:true});await new Promise(setImmediate);
+  assert.match(replacement.status.textContent,/文件已保存/);assert.equal(replacement.button.disabled,false);
+});
+
+test('late attachment download results cannot update another drawer or account', async () => {
+  for (const switchAccount of [false,true]) {
+    const pending = deferred(), f = fixture({listAttachments:async()=>[{id:'file',filename:'report.md'}]});
+    f.context.soduWorkAPI.downloadAttachment = () => pending.promise;
+    await f.api.open('old');downloadRow(f,'file');f.click('[data-rq-download]',{rqDownload:'file'});
+    if (switchAccount) f.events['soduwork-data-scope-changed']();
+    await f.api.open('new');const row = downloadRow(f,'file');
+    pending.resolve({ok:true});await new Promise(setImmediate);
+    assert.equal(row.status.textContent,'');assert.equal(row.status.hidden,true);
+    assert.doesNotMatch(f.active().querySelector('[data-rq-error]').textContent || '',/文件已保存/);
+  }
+});
+
+test('attachment downloads require an explicit save receipt before reporting success', async () => {
+  for (const result of [undefined,{ok:false,reason:'磁盘空间不足'}]) {
+    const f = fixture({listAttachments:async()=>[{id:'file',filename:'report.md'}]});
+    f.context.soduWorkAPI.downloadAttachment = async () => result;
+    await f.api.open('review');const row = downloadRow(f,'file');
+    f.click('[data-rq-download]',{rqDownload:'file'});await new Promise(setImmediate);
+    assert.equal(row.status.textContent,result?.reason || '下载未完成');assert.equal(row.status.hidden,false);
+    assert.equal(row.button.disabled,false);
   }
 });
 
@@ -858,6 +1110,58 @@ test('untouched form defaults are not unsaved edits and reverting a draft remove
   f.click('[data-rq-edit-cancel]');
   assert.doesNotMatch(f.content().innerHTML, /rqEditForm/);
   assert.notEqual(f.active().querySelector('[data-rq-confirm]').hidden, false);
+});
+
+test('imported visibility follows the explicit repository scope without rewriting its stored value', async () => {
+  for (const [provider,visibilityScope,visibility,label,description] of [
+    ['github','organization','organization','同公司可见','同公司成员可查看需求内容'],
+    ['gitlab','repository','related','仓库成员可见','仓库成员可查看需求内容'],
+  ]) {
+    const writes = [];
+    const base = {...task('imported'),origin:provider+'_issue',visibility,canEditRequirement:true,readOnly:false,
+      requirementVersion:2,repositoryIssue:{provider,visibilityScope}};
+    const f = fixture({getTask:async()=>base,patchTask:async(id,patch)=>{
+      writes.push(patch);return {...base,...patch,requirementVersion:3};
+    }});
+    await f.api.open('imported');
+    assert.ok(f.content().innerHTML.includes('<dd>'+label+'</dd>'));
+    assert.ok(f.content().innerHTML.includes(description));
+    const form = editForm(f,'imported',assigneeSelect(''));
+    form.elements.visibility = {value:visibility,disabled:true};
+    f.click('[data-rq-edit]');
+    assert.match(f.content().innerHTML,/name="visibility"[^>]*disabled data-rq-locked/);
+    assert.match(f.content().innerHTML,new RegExp('<option value="'+visibility+'" selected>'+label+'</option>'));
+    form.elements.note.value = 'Updated background';
+    f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+    assert.equal(writes.length,1);assert.equal(Object.hasOwn(writes[0],'visibility'),false);
+    assert.ok(f.content().innerHTML.includes(description));
+  }
+});
+
+test('visibility edits retain organization and related values while explaining the selected audience', async () => {
+  for (const [before,after] of [['related','organization'],['organization','related']]) {
+    const writes = [];
+    const base = {...task('visibility'),origin:'gitlab_issue',repositoryIssue:{provider:'gitlab'},
+      canEditRequirement:true,readOnly:false,requirementVersion:3,visibility:before};
+    const f = fixture({getTask:async()=>base,patchTask:async(id,patch)=>{
+      writes.push({id,patch});return {...base,...patch,requirementVersion:4};
+    }});
+    await f.api.open('visibility');
+    assert.match(f.content().innerHTML,/同公司可见|仅相关人可见/);
+    const form = editForm(f,'visibility',assigneeSelect(''));
+    form.elements.visibility = {value:before};
+    f.click('[data-rq-edit]');
+    assert.match(f.content().innerHTML,/name="visibility"[^>]*aria-describedby="rqVisibilityHint"/);
+    assert.match(f.content().innerHTML,/value="organization"[^>]*>同公司可见/);
+    assert.doesNotMatch(f.content().innerHTML,/name="visibility"[^>]*disabled|仓库成员可见/);
+    form.elements.visibility.value = after;
+    f.active().listeners.submit({preventDefault(){},target:form});await new Promise(setImmediate);
+    assert.equal(writes.length,1);assert.equal(writes[0].patch.visibility,after);
+    assert.equal(writes[0].patch.requirementVersion,3);
+    const description = after === 'organization' ? '同公司成员可查看需求内容' : '仅相关人可查看需求内容';
+    assert.ok(f.content().innerHTML.includes(description));
+    assert.doesNotMatch(f.content().innerHTML,/团队可见/);
+  }
 });
 
 test('saving reports progress, blocks duplicate submission and closes without discard after success', async () => {

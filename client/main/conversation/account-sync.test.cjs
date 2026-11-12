@@ -268,6 +268,24 @@ test('account-only history preserves the original identity while default history
   assert.equal(legacy.id, 'native-1'); assert.equal(scans, 1);
   assert.equal(requests, 1);
 });
+for (const location of ['hub', 'source', 'replica', 'unknown']) {
+  test(`account directory preserves ${location} content location before native projection`, async t => {
+    const actor = require('../../tests/helpers/platform-session-fixture.cjs').identity();
+    let scans = 0;
+    const sync = require('./account-sync').create({ app: {}, store: { jobs: () => [] }, identityOf: () => actor,
+      resolveNativeSource: async () => { scans++; return { id: 'native-1', adapterId: 'pi', count: 2 }; },
+      fetch: async () => response({ items: [{ id: 'acct-1', sourceSessionId: 'native-1', sourceClientId: actor.clientId,
+        storageMode: 'endpoint', contentLocation: location, taskProjectionId: 'task-1', title: 'Original', messageCount: 2 }], hasMore: false }) });
+    t.after(() => sync.close());
+    const account = (await sync.history({ source: 'account' })).chats[0];
+    assert.equal(account.contentLocation, location);
+    assert.equal(account.storageMode, 'endpoint');
+    assert.equal(account.taskProjectionId, 'task-1');
+    const projected = (await sync.history()).chats[0];
+    assert.equal(projected.id, location === 'source' ? 'native-1' : 'acct-1');
+    assert.equal(scans, location === 'source' ? 1 : 0);
+  });
+}
 
 test('account-only forced refresh publishes current directory rows without native discovery', async t => {
   const actor = require('../../tests/helpers/platform-session-fixture.cjs').identity();

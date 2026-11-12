@@ -4,9 +4,11 @@
 // Only the authenticated source device may resolve it to a native archive.
 async function resolve({ app, session, item, identity }) {
   if (!item?.sourceSessionId || !identity?.clientId ||
-      item.sourceClientId !== identity.clientId) return null;
+      item.sourceClientId !== identity.clientId ||
+      item.contentLocation && item.contentLocation !== 'source') return null;
   const access = require('./history-access');
   const segments = require('./runtime-segments');
+  const captured = access.actor(app, identity);
   let id = String(item.sourceSessionId);
   const record = segments.list(app).find(row => row.id === id || row.active?.sessionId === id ||
     row.segments.some(part => part.sessionId === id));
@@ -21,8 +23,12 @@ async function resolve({ app, session, item, identity }) {
   if (accountView && live.inFlight?.()) return null;
   const row = live && !accountView ? live.historyRow?.() || { id, adapterId: live.adapterId }
     : await session.archivedConversation?.(app, id, { nativeOnly: true });
-  if (!row || row.accountConversation || row.accountProjection || row.adapterId === 'account-sync' || row.cloud) return null;
-  access.assertOwner(app, id, access.actor(app, identity), row);
+  if (!row || row.cached || row.accountConversation || row.accountProjection || row.adapterId === 'account-sync' || row.cloud) return null;
+  // The authenticated source locator does not establish native account/Hub
+  // provenance. Check the archive before promoting it to an executable source.
+  access.assertCurrent(app, captured, identity);
+  access.assertReadable(app, id, captured, row);
+  access.assertOwner(app, id, captured, row);
   const nativeIds = [...new Set([id, ...(record?.segments || []).map(part => part.sessionId),
     record?.active?.sessionId, item.sourceSessionId].filter(Boolean))];
   return { ...row, id, archived: archived || row.archived === true, nativeIds,

@@ -70,7 +70,13 @@ function create({ app, session, history, action, identityOf, accountHistory }) {
       await guard(true);
       return result?.ok ? { ok: true, conversation: metadata(result.conversation || row, identity) } : result;
     }
-    if (row.deleted) return { conversation: metadata(row, identity), items: [], cursor: after, hasMore: false };
+    if (row.deleted) {
+      await guard(true);
+      const access = require('../conversation/history-access'), captured = access.actor(app, identity);
+      access.assertLocalCurrent(app, captured, row, await identityOf(app));
+      access.assertReadable(app, row.id, captured, row);
+      return { conversation: metadata(row, identity), items: [], cursor: after, hasMore: false };
+    }
     const page = await history.read(row.id, { after, offset: after,
       limit, segmentId: args.segmentId });
     await guard(true);

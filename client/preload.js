@@ -485,6 +485,7 @@ const soduWorkBridge = {
   },
   previewAttachment: (payload) => ipcRenderer.invoke('attachment-preview', payload || {}),
   downloadAttachment: (payload) => ipcRenderer.invoke('attachment-download', payload || {}),
+  exportAcceptanceSummary: (payload) => ipcRenderer.invoke('acceptance-summary-export', payload || {}),
   readAttachmentBinary: (payload) => ipcRenderer.invoke('attachment-read-binary', payload || {}),
   /* Open library bytes retrieved by the renderer through authenticated requests. */
   openLibraryExternally: (payload) => ipcRenderer.invoke('library-open-external', payload || {}),

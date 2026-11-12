@@ -34,10 +34,14 @@ if (typeof electron === 'string') {
   }
   app.whenReady().then(async () => {
     global.fetch = async () => { throw Error('Passive history must not contact a server'); };
+    const fixtureIdentity = require('../tests/helpers/platform-session-fixture.cjs').identity;
+    let currentIdentity = fixtureIdentity();
     const file = path.join(app.getPath('userData'), 'pi-agent', 'sessions', 'native.jsonl');
-    const row = { id: 'native', path: file, adapterId: 'pi', title: 'Native history', count: 2 };
+    const row = { id: 'native', path: file, adapterId: 'pi', title: 'Native history', count: 2,
+      creator: { account: 'one', hub: currentIdentity.hub } };
     const store = require('../main/conversation/replica-store.cjs').createWorker(path.join(root, 'history.sqlite'));
     history = require('../main/conversation/shared-history.cjs').create({ app, store,
+      identityOf: () => currentIdentity,
       session: { archivedConversation: async () => row, historyEntry: async () => ({ ok: true, entry: row }),
         findBySessionId: () => null } });
     if (phase === 'seed') {
@@ -48,7 +52,8 @@ if (typeof electron === 'string') {
         { type: 'message', id: 'a', message: { role: 'assistant', content: [{ type: 'text', text: 'Native saved answer' }] } },
       ].map(value => JSON.stringify(value)).join('\n'));
       await history.projectRows([row]);
-      const [cached] = await store.register([{ id: 'copy', cached: true, adapterId: 'account-sync', title: 'Cached history' }]);
+      const [cached] = await store.register([{ id: 'copy', cached: true, adapterId: 'account-sync', title: 'Cached history',
+        source: { id: 'account-original', account: 'one', hub: currentIdentity.hub } }]);
       const messages = Array.from({ length: 5 }, (_, i) => [
         { id: 'u' + i, role: 'user', text: 'Saved question ' + i, done: true },
         ...(i > 0 ? [{ id: 'usage' + i, role: 'assistant', text: '', done: true }] : []),
@@ -58,6 +63,19 @@ if (typeof electron === 'string') {
     }
     const original = fs.readFileSync(file);
     const saved = JSON.stringify(await store.messages('copy'));
+    for (const next of [fixtureIdentity('two'), { ...fixtureIdentity(), hub: 'https://another-fixture.invalid' }, null]) {
+      currentIdentity = next;
+      const visible = (await history.list()).items;
+      for (const id of ['copy', 'native']) {
+        assert.equal(visible.some(item => item.id === id), false);
+        await assert.rejects(history.read(id), /账号|归属|登录|不存在/);
+        assert.equal(await history.open(id), null, 'Unauthorized history cannot expose a passive view');
+      }
+    }
+    currentIdentity = fixtureIdentity();
+    assert.equal((await history.list()).items.some(item => item.id === 'copy'), true);
+    report.cases.push('Cached transcript list, read and open reject other accounts and Hubs; returning to the original connection restores access.');
+    report.cases.push('Owned native history is hidden from other accounts, other Hubs and signed-out sessions; returning to its original account restores read-only access.');
     const snapshots = {};
     for (const id of ['copy', 'native']) {
       const view = await history.open(id);

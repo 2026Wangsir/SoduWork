@@ -363,7 +363,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
   const historyActions = require('./history-ipc').install({ app, ipcMain, session, BrowserWindow, dialog, shell,
     cloudHistory: _cloudHandoff, accountHistory: _accountSync, sharedHistory: _sharedHistory });
   require('../conversation/work-conversation-cards').install({ app, ipcMain, session, BrowserWindow,
-    identityOf: sendIdentityOf || identityOf, accountHistory: _accountSync,
+    identityOf: sendIdentityOf || identityOf, accountHistory: _accountSync, sharedHistory: _sharedHistory,
     newCwd: options => _newSessionCwd(app, 'chat-' + require('node:crypto').randomUUID(), options) });
   /*
    * Read fixed-name plugin drafts only from outputs of active registered sessions; never
@@ -492,11 +492,13 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       historyAccess.assertCurrent(app, requestActor, identity);
       const historyActor = historyAccess.actor(app, identity);
       const openingConnection = connectionOf(identity);
-      const assertHistoryCurrent = async () => {
+      const assertHistoryCurrent = async connectionError => {
         const current = await identityOf(app);
-        historyAccess.assertCurrent(app, historyActor, current);
         if (expectedIdentity && (!openingConnection || connectionOf(current) !== openingConnection))
           throw Error('连接环境已切换，本次自动化未启动');
+        if (connectionError && historyAccess.actor(app, current).owner === historyActor.owner &&
+            (!openingConnection || connectionOf(current) !== openingConnection)) throw Error(connectionError);
+        historyAccess.assertCurrent(app, historyActor, current);
         return current;
       };
       if (automationContext) automationAccess.assertCurrent(automationContext, identity);
@@ -635,7 +637,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
           'cloud-' + require('node:crypto').randomUUID());
         if (remote) {
           try {
-            const current = await assertHistoryCurrent();
+            const current = await assertHistoryCurrent('账号或服务已切换，请在当前连接重新打开会话');
             if (!openingConnection || connectionOf(current) !== openingConnection)
               throw Error('账号或服务已切换，请在当前连接重新打开会话');
           }

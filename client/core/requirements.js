@@ -133,18 +133,24 @@
     if (!item || (item.action === 'review' && !canReview(task))) return undefined;
     return item;
   }
+  function executionActive(task) {
+    const active = ['queued', 'starting', 'dispatching', 'running', 'working', 'streaming', 'waiting'];
+    return [task?.ai?.state, task?.ai?.executionState, task?.workRouting?.conversationTurn?.state]
+      .some(state => active.includes(state));
+  }
   function actionable(task, context) {
     if (stage(task) === 'closed') return false;
     if (stage(task) === 'reviewing' && task.canReview === true) return true;
     if (approvalActionable(task, context)) return true;
     if (task.canClaim === true) return true;
     if (stage(task) === 'delivered' || task.canViewExecution === false) return false;
-    if (task.status === 'done' && !task.reviewedAt) return false; // After submission, the reviewer owns the decision; role membership alone does not make it actionable.
     if (canSubmitReview(task) || canResumeRework(task)) return true;
     if (task.needsMe === true) return true;
     if (!roles(task).some(role => ['executor', 'assignee'].includes(role))) return false;
+    // Formal submission may retain status=doing; the reviewer now owns the decision.
+    if (stage(task) === 'reviewing') return task.ai?.attentionRaised === true;
     // Owning a device is not an instruction to interrupt its running agent.
-    if (['running', 'dispatching'].includes(task.ai?.state) && !task.ai.attentionRaised) return false;
+    if (executionActive(task) && !task.ai?.attentionRaised) return false;
     if (task.ai?.state === 'done') return false; // A decision comes from the approval queue, not a guessed role.
     return true;
   }
@@ -201,7 +207,7 @@
       return { text: labels[pending.action] || '查看证据并确认', action: '查看并确认', icon: 'confirm', attention: true };
     }
     if (phase === 'delivered') return { text: '查看成果与验收记录', action: '查看交付', icon: 'complete' };
-    if (phase === 'reviewing') return { text: '成果已提交，等待验收', action: '查看交付', icon: 'confirm' };
+    if (phase === 'reviewing') return { text: '已提交验收，等待验收人处理', action: '查看交付', icon: 'confirm' };
     if (canResumeRework(task)) return { text: '按验收意见继续修改', action: '继续修正', icon: 'edit', attention: true };
     if (canSubmitReview(task)) return { text: '本轮执行已结束，可提交验收', action: '查看并提交', icon: 'confirm', attention: true };
     if (task.ai?.state === 'failed') return { text: '执行未完成，查看原因', action: '查看执行情况', icon: 'attention', attention: actionable(task, context) };
@@ -209,6 +215,7 @@
       action: '查看执行情况', icon: task.ai.attentionRaised ? 'attention' : 'progress', attention: actionable(task, context) };
     if (task.status === 'paused') return { text: '已暂停，查看后安排继续', action: '查看进展', icon: 'pause', attention: actionable(task, context) };
     if (task.ai?.state === 'running') return { text: 'AI 正在执行，可查看进展', action: '查看进展', icon: 'progress' };
+    if (executionActive(task)) return { text: '执行已安排，可在“与我相关”查看进展', action: '查看进展', icon: 'progress' };
     if (task.ai?.state === 'done') return { text: '成果已返回，待确认', action: '查看交付', icon: 'confirm' };
     if (phase === 'intake') return { text: canEdit(task) ? '补充目标与完成标准' : '等待相关人梳理需求', action: canEdit(task) ? '完善需求' : '查看详情', icon: 'edit' };
     if (phase === 'clarifying') return { text: canEdit(task) ? '补齐背景与相关材料' : '等待相关人补充材料', action: canEdit(task) ? '完善需求' : '查看详情', icon: 'edit' };
@@ -231,16 +238,16 @@
   function canSubmitReview(task) {
     return Boolean(task && task.canSubmitReview === true && task.status === 'doing' &&
       stage(task) === 'delivering' && !task.archivedAt && !task.maintenanceBlocked &&
-      !['running', 'dispatching'].includes(task.ai?.state) &&
-      !['queued', 'starting', 'running', 'waiting'].includes(task.workRouting?.conversationTurn?.state));
+      !executionActive(task));
   }
   function canResumeRework(task) {
     return Boolean(task && task.canContinueExecution === true && task.workRouting?.reworkPending &&
       task.status === 'doing' && stage(task) === 'delivering' && !task.archivedAt && !task.maintenanceBlocked &&
-      !['running', 'dispatching'].includes(task.ai?.state) &&
-      !['queued', 'starting', 'running', 'waiting'].includes(task.workRouting?.conversationTurn?.state));
+      !executionActive(task));
   }
-  function canManageAutomation(task) { return capability(task, 'canManageRequirementAutomation'); }
+  function canManageAutomation(task) {
+    return Boolean(task && (!task.archivedAt || task.automationScheduleId) && capability(task, 'canManageRequirementAutomation'));
+  }
   // Definition editing, delivery operations and maintenance have separate capabilities.
   function executing(task) { return ['doing', 'paused', 'reviewing'].includes(task && task.status); }
   function maintenance(task, action) {

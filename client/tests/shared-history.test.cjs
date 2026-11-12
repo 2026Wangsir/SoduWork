@@ -26,9 +26,11 @@ function setup(t) {
     historyEntry: async () => fs.existsSync(file) ? { ok: true, entry: row } : { ok: false, notFound: true },
     findBySessionId: () => live, setArchived: (_app, id, value) => flags.set(id, value),
     forgetRunner: async () => ({ ok: false, notFound: true }) };
-  const history = create({ app, session, store, identityOf: () => current });
+  const identityOf = () => current;
+  const history = create({ app, session, store, identityOf });
   t.after(async () => { await history.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  return { root, file, app, row, session, store, history, flags, set live(value) { live = value; },
+  return { root, file, app, row, session, store, history, flags, identityOf,
+    set identity(value) { current = value; }, set live(value) { live = value; },
     switch(value) { current = value; } };
 }
 test('shared local reader opens native text without starting any account runtime', async t => {
@@ -43,6 +45,152 @@ test('shared local reader opens native text without starting any account runtime
   f.switch(identity('two'));
   assert.equal((await f.history.projectRows([f.row])).length, 0);
   assert.equal(await f.history.open('one'), null);
+});
+test('logout during a protected native transcript page cancels the read before returning local content', async t => {
+  const f = setup(t);
+  const metadata = path.join(f.root, 'requirement-session-context', require('node:crypto').createHash('sha256').update(f.row.id).digest('hex') + '.json');
+  fs.mkdirSync(path.dirname(metadata), { recursive: true });
+  fs.writeFileSync(metadata, JSON.stringify({ version: 1, owner: require('../main/platform-connections/runtime.cjs').scope(f.identityOf()) }));
+  await f.history.projectRows([f.row]);
+  let release, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  f.session.historyEntry = async () => { entered(); return new Promise(resolve => { release = () => resolve({ ok: true, entry: f.row }); }); };
+  const pending = f.history.read(f.row.id);
+  await waiting; f.identity = null; release();
+  await assert.rejects(pending, /账号(?:或服务)?已切换/);
+});
+
+test('cached pages reject same-account Hub or device changes while allowing same-connection renewal', async t => {
+  const f = setup(t), first = identity(), tokens = require('./helpers/platform-session-fixture.cjs').sessions();
+  await f.history.capture({ historyRow: () => ({ id: 'private', cloud: true }),
+    snapshot: () => ({ messages: [{ role: 'assistant', text: 'Private synthetic content' }] }) }, first);
+  const copy = (await f.history.list()).items[0], original = f.store.messages.bind(f.store);
+  for (const [next, allowed] of [[{ ...first, hub: 'https://another.invalid' }, false],
+    [{ ...first, clientId: 'device-two', session: tokens.otherDevice }, false],
+    [{ ...first, session: tokens.renewed }, true]]) {
+    f.identity = first;
+    let release, entered;
+    const waiting = new Promise(resolve => { entered = resolve; });
+    f.store.messages = (...args) => { entered(); return new Promise(resolve => { release = () => resolve(original(...args)); }); };
+    const pending = f.history.read(copy.id);
+    await waiting; f.identity = next; release();
+    if (allowed) assert.equal((await pending).items[0].text, 'Private synthetic content');
+    else await assert.rejects(pending, /账号(?:或服务)?已切换/);
+  }
+});
+test('protected local actions reject account changes during resolution before confirmation or revision replies', async t => {
+  const f = setup(t), first = identity();
+  await f.history.capture({ historyRow: () => ({ id: 'protected', cloud: true }),
+    snapshot: () => ({ messages: [{ role: 'assistant', text: 'Protected synthetic transcript' }] }) }, first);
+  const copy = (await f.history.list()).items[0];
+  await f.history.lifecycle(copy.id, 'archive');
+  const resolve = f.history.resolve.bind(f.history);
+  const action = require('../main/pi-session/local-history-actions.cjs').create({ ...f });
+  for (const [operation, options] of [['delete', {}], ['archive', { expectedRevision: 0 }]]) {
+    f.identity = first;
+    let release, entered, calls = 0;
+    const waiting = new Promise(done => { entered = done; });
+    f.history.resolve = async id => {
+      const row = await resolve(id);
+      if (++calls === 2) { entered(); await new Promise(done => { release = done; }); }
+      return row;
+    };
+    const pending = action(operation, copy.id, options);
+    await waiting; f.identity = identity('two'); release();
+    await assert.rejects(pending, /账号(?:或服务)?已切换/);
+    assert.equal(await resolve(copy.id), null);
+    assert.equal((await f.store.get(copy.id)).deleted, false);
+    assert.equal((await f.store.get(copy.id)).archived, true);
+  }
+});
+test('expired credentials cannot read a protected cached copy even with a remembered local owner', async t => {
+  const f = setup(t), first = identity();
+  await f.history.capture({ historyRow: () => ({ id: 'private-expiry', cloud: true }),
+    snapshot: () => ({ messages: [{ role: 'assistant', text: 'Protected synthetic transcript' }] }) }, first);
+  const copy = (await f.history.list()).items[0], auth = require('../main/device-auth'), prior = auth.localOwner;
+  auth.localOwner = () => require('../main/platform-connections/runtime.cjs').scope(first);
+  t.after(() => { auth.localOwner = prior; });
+  f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
+  assert.deepEqual((await f.history.list()).items, []);
+  await assert.rejects(f.history.read(copy.id), /不存在/);
+});
+test('multi-page native indexing removes protected rows collected before an account change', async t => {
+  const f = setup(t), first = identity();
+  await f.history.capture({ historyRow: () => ({ id: 'private-index', cloud: true }),
+    snapshot: () => ({ messages: [{ role: 'assistant', text: 'Protected synthetic transcript' }] }) }, first);
+  const copy = (await f.history.list()).items[0];
+  let pages = 0;
+  f.store.list = async () => {
+    if (++pages === 1) return { items: [copy], next: 1 };
+    f.identity = identity('two');
+    return { items: [], next: null };
+  };
+  await assert.rejects(f.history.indexedRows(false, 2), /账号(?:或服务)?已切换/);
+});
+test('deleted protected receipts remain private across account, Hub and signout changes', async t => {
+  const f = setup(t), owner = identity();
+  await f.history.capture({ historyRow: () => ({ id: 'private-receipt', cloud: true, title: 'Private receipt title' }),
+    snapshot: () => ({ messages: [{ role: 'assistant', text: 'Private receipt body' }] }) }, owner);
+  const copy = (await f.history.list()).items[0];
+  await f.history.lifecycle(copy.id, 'delete');
+  const remote = require('../main/pi-session/local-history-remote.cjs').create({ ...f });
+  for (const other of [identity('two'), { ...owner, hub: 'https://another.invalid' }, null]) {
+    f.identity = other;
+    assert.deepEqual((await f.history.list()).items, []);
+    await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /不存在/);
+  }
+  f.identity = owner;
+  const receipt = await remote({ action: 'read', id: copy.id }, async () => {});
+  assert.equal(receipt.conversation.title, 'Private receipt title');
+  assert.equal(receipt.conversation.deleted, true);
+  assert.deepEqual(receipt.items, []);
+  await f.history.projectRows([f.row]);
+  await f.history.lifecycle(f.row.id, 'delete');
+  f.identity = identity('two');
+  await assert.rejects(remote({ action: 'read', id: f.row.id }, async () => {}), /不存在/,
+    'ordinary deletion receipts cannot disclose the previous account history');
+  const resolve = f.history.resolve.bind(f.history);
+  f.identity = owner;
+  f.history.resolve = async id => { const row = await resolve(id); f.identity = identity('two'); return row; };
+  await assert.rejects(remote({ action: 'read', id: copy.id }, async () => {}), /账号(?:或服务)?已切换/);
+});
+for (const operation of ['archive', 'restore', 'delete']) {
+  test(`a late protected ${operation} commit cannot publish or return its payload to the next account`, async t => {
+    const f = setup(t), owner = identity(), deliveries = [];
+    await f.history.capture({ historyRow: () => ({ id: 'private-mutation', cloud: true, title: 'Private lifecycle title' }),
+      snapshot: () => ({ messages: [{ role: 'assistant', text: 'Private lifecycle body' }] }) }, owner);
+    const copy = (await f.history.list()).items[0];
+    if (operation === 'restore') await f.history.lifecycle(copy.id, 'archive');
+    const mutate = f.store.lifecycle.bind(f.store);
+    f.store.lifecycle = async (...args) => {
+      const result = await mutate(...args);
+      if (args[1] === operation) f.identity = identity('two');
+      return result;
+    };
+    const action = require('../main/pi-session/local-history-actions.cjs').create({ ...f,
+      BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: {
+        send: (_event, payload) => deliveries.push({ identity: f.identityOf(), payload }) } }] } });
+    await assert.rejects(action(operation, copy.id, { confirmed: true }), /账号(?:或服务)?已切换/);
+    assert.ok(deliveries.every(item => item.identity.session === owner.session), 'only the original account receives authorized notifications');
+    assert.equal(await f.history.resolve(copy.id), null);
+    const retained = await f.store.get(copy.id);
+    assert.equal(retained.deleted, operation === 'delete');
+    assert.equal(retained.archived, operation === 'archive');
+    assert.deepEqual((await f.history.list()).items, []);
+  });
+}
+test('ordinary local lifecycle cannot publish completion after signout', async t => {
+  const f = setup(t), deliveries = [], mutate = f.store.lifecycle.bind(f.store);
+  f.store.lifecycle = async (...args) => { const result = await mutate(...args); f.identity = null; return result; };
+  const action = require('../main/pi-session/local-history-actions.cjs').create({ ...f,
+    BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: (_event, payload) => deliveries.push(payload) } }] } });
+  await assert.rejects(action('archive', f.row.id), /账号(?:或服务)?已切换/);
+  assert.equal(deliveries.length, 0);
+  const retained = await f.store.get(f.row.id);
+  assert.equal(retained.archived, true, 'an accepted local mutation is retained without publishing to a new actor');
+  assert.equal(await f.history.resolve(f.row.id), null);
+  const access = require('../main/conversation/history-access');
+  assert.throws(() => access.assertOwner(f.app, f.row.id, access.actor(f.app, null), retained), /登录/);
 });
 test('legacy outbox recovery preserves sparse positions with bounded batches before metadata-only sync', async t => {
   const f = setup(t), original = f.store.cache.bind(f.store); let writes = 0;
@@ -177,7 +325,9 @@ test('remote lifecycle skips unrelated inventory and resolves all alias batches 
   await f.history.lifecycle('second-copy', 'restore', who);
   f.store.register([{ id: 'foreign-copy', cached: true, taskId: origin.taskId,
     source: { id: 'foreign-origin', account: 'one', hub: 'https://foreign.test' } }]);
-  await f.history.lifecycle('foreign-copy', 'archive', who);
+  f.identity = { ...who, hub: 'https://foreign.test' };
+  await f.history.lifecycle('foreign-copy', 'archive', f.identityOf());
+  f.identity = who;
   const rows = Array.from({ length: 205 }, (_, index) => ({ id: 'view-' + index, cloud: true,
     historyAliasIds: [index === 204 ? 'last-alias' : 'missing-' + index] }));
   rows.push({ id: 'task-view', taskId: origin.taskId, remoteProjection: true });
@@ -210,4 +360,42 @@ test('large cloud snapshots are cached in bounded batches without losing their t
   messages.splice(2);
   await f.history.capture(handle, identity());
   assert.equal((await f.history.read(copy.id)).items.length, 2);
+});
+
+test('verified same-account native history remains readable and manageable offline without execution authority', async t => {
+  const f = setup(t), first = identity(), auth = require('../main/device-auth'), previous = auth.localOwner;
+  await f.history.projectRows([f.row]);
+  auth.localOwner = () => require('../main/platform-connections/runtime.cjs').scope(first);
+  t.after(() => { auth.localOwner = previous; });
+  f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
+  const view = await f.history.open(f.row.id);
+  assert.equal(view.snapshot().messages[0].text, 'saved by Alice');
+  assert.equal((await view.send('must not execute')).accepted, false);
+  assert.equal((await f.history.lifecycle(f.row.id, 'archive')).conversation.archived, true);
+  assert.equal((await f.history.lifecycle(f.row.id, 'restore')).conversation.archived, false);
+  f.identity = { ...f.identityOf(), hub: 'https://another.invalid' };
+  assert.equal(await f.history.open(f.row.id), null);
+  assert.equal(await f.history.lifecycle(f.row.id, 'delete'), null);
+  assert.equal((await f.store.get(f.row.id)).deleted, false);
+});
+
+test('catalog scope retains persisted protection without disclosing protected IDs after credential expiry', async t => {
+  const f = setup(t), first = identity(), auth = require('../main/device-auth'), previous = auth.localOwner;
+  const scope = require('../main/platform-connections/runtime.cjs').scope(first);
+  const signals = [{ historyProtection: 'account' }, { acceptanceReview: true }, { requirementContext: { private: 'context' } },
+    { taskId: 'private-task' }, { taskRef: 'private-ref' }, { activeTaskId: 'private-active' },
+    { taskIds: ['private-task'] }, { taskBindings: [{ taskId: 'private-task' }] }];
+  await f.history.register(signals.map((signal, index) => ({ id: 'protected-catalog-' + index,
+    creator: f.row.creator, workOwner: scope, title: 'Private protected title', ...signal })));
+  const authorized = await f.history.page({ limit: 20 });
+  assert.equal(authorized.chats.length, signals.length);
+  assert.equal(authorized.localCatalog.items.length, signals.length);
+  assert.ok(!JSON.stringify(authorized.localCatalog).includes('private-'));
+  auth.localOwner = () => scope;
+  t.after(() => { auth.localOwner = previous; });
+  f.identity = { ...first, session: require('./helpers/platform-session-fixture.cjs').sessions().expired };
+  const denied = await f.history.page({ limit: 20 });
+  assert.deepEqual(denied.chats, []);
+  assert.deepEqual(denied.localCatalog.items, [], 'Catalog IDs and aliases obey the full row protection boundary');
+  assert.equal((await f.store.list({ limit: 20 })).items.length, signals.length, 'Filtering does not delete protected records');
 });

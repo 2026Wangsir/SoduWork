@@ -47,3 +47,46 @@ test('late company discovery does not replace current tools or reenable its cont
  wait.resolve({ok:true,tools:['private-old-tool']});await pending;
  assert.equal(current.disabled,true);assert.equal(f.layer.querySelector('[data-mcp-tools]').innerHTML,'');assert.equal(f.notice(),'');
 });
+
+
+function importFixture() {
+ const node=()=>({disabled:false,checked:false,hidden:false,textContent:'',innerHTML:'',
+  classList:{add(){}},nodes:new Map(),
+  querySelector(s){return this.nodes.get(s)||this.nodes.set(s,node()).get(s)}});
+ const layer=node(),window={};layer.isConnected=true;
+ let revision=0,imports=0,owner='alice';
+ const preview=deferred();
+ const api={taskStorageKey:()=>owner,previewMyMcpImport:()=>preview.promise,
+  importMyMcp:async()=>{imports++;return {imported:['fixture']}}};
+ const ctx={api,h:String,errorText:e=>e.message,say(){},viewRevision:()=>revision,
+  openModal(){revision++;layer.hidden=false;layer.nodes=new Map();return layer},
+  closeModal(){revision++;layer.hidden=true},load:async()=>{}};
+ vm.runInNewContext(source,{window});window.SoduWorkMcpManagement.openImport(ctx);
+ const submit=layer.querySelector('[data-mcp-import-do]'),consent=layer.querySelector('[data-mcp-import-consent]');
+ const choose=()=>layer.querySelector('[data-mcp-file]').onchange({target:{files:[{name:'fixture.json',size:20}]}});
+ const approve=()=>{consent.checked=true;consent.onchange()};
+ return {layer,ctx,submit,consent,choose,approve,preview,imports:()=>imports,switchOwner:()=>{owner='bob'}};
+}
+
+test('connector import enables after a preview finishes with consent already checked',async()=>{
+ const f=importFixture();
+ const pending=f.choose();f.approve();assert.equal(f.submit.disabled,true);
+ f.preview.resolve({summary:{total:1,importable:1},servers:[{name:'fixture',target:'https://example.invalid/mcp',importable:true}]});
+ await pending;assert.equal(f.submit.disabled,false);
+ await f.submit.onclick();assert.equal(f.imports(),1);assert.equal(f.layer.hidden,true);
+});
+
+test('connector import stays disabled without a file or with no importable connection',async()=>{
+ const f=importFixture();f.approve();assert.equal(f.submit.disabled,true);
+ await f.submit.onclick();assert.equal(f.imports(),0);
+ const pending=f.choose();f.approve();
+ f.preview.resolve({summary:{total:1,importable:0},servers:[]});await pending;
+ assert.equal(f.submit.disabled,true);await f.submit.onclick();assert.equal(f.imports(),0);
+});
+
+for(const leave of ['replace','switchOwner'])test('late connector import preview cannot enable submission after '+leave,async()=>{
+ const f=importFixture(),pending=f.choose();f.approve();
+ if(leave==='replace')f.ctx.openModal();else f.switchOwner();
+ f.preview.resolve({summary:{total:1,importable:1},servers:[]});await pending;
+ assert.equal(f.submit.disabled,true);await f.submit.onclick();assert.equal(f.imports(),0);
+});

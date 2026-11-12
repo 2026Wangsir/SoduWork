@@ -122,7 +122,10 @@ test('an old install card reads the latest same-key revision in its own conversa
   assert.equal(read.source.relative, 'v2/' + drafts.DRAFT_NAME);
   assert.equal(personal.preflight(read.body).ok, true);
   fs.writeFileSync(newPath, JSON.stringify({ ...body, resources: [], key: 'different-plugin', version: '1.0.2' }));
-  assert.equal(drafts.readSession(session, staleCard.artifactId).ok, false, 'a shared display name cannot redirect to another plugin key');
+  const separate = drafts.readSession(session, staleCard.artifactId);
+  assert.equal(separate.ok, true, separate.reason);
+  assert.equal(separate.body.key, body.key, 'a shared display name cannot redirect to another plugin key');
+  assert.equal(separate.body.version, '1.0.0');
 });
 
 test('a corrected same-path draft is read again from disk even if the caller holds an older snapshot', t => {
@@ -295,8 +298,9 @@ test('an old archive card cannot bypass its corrected manifest after candidate m
   assert.equal(drafts.readSession(session, old.artifactId).ok, true);
   fs.writeFileSync(path.join(cwd, drafts.DRAFT_NAME), JSON.stringify({ ...body, resources: [], version: '1.0.1' }));
   const result = drafts.readSession(session, old.artifactId);
-  assert.equal(result.ok, false, 'an archive without trustworthy key metadata must ask to refresh, never keep reading its stale bytes');
-  assert.match(result.reason, /新稿/);
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.body.key, body.key);
+  assert.equal(result.body.version, '1.0.1', 'verified archive key redirects the stale card to its corrected manifest');
 });
 
 test('draft access rejects in-progress turns, removed files, junctions and forged artifact IDs', t => {
@@ -437,6 +441,36 @@ test('end-to-end: real archive beside a real manifest is merged before the rende
     'same-directory package never reaches the item set as its own draft');
   const shown = publicDraft(handle(cwd));
   assert.ok(shown);
-  assert.equal(shown.pluginIdentity, 'name:' + candidates.slugName(body.name));
+  assert.equal(shown.pluginIdentity, 'key:' + body.key);
   assert.equal(shown.pluginSuperseded, false, 'public artifact carries an explicit, not-undefined flag');
+});
+
+
+test('merge: stable package keys keep different plugins with the same display name separate', () => {
+  const rows = candidates.mergePluginCandidates([
+    { ...draftRow('one', 'soduwork-plugin-draft.json', 'Weekly report', 100), pluginKey: 'weekly-sales' },
+    { ...draftRow('two', 'soduwork-plugin-draft.json', 'Weekly report', 200), pluginKey: 'weekly-finance' },
+  ]);
+  assert.equal(rows.filter(row => !row.pluginSuperseded).length, 2);
+  assert.notEqual(rows[0].pluginIdentity, rows[1].pluginIdentity);
+});
+
+
+test('archive discovery stops inflation at the declared entry size', t => {
+  const { cwd } = fixture(t);
+  const zlib = require('node:zlib');
+  const compressed = zlib.deflateRawSync(Buffer.alloc(1024 * 1024, 65));
+  const name = Buffer.from('plugin.json'), header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(8, 8);
+  header.writeUInt32LE(compressed.length, 18);
+  header.writeUInt32LE(1, 22);
+  header.writeUInt16LE(name.length, 26);
+  const bytes = Buffer.concat([header, name, compressed]);
+  assert.throws(() => require('../main/plugin-package-reader.cjs').readPersonalArchive(bytes), /无法解压/);
+  const file = path.join(cwd, 'oversized.soduwork-plugin');
+  fs.writeFileSync(file, bytes);
+  const item = candidates.describe(cwd, { path: file });
+  assert.equal(item.pluginName, '');
+  assert.equal(item.pluginKey, '', 'invalid metadata cannot merge with another plugin');
 });

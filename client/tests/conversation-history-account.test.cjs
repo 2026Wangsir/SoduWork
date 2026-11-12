@@ -35,7 +35,7 @@ test('local history follows the current account and rejects conflicting ownershi
   assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
   f.switch(identity());
-  f.write('requirement-session-context', id, { owner: scope(identity('two')) });
+  f.write('requirement-session-context', id, { version: 1, owner: scope(identity('two')) });
   assert.deepEqual(access.visible(f.app, rows).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, id, access.actor(f.app), rows[0]), /当前账号/);
 });
@@ -56,7 +56,7 @@ test('owned history survives expiry but stays isolated across accounts and signo
 });
 test('local read does not claim execution ownership and cloud flag alone is not authority', t => {
   const f = fixture(t);
-  f.write('requirement-session-context', 'alice', { owner: scope(identity('two')) });
+  f.write('requirement-session-context', 'alice', { version: 1, owner: scope(identity('two')) });
   assert.deepEqual(access.visible(f.app, [{ id: 'alice' }, { id: 'unknown', cloud: true }]).map(row => row.id), []);
   assert.throws(() => access.assertOwner(f.app, 'alice'), /当前账号/);
   f.write('conversation-handoffs', 'remote', { sessionId: 'remote', owner: connectionScope(identity()), entryKind: 'cloud' });

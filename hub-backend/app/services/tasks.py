@@ -15,7 +15,7 @@ _NL = chr(10)          # Join prompt lists with a literal newline to avoid fragi
 from .. import models
 from ..realtime import hub
 from ..schemas import task_to_api
-from .task_parse_contract import _PARSE_SYSTEM, _apply_scene, _extract_json, _sanitize_parsed
+from .task_parse_contract import _PARSE_SYSTEM, _apply_scene, _extract_json, _sanitize_parsed, _language_prompt
 from .task_parse_sources import _flow_choices, _parse_with_my_model
 
 # Map client camelCase keys to model fields.
@@ -361,7 +361,7 @@ async def get_task(session: AsyncSession, owner_id: str, tid: str,
 # Missing models, failures and invalid responses return an empty object for manual entry.
 
 
-async def parse_task_text(session: AsyncSession, text: str, client=None, model: str = "", *, automation=None, instruction=None, attachments=None) -> dict:
+async def parse_task_text(session: AsyncSession, text: str, client=None, model: str = "", *, automation=None, instruction=None, attachments=None, locale=None) -> dict:
     """Infer task fields, an explainable work scenario and a default workflow."""
     from datetime import datetime
     from . import work_catalog, automation_draft, task_parse_selection, task_parse_materials
@@ -401,6 +401,7 @@ async def parse_task_text(session: AsyncSession, text: str, client=None, model: 
         or "    （没有登记工程，repo 一律省略）",
     )
     system += automation_draft.prompt(draft)
+    system += _language_prompt(locale)
     out = ""
     if client is not None:
         out = await _parse_with_my_model(

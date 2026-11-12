@@ -51,12 +51,14 @@
   // cursor while the first session is still being prepared.
   let _capabilityPromise = Promise.resolve();
   let _capabilityRequestKey = '';
+  let _capabilityEpoch = 0;
   // A model/runtime change can happen while the first capability probe is
   // still warming the local runner.  Keep that change as a single coalesced
   // retry instead of chaining promises.  Chaining here made the UI keep the
   // loading state alive when model discovery and capability discovery
   // completed in a different order.
   let _capabilityRetryKey = '';
+  let _capabilityRetryPreserve = false;
   let _skillIconSeq = 0;
   const CAPABILITY_REQUEST_TIMEOUT_MS = 12000;
   let _plugins = [];
@@ -276,8 +278,10 @@
       if (_skillPicker) _skillPicker.setItems(decorated);
     }).catch(() => { /* plugin icons are optional; the Skill list is already usable */ });
   }
-  function _loadCapabilities(force) {
+  function _loadCapabilities(force, options = {}) {
+    const preserveSelection = options === true || options?.preserveSelection === true;
     const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
+    if (force === true) { _capabilityEpoch++; _skillIconSeq++; }
     if (_capLoading) {
       // Model discovery can finish after the initial capability request. If it
       // selected a concrete default model, request one replacement after the
@@ -286,8 +290,9 @@
       // recursively chained request: that chain can be replaced by a later
       // render and leave the button permanently marked as busy.
       const key = _capabilityKey();
-      if (force === true && key !== _capabilityRequestKey) {
+      if (force === true) {
         _capabilityRetryKey = key;
+        _capabilityRetryPreserve = preserveSelection;
       }
       return _capabilityPromise;
     }
@@ -308,6 +313,8 @@
     _capLoading = true;
     _capabilityRequestKey = _capabilityKey();
     const requestKey = _capabilityRequestKey;
+    const requestEpoch = _capabilityEpoch;
+    const keepSelection = preserveSelection;
     _skillIconSeq += 1;
     _renderCapabilities();
     const task = (async () => {
@@ -315,6 +322,7 @@
         const result = await _awaitCapability(api.capabilities({ force: force === true,
           adapterId: global.ComposeRuntime?.value?.() || 'pi', modelName: _pickedModel,
           executionLocation: global.ComposeExecution?.value?.() || 'local' }));
+        if (requestEpoch !== _capabilityEpoch) return;
         if (!result || result.ok === false) {
           _capabilities = [];
           const note = document.getElementById('cpCapNote');
@@ -329,7 +337,8 @@
         _skills = Array.isArray(result && result.skills) ? result.skills.slice() : [];
         const requested = Array.isArray(_requestedCapabilities) ? new Set(_requestedCapabilities.map(String)) : null;
         _pickedCapabilities = new Set(_capabilities.filter((item) =>
-          item.selectable && item.deviceGranted && (requested ? requested.has(item.id) : item.selected)).map((item) => item.id));
+          item.selectable && item.deviceGranted && (keepSelection ? _pickedCapabilities.has(item.id)
+            : requested ? requested.has(item.id) : item.selected)).map((item) => item.id));
         if (_skillPicker) {
           if (result.policyOk === false && typeof _skillPicker.setError === 'function') {
             _skillPicker.setError(result.policyReason || '\u56e2\u961f Skill \u6682\u65f6\u4e0d\u53ef\u7528');
@@ -344,6 +353,7 @@
         if (note) note.textContent = result && result.policyOk === false
           ? '\u56e2\u961f Skill \u6682\u65f6\u4e0d\u53ef\u7528\uff1b\u57fa\u7840\u80fd\u529b\u4ecd\u6309\u672c\u673a\u72b6\u6001\u63d0\u4f9b' : '';
       } catch (error) {
+        if (requestEpoch !== _capabilityEpoch) return;
         _capabilities = [];
         _skills = [];
         if (_skillPicker && typeof _skillPicker.setError === 'function') {
@@ -355,11 +365,13 @@
         _capLoading = false;
         _renderCapabilities();
         const retryKey = _capabilityRetryKey;
+        const preserve = _capabilityRetryPreserve;
         _capabilityRetryKey = '';
+        _capabilityRetryPreserve = false;
         // Re-probe once with the latest model/runtime selection.  Schedule it
         // after the current turn so callers awaiting the completed probe can
         // observe the settled loading state first.
-        if (retryKey) Promise.resolve().then(() => { void _loadCapabilities(true); });
+        if (retryKey) Promise.resolve().then(() => { void _loadCapabilities(true, preserve); });
       }
     })();
     _capabilityPromise = task;
@@ -930,6 +942,10 @@
     return openComposePanel(payload);
   }
   global.addEventListener?.('soduwork-data-scope-changed', () => {
+    _capabilityEpoch++; _skillIconSeq++;
+    _capabilities = []; _skills = [];
+    _skillPicker?.setItems([]);
+    if (_skillPicker) void _loadCapabilities(true);
     _closeRequirementPicker();
     _pluginsRequest++; _plugins = [];
     _composeViewSeq += 1; _pluginResolveSeq += 1; _pluginSelectSeq += 1;
@@ -937,6 +953,9 @@
     _entryContextPrompts = []; _entryPluginEditId = "";
     _restoreComposeDraft();
     _intent?.reset();
+  });
+  global.addEventListener?.('soduwork:skills-changed', () => {
+    if (_skillPicker) void _loadCapabilities(true, true);
   });
   global.openComposePanel = openComposePanel;
   // Task dispatch can start before the conversation view has ever been opened.

@@ -13,6 +13,7 @@ if (typeof electron === 'string') {
   const { spawn, execFileSync } = require('node:child_process'), { pathToFileURL } = require('node:url'), assert = require('node:assert/strict');
   const sourceManifest = require('./fixtures/account-source-manifest.cjs');
   const client = path.resolve(__dirname, '..'), repo = path.dirname(client);
+  const python = process.env.SODUWORK_TEST_PYTHON || path.join(repo, 'hub-backend/.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-account-http-'));
   const profile = path.join(temp, 'profile'); fs.mkdirSync(profile); app.setPath('userData', profile); app.disableHardwareAcceleration();
   const out = path.join(repo, 'outputs/email-change-20261024/http-e2e'); fs.mkdirSync(out, { recursive: true });
@@ -37,9 +38,8 @@ if (typeof electron === 'string') {
     await click(selector);
     assert.equal(await js(`document.activeElement===document.querySelector(${JSON.stringify(selector)})`), true, 'Typing must target the selected input');
     if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
-    for (const type of ['keyDown', 'keyUp']) await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
-      type, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2,
-    });
+    // Use the native editing command so hidden fixtures select reliably on every platform.
+    win.webContents.selectAll();
     await win.webContents.debugger.sendCommand('Input.insertText', { text: value }); await delay(20);
     assert.equal(await js(`document.querySelector(${JSON.stringify(selector)}).value`), value);
   }
@@ -96,7 +96,7 @@ if (typeof electron === 'string') {
   app.whenReady().then(async () => {
     const ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(Error('Fixture startup timeout: ' + serverErrors)), 25000);
-      server = spawn(path.join(repo, 'hub-backend/.venv/Scripts/python.exe'), ['-B', path.join(__dirname, 'fixtures/account_hub_fixture.py'), '--root', temp], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' } });
+      server = spawn(python, ['-B', path.join(__dirname, 'fixtures/account_hub_fixture.py'), '--root', temp], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' } });
       let stdout = ''; server.stdout.on('data', chunk => { stdout += chunk; const match = stdout.match(/ACCOUNT_FIXTURE_READY (\{[^\n]+\})/); if (match) { clearTimeout(timer); resolve(JSON.parse(match[1])); } });
       server.stderr.on('data', chunk => { serverErrors += chunk; }); server.on('error', reject);
     });
@@ -126,7 +126,7 @@ if (typeof electron === 'string') {
     await fill('#soduWorkAuthPassword', password); await fill('#acConfirmPassword', password); await click('#acConsent'); await click('.soduwork-auth-submit');
     await until('ClientAuth.snapshot().user?.email === ' + JSON.stringify(oldEmail));
     const userId = await js('ClientAuth.snapshot().user.id');
-    const avatar = execFileSync(path.join(repo, 'hub-backend/.venv/Scripts/python.exe'), ['-c',
+    const avatar = execFileSync(python, ['-c',
       'from PIL import Image; import io,base64; image=Image.new("RGB",(16,16),(52,144,222)); out=io.BytesIO(); image.save(out,format="PNG"); print("data:image/png;base64,"+base64.b64encode(out.getvalue()).decode())'], { encoding: 'utf8', windowsHide: true }).trim();
     await js('SoduWorkAPI.clientAccountRequest("profile", ' + JSON.stringify({displayName:'邮箱迁移验证用户',avatarDataUrl:avatar}) + ')');
     const before = await js('SoduWorkAPI.clientAuthMe().then(r=>r.user)');
@@ -158,10 +158,15 @@ if (typeof electron === 'string') {
     await fill('#soduWorkAuthAccount', oldEmail); await fill('#soduWorkAuthPassword', password); await click('.soduwork-auth-submit');
     await until('document.querySelector(".soduwork-auth-status").classList.contains("is-error") && !document.querySelector(".soduwork-auth-submit").disabled');
     assert.equal(await js('SoduWorkAPI.clientAuthSnapshot().user'), null); record('the old mailbox and existing password cannot log into the former account');
-    await click('[data-auth-mode="emailCode"]'); await fill('#soduWorkAuthAccount', oldEmail); await js('lastChallenge=null;void 0;'); await click('[data-send-code]');
-    await until('!!lastChallenge'); await fill('#acEmailCode', await deliveredCode(await js('lastChallenge'))); await click('.soduwork-auth-submit');
-    await until('document.querySelector(".soduwork-auth-status").classList.contains("is-error") && !document.querySelector(".soduwork-auth-submit").disabled');
-    assert.equal(await js('SoduWorkAPI.clientAuthSnapshot().user'), null); record('a freshly delivered code to the old mailbox cannot recover or sign into the former account');
+    await click('[data-auth-mode="emailCode"]'); await fill('#soduWorkAuthAccount', oldEmail); await js('lastChallenge=null;void 0;');
+    const mailBeforeOldAddress = await fixtureRequest('GET', 'mail-counts'); await click('[data-send-code]');
+    await until("document.querySelector('.soduwork-auth-status').textContent.includes('原密码') && !document.querySelector('[data-send-code]').disabled");
+    assert.equal(await js('lastChallenge'), null);
+    assert.equal(await js("document.querySelector('#soduWorkAuthAccount').value"), oldEmail);
+    assert.deepEqual(await fixtureRequest('GET', 'mail-counts'), mailBeforeOldAddress);
+    assert.equal(await js('SoduWorkAPI.clientAuthSnapshot().user'), null);
+    record('the old mailbox requests no login code and cannot recover the former account after email replacement');
+    assert.equal(await js("document.querySelector('.ac-auth-tabs').hidden"), false);
     await js('lastChallenge=null;void 0;'); await codeLogin(newEmail, userId);
     const after = await js('SoduWorkAPI.clientAuthMe().then(r=>r.user)');
     for (const field of ['id','username','displayName','orgId','roleId','isActive','hasPassword','avatarUrl']) assert.deepEqual(after[field], before[field], 'Retain account field ' + field);

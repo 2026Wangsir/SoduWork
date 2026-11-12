@@ -210,6 +210,9 @@
       read: folder === 'sent' || Boolean(old.read) || status === 'read' };
   }
   function receiptFor(row, old, meta) {
+    // Administrative publication notices keep their sent history without
+    // producing a second inbox notification for each delivery/read receipt.
+    if (row.kind === 'plugin_lifecycle') return null;
     // Maintain one receipt per message and merge legacy per-phase records.
     const state = old.reduce((value, item) => statusOrder[item.receiptStatus] > statusOrder[value] ? item.receiptStatus : value,
       row.status in statusOrder ? row.status : 'accepted');
@@ -333,6 +336,9 @@
       const conditional = cached?.store === cacheStamp() ? cached.revision : '';
       revisions.delete(key);
       let cursor = '', seen = new Set(), revision = '', consistent = true, finalRevision = '';
+      const priorPluginIds = new Set(readRows().filter(row => row.kind === 'plugin_lifecycle' &&
+        folderOf(row) === target).map(row => row.serverMessageId));
+      const visiblePluginIds = new Set();
       do {
         const result = await api().mateMessages(target, 200, cursor, cursor ? '' : conditional);
         if (!current(token)) return { ok: false, stale: true };
@@ -345,7 +351,7 @@
           if (!cursor && conditional && result.revision === conditional &&
               cached.store === cacheStamp()) {
             revisions.set(key, cached); refreshQuotaNotice();
-            return { ok: true, notModified: true };
+            return { ok: true, notModified: true, authorizedPluginIds: cached.authorizedPluginIds };
           }
           if (!cursor && conditional) return refreshUnconditionally();
           throw new Error('通知同步状态已变化，请重试');
@@ -353,16 +359,29 @@
         if (!cursor) revision = String(result.revision || '');
         if (result.revision && result.revision !== revision) consistent = false;
         if (!result.nextCursor) finalRevision = String(result.revision || '');
+        for (const item of result.items) if (item.kind === 'plugin_lifecycle' && belongsToAccount(item, target))
+          visiblePluginIds.add(String(item.id));
         if (!await merge(result.items, target, token, !result.nextCursor)) return { ok: false, stale: true };
         if (target === 'received') await acknowledge(result.items, token);
         cursor = String(result.nextCursor || '');
         if (cursor && seen.has(cursor)) throw new Error('通知分页没有继续前进，请重试');
         seen.add(cursor);
       } while (cursor && current(token));
-      const result = { ok: current(token) };
+      const result = { ok: current(token), authorizedPluginIds: visiblePluginIds };
       if (result.ok) {
-        if (revision && consistent && finalRevision === revision) revisions.set(key,
-          { revision, store: cacheStamp() });
+        if (revision && consistent && finalRevision === revision) {
+          // Company-scoped notices may leave an account's authorized snapshot.
+          // Only reconcile after all consistent pages, and keep events that
+          // arrived during this request plus ordinary coworker history.
+          await modify(token, () => commit(readRows().filter(row => row.kind !== 'plugin_lifecycle' ||
+            folderOf(row) !== target || !priorPluginIds.has(row.serverMessageId) ||
+            visiblePluginIds.has(row.serverMessageId)), token));
+          if (!current(token)) return { ok: false, stale: true };
+          if (!readRows().some(row => row.kind === 'plugin_lifecycle' && folderOf(row) === target &&
+              !visiblePluginIds.has(row.serverMessageId))) {
+            revisions.set(key, { revision, store: cacheStamp(), authorizedPluginIds: visiblePluginIds });
+          }
+        }
         refreshQuotaNotice();
       }
       return result;
@@ -445,7 +464,10 @@
   async function present(event) {
     const token = capture();
     // Authorize notifications against persisted records before showing content or sound; a socket event alone is insufficient.
-    try { await handle(event); } catch (_) { /* If delivery acknowledgment fails, evaluate the saved original message. */ }
+    let refreshed;
+    try { refreshed = await handle(event); } catch (_) { /* If delivery acknowledgment fails, evaluate the saved original message. */ }
+    if (event?.kind === 'plugin_lifecycle' && (!refreshed?.ok ||
+        !refreshed.authorizedPluginIds?.has(String(event.serverMessageId || '')))) return null;
     if (!current(token) || !canPresent(event)) return null;
     const isMessage = event.type === 'notice';
     const userId = String(api().clientAuthSnapshot?.().user?.id || '');
@@ -466,7 +488,11 @@
       saveMetadata({ ...meta,
         presentedIds: [...new Set([...(meta.presentedIds || []), ...markers])] });
       // Recheck account identity before presentation because it may change before a Promise callback runs.
-      return { text: row.bodyText || row.text || '', taskId: row.taskId || null, isCurrent: () => current(token) };
+      const fallback = row.bodyText || row.text || '', descriptor = row.textMessage;
+      const text = descriptor && typeof descriptor === 'object'
+        ? global.SoduWorkI18n?.t?.(String(descriptor.key || ''), String(descriptor.fallback || fallback), descriptor.params || {}) || fallback
+        : fallback;
+      return { text, taskId: row.taskId || null, isCurrent: () => current(token) };
     });
   }
   async function handle(event) {
@@ -478,7 +504,7 @@
       if (!current(token)) return;
       // Older events omit the recipient: use the authenticated inbox query
       // to establish ownership before persisting their body or acknowledging.
-      if (event.serverMessageId && event.recipientId && userId) {
+      if (event.kind !== 'plugin_lifecycle' && event.serverMessageId && event.recipientId && userId) {
         const item = { ...event, id: event.serverMessageId, createdAt: event.sentAt || event.createdAt };
         if (await merge([item], 'received', token)) await acknowledge([item], token);
       }
@@ -495,7 +521,7 @@
     if (!folder) return refresh(null, true);
     // Full server events can be reconciled immediately; older servers are
     // handled by the same durable list refresh below.
-    if (event.text != null && event.messageId) await merge([{ ...event, id: event.messageId,
+    if (event.kind !== 'plugin_lifecycle' && event.text != null && event.messageId) await merge([{ ...event, id: event.messageId,
       messageId: event.clientMessageId }], folder, capture());
     return refresh(folder, true);
   }

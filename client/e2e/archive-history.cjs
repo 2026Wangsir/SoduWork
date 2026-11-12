@@ -125,6 +125,23 @@ if (typeof electron === 'string') {
     await click('#archiveHistoryList .archive-history-delete');
     await until('!!document.querySelector("dialog[open]")');
     assert.equal(await js('document.querySelector("dialog h2").textContent'), 'Permanently delete this conversation?');
+    for (const theme of ['azure', 'ruby', 'steady', 'warm', 'minimal']) {
+      await js(`document.documentElement.dataset.theme=${JSON.stringify(theme)};void 0;`);
+      const colors = await js(`(()=>{const button=document.querySelector('.archive-delete-confirm'),
+        style=getComputedStyle(button);return {background:style.backgroundColor,text:style.color,
+          label:button.textContent,visible:button.checkVisibility()}})()`);
+      const rgb = color => color.match(/[\d.]+/g).map(Number);
+      const background = rgb(colors.background), foreground = rgb(colors.text);
+      const luminance = values => values.slice(0,3).map(value => value / 255)
+        .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
+        .reduce((sum, value, index) => sum + value * [.2126,.7152,.0722][index], 0);
+      assert.equal(background[3] ?? 1, 1, theme + ': permanent deletion has an opaque background');
+      const levels = [luminance(background), luminance(foreground)].sort((a,b) => b-a);
+      assert.ok((levels[0]+.05)/(levels[1]+.05) >= 4.5, theme + ': deletion label remains readable');
+      assert.ok(colors.visible && colors.label.trim(), theme + ': confirmation has a visible label');
+    }
+    fs.writeFileSync(path.join(out, 'delete-confirmation.png'), (await win.webContents.capturePage()).toPNG());
+    report.cases.push('Permanent deletion stays visible with readable text in all five themes');
     for (const type of ['keyDown', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: 'Escape' });
     await until('!document.querySelector("dialog")'); assert.equal(fs.existsSync(transcript), true);
     await click('#archiveHistoryList .archive-history-delete'); await click('.archive-delete-confirm');

@@ -15,6 +15,50 @@ const MAX_JSON_BYTES = 8 * 1024 * 1024, MAX_STORE_BYTES = 256 * 1024 * 1024, MAX
 const ACTIONS = new Set(['work.requirement.create', 'work.automation.create']);
 const queues = new Map();
 
+const protectionCache = new Map();
+const PROTECTION_PREFIX_BYTES = 8192;
+
+function protectionSummary(record) {
+  if (record?.version !== 1 || typeof record.sessionId !== 'string' || typeof record.owner !== 'string' || !Array.isArray(record.cards))
+    throw Error('Invalid work card metadata');
+  return { version: 1, owner: record.owner,
+    hasRequirement: record.protection?.hasRequirement === true ||
+      record.cards.some(card => card?.actionId === 'work.requirement.create') };
+}
+function protectionKey(stat) { return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':'); }
+function cacheProtection(file, stat, summary) {
+  protectionCache.delete(file); protectionCache.set(file, { key: protectionKey(stat), summary });
+  if (protectionCache.size > 128) protectionCache.delete(protectionCache.keys().next().value);
+  return summary;
+}
+function protection(app, id) {
+  const file = location(app, id);
+  try {
+    require('../plugin-resources').assertNoLinks(app.getPath('userData'), file);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STORE_BYTES) throw Error('Invalid work card metadata');
+    const cached = protectionCache.get(file);
+    if (cached?.key === protectionKey(stat)) return cached.summary;
+    const fd = fs.openSync(file, 'r'), bytes = Buffer.alloc(Math.min(PROTECTION_PREFIX_BYTES, stat.size));
+    try { fs.readSync(fd, bytes, 0, bytes.length, 0); } finally { fs.closeSync(fd); }
+    const prefix = bytes.toString('utf8');
+    // New records place the small authoritative header before attachment data.
+    const boundary = prefix.indexOf(',"cards":');
+    let legacyOwner = '';
+    if (boundary > 0) {
+      const header = JSON.parse(prefix.slice(0, boundary) + '}'), summary = header.protection;
+      if (header.version === 1 && header.sessionId === id && typeof header.owner === 'string') legacyOwner = header.owner;
+      if (header.version === 1 && header.sessionId === id && typeof header.owner === 'string' &&
+          summary?.version === 1 && summary.owner === header.owner && typeof summary.hasRequirement === 'boolean')
+        return cacheProtection(file, stat, summary);
+    }
+    if (stat.size > 2 * 1024 * 1024) return { unknown: true, owner: legacyOwner };
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (record.sessionId !== id) throw Error('Invalid work card identity');
+    return cacheProtection(file, stat, protectionSummary(record));
+  } catch (error) { if (error.code === 'ENOENT') return null; return { invalid: true }; }
+}
+
 const directory = app => path.join(app.getPath('userData'), 'conversation-work-cards');
 const location = (app, id) => path.join(directory(app), crypto.createHash('sha256').update(id).digest('hex') + '.json');
 const sessionId = value => {
@@ -122,6 +166,8 @@ async function diskRecord(app, id) {
       row.draftSelection = normalizeDraftSelection(row.draftSelection);
       if (!Number.isSafeInteger(row.draftSelectionRevision) || row.draftSelectionRevision < 1) throw Error('草稿执行选项版本无效');
     } else if (Object.hasOwn(row, 'draftSelectionRevision')) throw Error('草稿执行选项缺失');
+    const current = await fsp.lstat(file);
+    if (protectionKey(current) === protectionKey(stat)) cacheProtection(file, current, protectionSummary(row));
     return row;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
@@ -180,7 +226,8 @@ function removeReservedSelection(app, created, owner, selection) {
     const file = location(app, created.header.id), stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return;
     const expected = Buffer.from(JSON.stringify({ version: 1, sessionId: created.header.id, owner,
-      cards: [], draftSelection: selection, draftSelectionRevision: 1 }));
+      draftSelection: selection, draftSelectionRevision: 1,
+      protection: { version: 1, owner, hasRequirement: false }, cards: [] }));
     // Filesystem filters may report a container size rather than decoded bytes.
     // Read at most the exact expected payload plus one byte; never remove a
     // later writer's record or allocate from an untrusted reported file size.
@@ -201,7 +248,7 @@ function removeReservedSelection(app, created, owner, selection) {
   } catch (_) { /* Keep a later writer's card or selection record. */ }
 }
 
-function create({ app, identityOf, session, accountHistory, newCwd, loadStorageSdk: load, replace = fsp.rename, notify = () => {} }) {
+function create({ app, identityOf, session, accountHistory, sharedHistory, newCwd, loadStorageSdk: load, replace = fsp.rename, notify = () => {} }) {
   async function auth() {
     const identity = await identityOf(app);
     if (!identity) throw Error('请先登录 SoduWork');
@@ -221,6 +268,9 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
       throw Error('这条会话已经不存在，工作表单未保存');
     }
     await guard(captured);
+    const access = require('./history-access');
+    access.assertReadable(app, id, access.actor(app, captured.identity), { ...row, id });
+    if (row.cached === true) throw Error('这条会话是只读历史副本，不能保存工作表单');
     memories.binding(app, id, captured.identity);
     // usageIdentity contains Hub and client identifiers, not an account-signed credential.
     // Validate account ownership through persisted memory, requirement, and segment bindings rather than treating missing tokens as unauthorized history.
@@ -246,7 +296,8 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
     if (!draftOnly(id, row)) throw Object.assign(Error('会话已经开始执行，请使用当前会话的模型和 Agent 选择器'), { code: 'WORK_CONVERSATION_STARTED' });
   }
   async function writeRecord(id, captured, record, validate = resolve) {
-    const file = location(app, id), text = JSON.stringify(record);
+    const { cards, ...header } = record;
+    const file = location(app, id), text = JSON.stringify({ ...header, protection: protectionSummary(record), cards });
     if (Buffer.byteLength(text) > MAX_STORE_BYTES) throw Error('本会话的表单材料超过 256 MB，未保存，请减少附件或新建会话');
     await fsp.mkdir(directory(app), { recursive: true });
     const temp = file + '.' + crypto.randomUUID() + '.tmp';
@@ -337,12 +388,15 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
       const captured = await auth();
       // Cached local transcripts have no native work-card archive. Their scoped
       // index authorizes passive preparation only, never card writes or execution.
-      const cached = await session.indexedHistoryRow?.(id);
+      const cached = sharedHistory?.store
+        ? await sharedHistory.store.get(id) : await session.indexedHistoryRow?.(id);
       await guard(captured);
       if (cached?.cached === true && require('./shared-history.cjs').isLocalIdentity(cached, id)) {
         if (cached.deleted) throw Error('这条会话已经不存在，工作表单未保存');
-        return { ok: true, sessionId: cached.id, cards: [], workOnly: false,
-          draftSelection: null, draftSelectionRevision: 0 };
+        const access = require('./history-access');
+        access.assertReadable(app, cached.id, access.actor(app, captured.identity), cached);
+        return { ok: true, sessionId: cached.id, cards: [], presence: publicPresence({ ...cached, workOnly: false }),
+          workOnly: false, draftSelection: null, draftSelectionRevision: 0 };
       }
       let row = await resolve(id, captured, { allowMissing: true });
       if (accountHistory && (!row || row.accountProjection || row.adapterId === 'account-sync')) {
@@ -388,6 +442,7 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
         const saved = { ...card, revision: (before?.revision || 0) + 1, createdAt: before?.createdAt || at, updatedAt: at };
         if (index < 0) cards.push(saved); else cards[index] = saved;
         await writeRecord(id, captured, { version: 1, sessionId: id, owner: captured.owner, cards,
+          ...(previous ? { protection: protectionSummary(previous) } : {}),
           ...(previous?.draftSelection ? { draftSelection: previous.draftSelection,
             draftSelectionRevision: previous.draftSelectionRevision } : {}) });
         notify({ kind: 'work-card-saved', sessionId: id, ref: '', cardId: saved.id, revision: saved.revision,
@@ -410,7 +465,8 @@ function create({ app, identityOf, session, accountHistory, newCwd, loadStorageS
           throw Object.assign(Error('执行选项已在其他窗口更新，请重新打开会话后选择'), { code: 'STALE_DRAFT_SELECTION' });
         const revision = value.revision + 1;
         await writeRecord(id, captured, { version: 1, sessionId: id, owner: captured.owner,
-          cards: previous?.cards || [], draftSelection: selected, draftSelectionRevision: revision }, async (key, actor) => {
+          cards: previous?.cards || [], ...(previous ? { protection: protectionSummary(previous) } : {}),
+          draftSelection: selected, draftSelectionRevision: revision }, async (key, actor) => {
           const latest = await resolve(key, actor); assertDraftOnly(key, latest); return latest;
         });
         return { ok: true, draftSelection: selected, draftSelectionRevision: revision };
@@ -460,4 +516,4 @@ function install({ ipcMain, BrowserWindow, ...options }) {
   }
   return controller;
 }
-module.exports = { create, install, normalizeCard, visibleHistory, assertCreatedTask, location, ENTRY_TYPE, MAX_FILES, MAX_FILE_BYTES, MAX_STORE_BYTES };
+module.exports = { protection, create, install, normalizeCard, visibleHistory, assertCreatedTask, location, ENTRY_TYPE, MAX_FILES, MAX_FILE_BYTES, MAX_STORE_BYTES };

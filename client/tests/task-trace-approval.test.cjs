@@ -37,6 +37,7 @@ function fixture(approval = {}, decide = async () => ({ok: true, request: {statu
   const root = {contains: () => true, querySelectorAll: () => [], addEventListener: (type, handler) => { handlers[type] = handler; }};
   const apiImpl = {
     decideApproval: (...args) => { calls.push(args); return decide(...args); },
+    getAcceptanceContext: async () => ({artifactVersionId:'fixed-v1', criteria:[{id:'c1', label:'Reviewable result'}]}),
   };
   const context = {window: {petSay: text => notices.push(text), SoduWorkAPI: apiImpl, SoduWorkAPI: apiImpl}};
   vm.runInNewContext(source, context);
@@ -114,6 +115,56 @@ test('独立验收会话携带模式与审批票，打开失败可重试且不�
   assert.equal(closed, 1);
 });
 
+test('automatic review checks frozen criteria and version before opening or dismissing details', async () => {
+  for (const context of [
+    {artifactVersionId:'fixed-v1', criteria:[]},
+    {artifactVersionId:'fixed-v1'},
+    {artifactVersionId:'fixed-v1', criteria:'Not an itemized list'},
+    {criteria:[{id:'c1', label:'Reviewable result'}]},
+    {artifactVersionId:'', criteria:[{id:'c1', label:'Reviewable result'}]},
+    null,
+  ]) {
+    const f = fixture({action:'review'});
+    let opened = 0, dismissed = 0;
+    f.window.SoduWorkAPI.getAcceptanceContext = async () => context;
+    f.window.openTaskConversation = async () => { opened++; return true; };
+    const options = {approvalId:'gate-1', acceptanceMode:'auto', onOpened:()=>dismissed++};
+    await assert.rejects(f.api.openAcceptance({id:'task-1'}, options), /验收标准和固定交付版本/);
+    assert.equal(opened, 0); assert.equal(dismissed, 0);
+    assert.equal(await f.api.openAcceptance({id:'task-1'}, {...options, acceptanceMode:'manual'}), true);
+    assert.equal(opened, 1); assert.equal(dismissed, 1, 'manual review remains available after failed automatic preflight');
+  }
+});
+
+test('automatic preflight uses frozen approval criteria and allows retry after criteria are supplied', async () => {
+  const f = fixture({action:'review'}), calls = [];
+  let context = {artifactVersionId:'fixed-v1', criteria:[]};
+  f.window.SoduWorkAPI.getTask = async () => ({id:'task-1', acceptanceCriteria:[]});
+  f.window.SoduWorkAPI.getAcceptanceContext = async () => context;
+  f.window.openTaskConversation = async (...args) => { calls.push(args); return true; };
+  await assert.rejects(f.api.openAcceptance({id:'task-1'}, {acceptanceMode:'auto'}), /验收标准/);
+  assert.equal(calls.length, 0);
+  context = {artifactVersionId:'fixed-v1', criteria:[{id:'c1', label:'Frozen review criterion'}]};
+  assert.equal(await f.api.openAcceptance({id:'task-1'}, {acceptanceMode:'auto'}), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2].acceptanceMode, 'auto');
+});
+
+test('unavailable automatic preflight never navigates and manual review remains usable', async () => {
+  for (const available of [false, true]) {
+    const f = fixture({action:'review'});
+    let opened = 0;
+    if (available) f.window.SoduWorkAPI.getAcceptanceContext = async () => { throw Error('Acceptance service unavailable'); };
+    else delete f.window.SoduWorkAPI.getAcceptanceContext;
+    f.window.openTaskConversation = async () => { opened++; return true; };
+    await assert.rejects(f.api.openAcceptance({id:'task-1'}, {acceptanceMode:'auto'}),
+      available ? /Acceptance service unavailable/ : /无法读取验收条件/);
+    assert.equal(opened, 0);
+    assert.equal(await f.api.openAcceptance({id:'task-1'}, {acceptanceMode:'manual'}), true);
+    assert.equal(opened, 1);
+  }
+});
+
 test('同一执行人与验收人优先复用原执行会话，原会话缺失时由导航层回退新会话', async () => {
   const f = fixture({action: 'review'}), calls = [];
   f.window.Requirements = require('../core/requirements.js');
@@ -187,6 +238,7 @@ test('重复点击验收入口只打开一个会话，失败后仍可重试', as
   const first = f.api.openAcceptance(task, {acceptanceMode: 'auto', approvalId: 'gate-1'});
   const second = f.api.openAcceptance(task, {acceptanceMode: 'manual', approvalId: 'gate-1'});
   assert.strictEqual(first, second);
+  await settle();
   assert.equal(calls.length, 1);
   finish(true);
   assert.equal(await first, true);

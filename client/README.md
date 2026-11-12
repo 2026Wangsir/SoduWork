@@ -28,6 +28,12 @@ The desktop rail opens the requirement pool directly. The old task board, detail
 
 HTML script order defines dependencies. When splitting scripts, verify resource references, shared state, loading order, and actual Electron behavior.
 
+Native history and downloaded conversation replicas retain their account and Hub boundaries when listed, read, restored, or changed, including offline use. Unknown-owner archives require explicit import as separate read-only copies. Cached content does not grant permission to execute a requirement or cloud conversation; resolving a verified native source must preserve its original runtime, model, and permissions.
+
+Remote notice history and receipt markers use account-scoped IndexedDB transactions and Web Locks when both browser capabilities are available. Local reminders remain in the existing localStorage cache. Migration retires a legacy snapshot only after a successful durable commit, and a failed write preserves that snapshot for retry. Environments without these capabilities keep the existing cache behavior.
+
+The requirement delivery section can export one acceptance summary as Markdown through the native save dialog. Export requires execution-record access and an existing fixed delivery version. It reads one consistent snapshot, separates current requirement text from recorded acceptance criteria, and leaves missing validation or runtime attribution explicitly unrecorded. Exporting does not approve or change the requirement.
+
 ## Run and verify
 
 For a first local session, run `sh start.sh --desktop` from the repository root. For independent development, keep Hub running and execute:
@@ -43,6 +49,8 @@ Use Node.js 22.19+. A separately started client retains its own profile and Hub 
 Development Runner execution uses the virtual environment and source in `../hub-backend/`; do not substitute a Runner copied from an old release.
 
 Run `npm test` for unit/contract tests and `npm run check:layout` for source boundaries. Inspect the requirements of each `e2e/` script before using it. Fixture success does not establish real-model or production acceptance.
+
+To verify summary export against a disposable authenticated Hub, run `node e2e/acceptance-summary-export.cjs /absolute/evidence/directory /path/to/test/python`. The Python environment needs the backend test dependencies. This exercises native IPC and saved bytes with injected save-dialog choices, not a real model or production account.
 
 ## Packaging
 

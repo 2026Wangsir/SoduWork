@@ -18,10 +18,12 @@ function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-native-reopen-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = { getPath: () => root }, actor = identity();
-  let currentActor = actor;
+  let currentActor = options.anonymous ? null : options.otherHub ? { ...actor, hub: 'https://other.invalid' } : actor;
   const file = path.join(root, 'native-session.jsonl');
   const row = { id: 'native-session', adapterId: options.adapterId || 'pi', title: 'Saved conversation',
-    path: file, cwd: root, count: 2, at: Date.now(), workOwner: ownership.scope(options.otherOwner ? identity('two') : actor) };
+    path: file, cwd: root, count: 2, at: Date.now(), workOwner: ownership.scope(options.otherOwner ? identity('two') : actor),
+    creator: { account: options.otherOwner ? 'two' : 'one', hub: actor.hub } };
+  if (options.unknownOwner) { delete row.workOwner; delete row.creator; }
   fs.writeFileSync(file, '{"role":"user","content":"Original question"}\n{"role":"assistant","content":"Original answer"}\n');
   const item = { id: 'acct-native-session', sourceSessionId: row.id,
     sourceClientId: options.otherDevice ? 'other-device' : actor.clientId };
@@ -35,6 +37,7 @@ function fixture(t, options = {}) {
       retired.push(id);
       if (options.closeUnconfirmed) return false;
       if (options.switchAccountDuringClose) currentActor = identity('two');
+      if (options.switchHubDuringClose) currentActor = { ...actor, hub: 'https://other.invalid' };
       live.delete(id);
       return true;
     },
@@ -69,6 +72,7 @@ function fixture(t, options = {}) {
         openProjection: async id => {
           if (item.deleted) return null;
           if (options.switchAccountDuringProjection) currentActor = identity('two');
+          if (options.switchHubDuringProjection) currentActor = { ...actor, hub: 'https://other.invalid' };
           if (options.lateNative) live.set(row.id, nativeHandle());
           return [item.id, row.id].includes(id) ? projection(id) : null;
         },
@@ -102,6 +106,17 @@ function fixture(t, options = {}) {
   if (options.passiveLive) live.set(row.id, projection(row.id));
   return { row, item, opens, views, reads, retired, restart,
     open: raw => context.openConversation(event, raw) };
+}
+
+for (const location of ['hub', 'replica', 'unknown', 'source']) {
+  test(`account content location ${location} controls native resume authority`, async t => {
+    const f = fixture(t);
+    f.item.contentLocation = location;
+    const result = await f.open({ chatId: f.item.id, accountConversation: true, adapterId: 'account-sync' });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(f.opens.length, location === 'source' ? 1 : 0);
+    assert.equal(result.snapshot.adapterId, location === 'source' ? 'pi' : 'account-sync');
+  });
 }
 
 for (const { id: adapterId } of require('../main/agent-runtime/runtime-catalog').runtimes()) {
@@ -207,6 +222,44 @@ test('an account alias cannot start a native archive owned by another account', 
   assert.equal(f.opens.length, 0);
   assert.equal(f.views.length, 0);
 });
+
+test('the same account on another Hub cannot promote a local source archive to execution', async t => {
+  const f = fixture(t, { otherHub: true });
+  const result = await f.open({ chatId: f.item.id });
+  assert.equal(result.ok, false);
+  assert.equal(f.opens.length, 0);
+  assert.equal(f.views.length, 0);
+});
+
+test('a signed-out account alias cannot read or execute its retained native archive', async t => {
+  const f = fixture(t, { anonymous: true });
+  const result = await f.open({ chatId: f.item.id });
+  assert.equal(result.ok, false);
+  assert.equal(result.snapshot, undefined);
+  assert.equal(f.opens.length, 0);
+  assert.equal(f.views.length, 0);
+});
+
+test('an unknown source archive is not implicitly claimed by an authenticated account alias', async t => {
+  const f = fixture(t, { unknownOwner: true });
+  const before = fs.readFileSync(f.row.path, 'utf8');
+  const result = await f.open({ chatId: f.item.id });
+  assert.equal(result.ok, false);
+  assert.equal(f.opens.length, 0);
+  assert.equal(f.views.length, 0);
+  assert.equal(fs.readFileSync(f.row.path, 'utf8'), before);
+});
+
+for (const phase of ['Close', 'Projection']) {
+  test(`a Hub switch during ${phase.toLowerCase()} cannot promote the prior Hub native archive`, async t => {
+    const f = fixture(t, phase === 'Close' ? { passiveLive: true, switchHubDuringClose: true }
+      : { coldDirectory: true, switchHubDuringProjection: true });
+    const result = await f.open({ chatId: f.item.id });
+    assert.equal(result.ok, false);
+    assert.equal(f.opens.length, 0);
+    assert.equal(f.views.length, 0);
+  });
+}
 
 test('a missing native archive does not manufacture a fresh executable session', async t => {
   const f = fixture(t, { missingArchive: true });

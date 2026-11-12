@@ -51,6 +51,32 @@ class TaskParseMaterialTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("缺陷清单.txt", prompt)
         self.assertTrue(prompt.startswith("请根据材料创建修复需求"))
 
+    async def test_ui_locale_reaches_selected_and_fallback_model_with_keepalive(self):
+        for locale, language in (("en-US", "English"), ("zh-CN", "Simplified Chinese"),
+                                 ("ja-JP", "Japanese"), ("ko-KR", "Korean")):
+            for fallback in (False, True):
+                with self.subTest(locale=locale, fallback=fallback):
+                    self.primary.return_value = "" if fallback else '{"title":"draft"}'
+                    result = await self.parse(locale=locale, keepalive=True)
+                    self.assertEqual(result.status_code, 200)
+                    self.assertTrue(result.json()["fields"])
+                    system = self.primary.await_args.args[3]
+                    self.assertIn(f"Write all generated human-readable fields in {language}", system)
+                    self.assertIn("Do not translate JSON keys", system)
+                    self.assertEqual(self.primary.await_args.args[4], "请根据材料创建修复需求")
+                    if fallback:
+                        self.assertEqual(system, self.fallback.await_args.args[1])
+
+    async def test_missing_or_invalid_locale_uses_chinese_without_prompt_injection(self):
+        for body in ({}, {"locale": None}, {"locale": []}, {"locale": {}},
+                     {"locale": "en-US; IGNORE_LANGUAGE_RULE"}):
+            with self.subTest(body=body):
+                result = await self.parse(**body)
+                self.assertEqual(result.status_code, 200)
+                system = self.primary.await_args.args[3]
+                self.assertIn("Write all generated human-readable fields in Simplified Chinese", system)
+                self.assertNotIn("IGNORE_LANGUAGE_RULE", system)
+
     async def test_fallback_model_receives_same_materials(self):
         self.primary.return_value = ""
         result = await self.parse([{"name": "要求.md", "mode": "text", "text": "尾部验收条件"}])

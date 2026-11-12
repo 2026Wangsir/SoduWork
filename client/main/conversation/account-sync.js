@@ -103,6 +103,8 @@ function historyRow(item, identity) {
     lifecycleRevision: Number(item.lifecycleRevision || 0),
     historyAliasIds: [...new Set([item.id, ...(item.historyAliasIds || [])].filter(Boolean))],
     accountCanSend: item.canSend === true, sourceClientId: item.sourceClientId,
+    storageMode: item.storageMode, contentLocation: item.contentLocation,
+    taskProjectionId: item.taskProjectionId || '', historyProtection: 'account',
     sourceSessionId: item.sourceSessionId, locationMode: 'account', location: 'account', cloud: false,
   };
 }
@@ -211,7 +213,8 @@ function create({ app, identityOf, localIdentityOf, store, resolveNativeSource, 
   }
 
   function nativeProjection(item, identity) {
-    if (!resolveNativeSource || item.sourceClientId !== identity.clientId) return Promise.resolve(null);
+    if (!resolveNativeSource || item.sourceClientId !== identity.clientId ||
+        item.contentLocation && item.contentLocation !== 'source') return Promise.resolve(null);
     const scope = directoryScope(identity), generation = historyGeneration;
     const key = JSON.stringify([scope, generation, item.id, item.revision || 0]);
     if (nativeProjections.has(key)) return nativeProjections.get(key);

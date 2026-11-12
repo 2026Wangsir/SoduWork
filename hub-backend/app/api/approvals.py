@@ -168,7 +168,7 @@ async def inbox(view: str = "pending", limit: int = 60,
             # The requirement board needs the complete relationship, not just
             # the first page of detailed approval cards. Never include evidence.
             "pendingTasks": [{"taskId": row.task_id, "id": row.id,
-                              "action": row.action} for row in pending],
+                              "action": row.action, "artifactVersionId": row.artifact_version_id} for row in pending],
             "mineWaiting": mine_waiting}
 
 

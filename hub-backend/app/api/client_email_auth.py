@@ -72,7 +72,8 @@ async def challenge(body: ChallengeRequest, request: Request,
             raise client_access.ClientAccessError("此验证码用途需要登录验证", code="CHALLENGE_PURPOSE_INVALID", status=422)
         if body.purpose == "register" and not (await client_access.policy(session))["allowSelfRegistration"]:
             raise client_access.ClientAccessError("自助注册已关闭", code="SELF_REGISTRATION_DISABLED", status=403)
-        # Identical response and mail shape for existing and unknown accounts.
+        # Login challenges check registration before issuing mail; other public
+        # purposes retain their existing proof and account-ownership rules.
         return await email_auth.request_challenge(session, email=body.email, purpose=body.purpose,
             device_id=body.device, remote_ip=request.client.host if request.client else "")
     except client_access.ClientAccessError as exc:
