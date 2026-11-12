@@ -29,17 +29,17 @@ pending. This workflow neither creates a Release nor supplies
 upgrade-acceptance receipts to `Public release`.
 
 1. Set the repository variable `PUBLIC_RELEASE_REPOSITORY` to the final public repository's `owner/name`. The workflow must exist on the default branch before its manual entry appears in Actions.
-2. Protect `release/source-*`, `release/client-*` and `release/hub-*`, prohibit force pushes and restrict updates to maintainers. Protect `source-v*`, `client-v*` and `hub-v*`; prohibit moving or deleting published tags.
+2. Protect `release/*`, prohibit force pushes and restrict updates to maintainers. Protect `v*`; prohibit moving or deleting published tags.
 3. Create the `public-release` Environment in advance, configure **Required reviewers**, restrict deployment to protected release branches and disable administrator bypass. Configure self-review according to team responsibilities. Preflight checks the actual reviewer gate through the GitHub API and fails if it is missing; it does not rely on YAML to create the environment automatically.
 4. Keep `GITHUB_TOKEN` read-only by default. Only the approved publication job receives `contents: write` and `actions: read`. Do not configure company credentials, cluster addresses, private registries, upload tokens or SSH keys. PR jobs receive no release credentials; these workflows do not use `pull_request_target` or self-hosted runners.
 5. Allow the official checkout/setup/artifact actions pinned to commit SHAs. Artifacts are downloaded from the current run; final publication uses the candidate's immutable artifact ID. Candidates are retained for 30 days and must be approved before expiry. Expired or missing artifacts require a new candidate, not receipts borrowed from another run.
 
 ## Release procedure
 
-1. Create `release/<component>-X.Y.Z` from reviewed public source. Client package/version/lock fields must agree. Source and Hub versions are frozen by the branch and input, recorded in receipts, and also written to Hub OCI labels.
+1. Create one unified `release/X.Y.Z` branch from reviewed public source. Client and Hub use the same X.Y.Z version; the version is recorded in receipts and written to Hub OCI labels.
 2. Manually run **Public release** on that branch with the matching component and version. Build and accept each candidate once. A source fix creates a new SHA and requires a new candidate.
 3. After candidate preparation, stop at the `public-release` approval gate. For preparation-only work, do not create a formal tag or approve publication.
-4. Review the receipts, create `component-vX.Y.Z` at **the same SHA**, then approve the original run. Before publishing, the workflow rechecks the remote release branch head, lightweight or annotated tag, source version, run ID, all platform receipts and file digests.
+4. Review the receipts, create `vX.Y.Z` at **the same SHA**, then approve the original run. Before publishing, the workflow rechecks the unified release branch head, lightweight or annotated tag, source version, run ID, all platform receipts and file digests.
 5. Create a draft Release, upload the original bytes and download each asset for verification. Publish only after all checks pass, then verify complete anonymous downloads. Never rebuild or overwrite assets. Retry only the publication job after a network failure. A draft from the same run can resume; a Release belonging to another run or containing different bytes is rejected.
 6. Preserve the release branch head and tag. Merge release completion work into the public mainline while preserving history. New changes belong to a new version.
 

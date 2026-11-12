@@ -9,7 +9,7 @@ on:
         options: [source, client, hub]
         required: true
       version:
-        description: Version X.Y.Z matching the protected release/<component>-X.Y.Z branch
+        description: Unified version X.Y.Z matching the protected release/X.Y.Z branch
         type: string
         required: true
 
@@ -192,7 +192,7 @@ jobs:
       - name: Explain the manual gate
         shell: bash
         run: |
-          echo 'Candidate passed. Create the protected component-vX.Y.Z tag at this exact commit, then approve public-release. Do not start another run or rebuild.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Candidate passed. Create the protected vX.Y.Z tag at this exact commit, then approve public-release. Do not start another run or rebuild.' >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA / Run: $GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
     outputs:
       artifact-id: ${{ steps.candidate.outputs.artifact-id }}

@@ -40,13 +40,13 @@ def context(env=None):
     repo = env.get("GITHUB_REPOSITORY", "")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo), "Invalid repository")
     require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "Release requires workflow_dispatch")
-    require(env.get("GITHUB_REF") == f"refs/heads/release/{component}-{version}", "Use the matching release branch")
+    require(env.get("GITHUB_REF") == f"refs/heads/release/{version}", "Use the matching unified release branch")
     require(env.get("GITHUB_REF_PROTECTED") == "true", "Release branch must be protected")
     require(env.get("PUBLIC_RELEASE_REPOSITORY") == repo, "Configure PUBLIC_RELEASE_REPOSITORY explicitly")
     sha, run = env.get("GITHUB_SHA", ""), env.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[a-f0-9]{40}", sha) and re.fullmatch(r"[1-9]\d*", run), "Missing GitHub identity")
     return dict(schema=1, component=component, version=version, repository=repo,
-                commit=sha, runId=run, tag=f"{component}-v{version}")
+                commit=sha, runId=run, tag=f"v{version}")
 
 
 def api(route, optional=False):

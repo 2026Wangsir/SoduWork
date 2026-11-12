@@ -20,7 +20,7 @@ class ReleaseTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.env = dict(RELEASE_COMPONENT="source", RELEASE_VERSION="1.2.3",
                         GITHUB_REPOSITORY="example/project", PUBLIC_RELEASE_REPOSITORY="example/project",
-                        GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/release/source-1.2.3",
+                        GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/release/1.2.3",
                         GITHUB_REF_PROTECTED="true", GITHUB_SHA="a" * 40, GITHUB_RUN_ID="123")
         self.ctx = release.context(self.env)
 
@@ -32,7 +32,7 @@ class ReleaseTests(unittest.TestCase):
     def test_context_requires_manual_protected_matching_branch_and_repository(self):
         for key, value in [("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_REF_PROTECTED", "false"),
                            ("PUBLIC_RELEASE_REPOSITORY", "other/repo"), ("GITHUB_SHA", "short"),
-                           ("GITHUB_RUN_ID", ""), ("GITHUB_REF", "refs/tags/source-v1.2.3"),
+                           ("GITHUB_RUN_ID", ""), ("GITHUB_REF", "refs/tags/v1.2.3"),
                            ("RELEASE_VERSION", "1.2.3;command"), ("RELEASE_VERSION", "01.2.3")]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 release.context({**self.env, key: value})
