@@ -19,6 +19,46 @@ async function fetchDeclaredModel(metadata) {
     false, 'harness2');
 }
 
+test('model configuration deadline recognizes runtime RPC cancellation without reporting quota exhaustion', async t => {
+  const { MessageChannel } = require('node:worker_threads');
+  const { createRpcPeer } = require('../main/agent-runtime/process-rpc');
+  const { port1, port2 } = new MessageChannel();
+  const caller = createRpcPeer({ send: packet => port1.postMessage(packet) });
+  const host = createRpcPeer({ send: packet => port2.postMessage(packet), handlers: {
+    authRequest() { return new Promise(resolve => this.signal.addEventListener('abort', () => resolve(null), { once: true })); },
+  } });
+  port1.on('message', packet => caller.receive(packet));
+  port2.on('message', packet => host.receive(packet));
+  t.after(() => { caller.close(); host.close(); port1.close(); port2.close(); });
+  const result = await require('../main/pi-session/model-config').fetchModel(
+    { hub: 'https://hub.example.test', clientId: 'device-timeout', session: 'device-session' },
+    'managed-alias', 30, (_url, options) => caller.call('authRequest', [], { signal: options.signal }));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'MODEL_CONFIG_TIMEOUT');
+  assert.equal(result.reason, '服务响应超时，可稍后重试');
+  assert.equal(require('../core/token-quota').detail(result), null);
+  assert.equal(Object.hasOwn(result, 'quota'), false);
+  assert.doesNotMatch(result.reason, /Runtime request aborted/);
+});
+
+test('only the configuration deadline is a timeout; independent cancellation and quota refusals remain distinct', async () => {
+  const { fetchModel } = require('../main/pi-session/model-config');
+  const identity = { hub: 'https://hub.example.test', clientId: 'device-errors', session: 'device-session' };
+  const cancelled = await fetchModel(identity, 'managed-alias', 1000, async () => {
+    throw Object.assign(Error('Runtime caller cancelled the request'), { name: 'RpcError', code: 'RPC_ABORTED' });
+  });
+  assert.equal(cancelled.ok, false);
+  assert.notEqual(cancelled.code, 'MODEL_CONFIG_TIMEOUT');
+  assert.equal(require('../core/token-quota').detail(cancelled), null);
+  const quota = { enabled: true, exceeded: true, limit: 10, used: 10 };
+  const denied = await fetchModel(identity, 'managed-alias', 1000, async () => new Response(JSON.stringify({
+    detail: { code: 'TOKEN_QUOTA_EXCEEDED', message: '当前 AI 使用额度暂不可用，请查看额度详情', quota },
+  }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  assert.equal(denied.status, 403);
+  assert.equal(denied.code, 'TOKEN_QUOTA_EXCEEDED');
+  assert.deepEqual(denied.quota, quota);
+});
+
 test('Hub reasoning declarations survive model normalization and the runner boundary', async () => {
   const { create } = require('../main/agent-runtime/runner-config.cjs');
   for (const declaration of [
