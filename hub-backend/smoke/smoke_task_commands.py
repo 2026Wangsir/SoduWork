@@ -110,6 +110,7 @@ async def main():
         session.add_all([
             models.Client(id="client-a", name="A"),
             models.Client(id="client-b", name="B"),
+            models.Project(id="project-x", name="Synthetic public project", org_id=None),
         ])
         await session.commit()
 
@@ -146,11 +147,12 @@ async def main():
         await session.execute(text("DROP TRIGGER reject_test_task"))
         await session.commit()
         # Definition editing remains supported before execution begins.
-        await task_service.put_local_task(session, "client-a", "task-draft", {"title": "未执行需求"})
-        await task_service.update_task(session, "client-a", "task-draft",
-                                       {"due": 1893456000000, "projectId": "project-x"})
+        draft = await task_service.put_local_task(session, "client-a", "task-draft", {"title": "未执行需求"})
+        selected = await task_service.update_task(session, "client-a", "task-draft",
+            {"due": 1893456000000, "projectId": "project-x", "requirementVersion": draft["requirementVersion"]})
+        check("Project selection persists before clearing", selected["projectId"] == "project-x", selected)
         cleared = await task_service.update_task(session, "client-a", "task-draft",
-                                                 {"due": None, "projectId": None})
+            {"due": None, "projectId": None, "requirementVersion": selected["requirementVersion"]})
         check("显式 null 能清空日期和项目归属",
               cleared["due"] is None and cleared["projectId"] is None, cleared)
 

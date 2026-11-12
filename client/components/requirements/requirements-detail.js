@@ -10,6 +10,16 @@
   let refreshRequest = 0, refreshFlight = null, editVersion = null, mountedTrace = null, refreshPending = false;
   let approvalState = '';
   let summaryExport = null;
+  let projectPicker = null;
+  let conflictReload = null;
+  let taskRequest = 0, taskAcceptedRequest = 0;
+  function canApplyTaskReply(value, request) {
+    const incoming = Number(value?.requirementVersion || 0), current = Number(task?.requirementVersion || 0);
+    return incoming > current || incoming === current && request >= taskAcceptedRequest;
+  }
+  function acceptTaskReply(value, request) {
+    task = value; taskAcceptedRequest = Math.max(taskAcceptedRequest, request);
+  }
   function approvalSignature() {
     const context = global.RequirementsBoard?.context?.(), item = task && R.approval(task, context);
     return JSON.stringify([task?.id, item?.id, item?.status, item?.myDecision, task && R.waitingOn(task, context)]);
@@ -51,6 +61,7 @@
       assigneeUserId: fields.assigneeUserId?.value || '', acceptanceCriteria: fields.acceptance.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
       ...(fields.triageStage ? {triageStage: fields.triageStage.value} : {}),
       ...(fields.visibility ? {visibility: fields.visibility.value} : {}),
+      ...(fields.projectId ? {projectId: fields.projectId.value || null} : {}),
       ...(fields.due ? {due: fields.due.value} : {})};
   }
   function editChanges() {
@@ -155,6 +166,8 @@
     if (isComments) void loadComments(); else void loadExtensions();
   }
   function finalizeClose() {
+    projectPicker?.dispose(); projectPicker = null;
+    conflictReload = null;
     loadController?.abort(); loadController = null;
     loadTiming?.mark('cancelled'); loadTiming = null;
     global.ForwardSelect?.destroy(root);
@@ -213,7 +226,7 @@
       if (event.target === node || event.target.closest('[data-rq-dismiss]')) { if (!busy) void close(); return; }
       if (event.target.closest('[data-rq-edit]') && task && R.canEdit(task)) { void setEditing(true); return; }
       if (event.target.closest('[data-rq-edit-cancel]')) { void setEditing(false); return; }
-      if (event.target.closest('[data-rq-reload]')) { if (task) void open(task.id); return; }
+      if (event.target.closest('[data-rq-reload]')) { void reloadEdits(); return; }
       const maintenance = event.target.closest('[data-rq-archive],[data-rq-delete]');
       if (maintenance && task) {
         const action = maintenance.hasAttribute('data-rq-delete') ? 'delete' : R.stage(task) === 'closed' ? 'restore' : 'archive';
@@ -417,10 +430,11 @@
     timing?.mark('shell');
     root.querySelector('[data-rq-dismiss]').focus();
     try {
+      const taskRead = ++taskRequest;
       const value = await global.SoduWorkAPI.getTask(id, { signal: controller?.signal });
       if (request !== seq || !root) return;
       if (!value?.id) throw new Error('需求已移除或当前账号无权访问');
-      task = value; render();
+      acceptTaskReply(value, taskRead); render();
       timing?.mark('data');
       root.querySelector('.rq-detail-content').dataset.taskId = id;
       const attachments = await global.SoduWorkAPI.listAttachments(id);
@@ -456,14 +470,16 @@
           flight.queued = false;
           const refreshId = refreshRequest;
           try {
+            const taskRead = ++taskRequest;
             const latest = await global.SoduWorkAPI.getTask(id);
             if (!current()) return false;
             if (refreshId !== refreshRequest) continue;
             if (!latest?.id) throw new Error('需求已移除或当前账号无权访问');
-            if (Number(latest.requirementVersion || 0) < Number(task.requirementVersion || 0)) continue;
-            task = latest; applied = true;
+            if (!canApplyTaskReply(latest, taskRead)) continue;
+            acceptTaskReply(latest, taskRead); applied = true;
             if (editing) {
               updateHeader();
+              projectPicker?.paint();
               // Keep the draft visible, but prevent stale forms from changing executed work.
               if (lockExecutedDraft()) {
                 feedback(task.requirementEditBlockReason || '需求已开始执行，不能再编辑。未保存内容已保留，取消编辑可查看最新状态。');
@@ -485,6 +501,7 @@
     return flight.promise;
   }
   function render() {
+    conflictReload = null;
     global.ForwardSelect?.destroy(root);
     if (task.canViewExecution === false) {
       closeEvidencePanel();
@@ -509,6 +526,12 @@
     const priorities = global.TaskPriority?.labels || { normal: '普通' };
     const criteria = task.acceptanceCriteria || [];
     const ctx = global.RequirementsBoard?.context?.(), step = R.nextStep(task, ctx);
+    projectPicker?.dispose();
+    const projectRequest = seq, projectRoot = root;
+    projectPicker = global.RequirementFields?.projectPicker?.({value:task.projectId,
+      name:ctx?.projects?.get(String(task.projectId || '')) || '',
+      current:()=>projectRequest === seq && projectRoot === root,
+      editable:()=>editing && !busy && R.canEditProject(task)});
     const approvalItem = R.approval(task, ctx);
     approvalState = approvalSignature();
     const created = R.timeInfo({createdAt: task.createdAt, created: task.created}), changed = R.timeInfo(task);
@@ -523,6 +546,7 @@
     const overview = '<section class="rq-detail-overview rq-detail-section-card">' +
       '<div class="rq-detail-section-heading"><h3>' + sectionIcon('content') + '需求信息</h3></div>' +
       '<dl class="rq-detail-properties"><div><dt>类型</dt><dd>' + esc(R.kinds[task.kind] || R.kinds.requirement) + '</dd></div>' +
+      (projectPicker ? '<div><dt>关联项目</dt><dd><span data-rq-project-name>' + esc(projectPicker.label()) + '</span>' + projectPicker.statusHtml() + '</dd></div>' : '') +
       '<div><dt>优先级</dt><dd>' + esc(priorities[task.priority] || priorities.normal) + '</dd></div>' +
       '<div><dt>截止日期</dt><dd>' + esc(R.day(task.due) || '未设置') + '</dd></div>' +
       '<div><dt>可见范围</dt><dd>' + visibilityLabel + '</dd></div>' +
@@ -540,6 +564,8 @@
       '<label>背景与说明<textarea name="note" rows="5"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '>' + esc(content.note) + '</textarea></label>' +
       '<label>完成标准<span class="rq-field-hint">' + (task.status === 'todo' ? '每行一条' : '已进入执行，保留原完成标准') + '</span><textarea name="acceptance" rows="3"' + (task.status !== 'todo' ? ' readonly' : '') + '>' + esc(criteria.join('\n')) + '</textarea></label></section>' +
       '<section class="rq-edit-section"><h3>' + sectionIcon('settings') + '基本信息</h3>' +
+      (projectPicker ? '<label>关联项目' + projectPicker.html({id:'rqEditProject',name:'projectId',
+        hint:task.repoId ? '项目由已关联仓库确定，本次不迁移仓库' : ''}) + '</label>' : '') +
       '<div class="rq-field-pair"><label>类型<select name="kind"' + (task.status !== 'todo' ? ' disabled data-rq-locked' : '') + '>' + options(Object.entries(R.kinds), task.kind || 'requirement') + '</select></label>' +
       '<label>优先级<select name="priority"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '>' + options(Object.entries(priorities), task.priority || 'normal') + '</select></label></div>' +
       '<div class="rq-field-pair">' + (task.canViewExecution !== false ? '<label>截止日期<input type="date" name="due" value="' + esc(R.day(task.due)) + '"' + (metadataLocked ? ' disabled data-rq-locked' : '') + '></label>' : '') +
@@ -572,7 +598,7 @@
      * canOpenConversation and label their local-device scope.
      */
     const actions = editing ? '<div class="rq-edit-actions"><button type="submit" form="rqEditForm" class="rq-primary" data-rq-save aria-live="polite">保存修改</button>' +
-      '<button type="button" data-rq-edit-cancel>取消</button><button type="button" data-rq-reload>重新加载</button></div>' : '<div class="rq-detail-actions rq-detail-toolbar">' +
+      '<button type="button" data-rq-edit-cancel>取消</button></div>' : '<div class="rq-detail-actions rq-detail-toolbar">' +
       (R.canTriage(task) && ['intake', 'clarifying'].includes(phase) ? '<button type="button" class="rq-primary" data-rq-ready>移至待开始</button>' : '') +
       (canArrange ? '<button type="button" class="rq-primary" data-rq-assign>安排执行</button>' : '') +
       (R.canOpenConversation(task, global.SoduWorkAPI?.clientId) && !reworkPending ? '<button type="button" data-rq-chat>打开执行会话（仅本机）</button>' : '') +
@@ -593,6 +619,7 @@
     if (footer) { footer.innerHTML = actions; footer.hidden = !actions; }
     const assignee = editing && root.querySelector('[name="assigneeUserId"]');
     if (assignee) global.ForwardSelect?.enhance(assignee);
+    projectPicker?.bind(root);
     const evidence = root.querySelector('[data-rq-execution]');
     if (evidenceOpen && !editing && task.canViewExecution !== false && evidence) {
       evidence.open = true;
@@ -1062,10 +1089,72 @@
       if (request === seq) feedback('');
     } catch (error) { if (request === seq) feedback(errorText(error)); }
   }
+  function offerConflictReload() {
+    if (!editing || conflictReload || !root) return;
+    conflictReload = document.createElement('button');
+    conflictReload.type = 'button'; conflictReload.textContent = '重新加载';
+    conflictReload.setAttribute('data-rq-reload', '');
+    root.querySelector('.rq-edit-actions')?.append(conflictReload);
+  }
+  async function reloadEdits() {
+    if (!editing || !task || busy || !conflictReload) return;
+    const before = editValues(), baseline = editBaseline, request = seq, id = task.id;
+    if (!before || !baseline) return;
+    busy = true;
+    root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = true; });
+    try {
+      const taskRead = ++taskRequest;
+      const latest = await global.SoduWorkAPI.getTask(id);
+      if (request !== seq || !root || !editing) return;
+      if (!latest?.id || latest.id !== id) throw Error('需求已移除或当前账号无权访问');
+      // Preserve later authoritative reads, including execution changes without a definition-version bump.
+      if (canApplyTaskReply(latest, taskRead)) acceptTaskReply(latest, taskRead);
+      updateHeader();
+      if (!R.canEdit(task)) {
+        feedback(task.requirementEditBlockReason || '需求已开始执行，未保存内容已保留。');
+      } else {
+        const fields = root.querySelector('#rqEditForm').elements, content = R.content(task);
+        const values = {title:content.title || '',note:content.note || '',kind:task.kind || 'requirement',
+          priority:task.priority || 'normal',tags:global.RequirementFields?.normalizeTags(task.tags) || [],
+          assigneeUserId:task.assigneeUserId || '',acceptanceCriteria:task.acceptanceCriteria || [],
+          triageStage:task.triageStage || 'ready',visibility:task.visibility || 'related',due:R.day(task.due),projectId:task.projectId || null};
+        const nextBaseline = {...baseline};
+        for (const key of Object.keys(baseline)) {
+          const field = fields[key === 'acceptanceCriteria' ? 'acceptance' : key];
+          if (!field) continue;
+          nextBaseline[key] = values[key];
+          // Only untouched fields receive remote changes; retain every unsaved user edit.
+          if (JSON.stringify(before[key]) !== JSON.stringify(baseline[key])) continue;
+          if (key === 'assigneeUserId' && values[key] && !Array.from(field.options || []).some(option => option.value === values[key])) {
+            const option = document.createElement('option'); option.value = values[key];
+            option.textContent = task.assigneeName || '当前负责人'; option.setAttribute('data-user-content', '');
+            field.append(option);
+          }
+          field.value = key === 'acceptanceCriteria' ? values[key].join('\n') : key === 'tags' ? JSON.stringify(values[key]) : values[key] || '';
+          if (key === 'tags') global.RequirementFields?.setTags(field, values[key]);
+          if (key === 'projectId') projectPicker?.setValue(values[key]);
+        }
+        editBaseline = nextBaseline; editVersion = task.requirementVersion;
+        feedback('已加载最新需求，未保存的修改已保留。请核对后再保存。');
+      }
+      conflictReload?.remove(); conflictReload = null;
+    } catch (error) { if (request === seq && root) feedback(errorText(error)); }
+    finally {
+      if (request === seq && root) {
+        busy = false;
+        root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = node.hasAttribute('data-rq-locked'); });
+        lockExecutedDraft();
+        const visibility = root.querySelector('#rqEditForm')?.elements?.visibility;
+        if (visibility && !visibility.disabled) visibility.dispatchEvent?.(new Event('change', {bubbles:true}));
+        projectPicker?.paint(); resumePendingRefresh();
+      }
+    }
+  }
   async function save(patch) {
     if (busy || !task) return;
     if (!R.canEdit(task)) { feedback(task.requirementEditBlockReason || '只有尚未执行的需求可以编辑，请重新加载查看最新状态。'); return; }
     busy = true; saving = true; feedback('');
+    conflictReload?.remove(); conflictReload = null;
     const id = task.id, request = seq;
     const saveButton = root.querySelector('[data-rq-save]');
     if (saveButton) saveButton.textContent = '正在保存…';
@@ -1073,7 +1162,7 @@
     root.querySelectorAll('button,input,textarea,select').forEach(node => { node.disabled = true; });
     try {
       const version = Number((editing ? editVersion : task.requirementVersion) || 0);
-      let result;
+      let result, replyRequest = ++taskRequest;
       try {
         result = await global.SoduWorkAPI.patchTask(id, { ...patch,
           requirementVersion: editing ? editVersion : task.requirementVersion });
@@ -1082,20 +1171,22 @@
         if (error?.code === 'STALE_TASK_SCOPE' || (Number(error?.status) && ![502, 503, 504].includes(Number(error.status)))) throw error;
         if (saveButton) saveButton.textContent = '正在确认保存结果…';
         let confirmed;
+        const confirmRequest = ++taskRequest;
         try { confirmed = await global.SoduWorkAPI.getTask(id); } catch (_) { /* Keep the original request error. */ }
         if (request !== seq || !root) return;
         const matches = confirmed?.id === id && Number(confirmed.requirementVersion || 0) > version &&
           Object.entries(patch).every(([key, value]) => JSON.stringify(key === 'due' ? R.day(confirmed[key]) : confirmed[key]) === JSON.stringify(value));
         if (!matches) throw error;
-        result = confirmed;
+        result = confirmed; replyRequest = confirmRequest;
       }
       if (request !== seq) return;
       // The PATCH response is authoritative. Avoid full-board refresh/reopening
       // an unsaved form, and don't wait for unrelated projects or approvals.
-      const saved = result?.id === id ? result : await global.SoduWorkAPI.getTask(id);
+      let saved = result;
+      if (result?.id !== id) { replyRequest = ++taskRequest; saved = await global.SoduWorkAPI.getTask(id); }
       if (request !== seq || !root) return;
       if (!saved?.id) throw new Error('保存响应不完整，请重新加载确认');
-      const newerTask = Number(task.requirementVersion || 0) > Number(saved.requirementVersion || 0);
+      const newerTask = !canApplyTaskReply(saved, replyRequest);
       let canonical = newerTask ? task : global.TaskSync?.mergeSaveReceipt(task, saved) || saved;
       if (typeof Store !== 'undefined') {
         const visible = typeof tasks === 'undefined' ? null : tasks.find(row => String(row.id) === String(id));
@@ -1106,7 +1197,7 @@
       }
       // Reads begun before this receipt cannot replace it, including partial projections.
       if (refreshFlight) { refreshRequest++; refreshFlight.queued = true; }
-      task = canonical; editing = false; editBaseline = null; editVersion = null;
+      acceptTaskReply(canonical, replyRequest); editing = false; editBaseline = null; editVersion = null;
       render(); renderAttachments(files);
       global.RequirementsBoard?.render?.();
       // The hub can accept the patch yet refuse a status change (delivery truth
@@ -1121,6 +1212,7 @@
     } catch (error) {
       if (request === seq && root) {
         feedback(errorText(error));
+        if (error.status === 409) offerConflictReload();
       }
     } finally {
       if (request === seq && root) {
@@ -1129,6 +1221,7 @@
         if (editing && saveButton) saveButton.textContent = '保存修改';
         root.querySelector('#rqEditForm')?.setAttribute('aria-busy', 'false');
         lockExecutedDraft();
+        projectPicker?.paint();
         resumePendingRefresh();
       }
     }

@@ -48,6 +48,19 @@ test('personal action scope guidance follows every supported locale', () => {
   }
 });
 
+test('business project association and conflict recovery copy follow all four locales',()=>{
+  const c=client(),phrases=['关联项目','不关联项目','当前关联项目','当前关联项目（不可用）',
+    '项目由已关联仓库确定，本次不迁移仓库','项目列表暂时无法加载，当前关联已保留。','项目列表响应不完整，请重试',
+    '已加载最新需求，未保存的修改已保留。请核对后再保存。','需求已开始执行，未保存内容已保留。'];
+  for(const locale of ['zh-CN','en-US','ja-JP','ko-KR']){
+    c.api.setLocale(locale);
+    for(const phrase of phrases){
+      const translated=c.api.translateText(phrase);
+      if(locale==='zh-CN')assert.equal(translated,phrase);else assert.notEqual(translated,phrase,locale+': '+phrase);
+    }
+  }
+});
+
 test('renderer catalog packages preserve frozen snapshots and match canonical package order', () => {
   const context = vm.createContext({}), expected = {};
   const directory = path.join(__dirname, '../core/locales');

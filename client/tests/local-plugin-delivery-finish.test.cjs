@@ -29,12 +29,12 @@ test('native import rejects missing files and junction escapes instead of droppi
 const compose=fs.readFileSync(path.join(__dirname,'../components/panels/panels-compose-draft.js'),'utf8');
 test('collapsed ordinary draft does not lose hidden acceptance criteria',()=>{
  const start=compose.indexOf('function _sync()'),end=compose.indexOf('\n  /*',start);
- const state={_d:{title:'Title',check:['A','B']},document:{getElementById:()=>null,querySelectorAll:()=>[]}};
+ const state={_d:{title:'Title',check:['A','B']},_projectPicker:null,document:{getElementById:()=>null,querySelectorAll:()=>[]}};
  vm.runInNewContext(compose.slice(start,end)+'\n_sync()',state);assert.deepEqual(state._d.check,['A','B']);
 });
 test('an actually empty visible checklist can still be cleared',()=>{
  const start=compose.indexOf('function _sync()'),end=compose.indexOf('\n  /*',start);
- const state={_d:{check:['A']},document:{getElementById:id=>id==='cpCheck'?{}:null,querySelectorAll:()=>[]}};
+ const state={_d:{check:['A']},_projectPicker:null,document:{getElementById:id=>id==='cpCheck'?{}:null,querySelectorAll:()=>[]}};
  vm.runInNewContext(compose.slice(start,end)+'\n_sync()',state);assert.equal(state._d.check.length,0);
 });
 test('receipt close does not reuse composer toolbar ID and workspace yields Escape to plugins',()=>{

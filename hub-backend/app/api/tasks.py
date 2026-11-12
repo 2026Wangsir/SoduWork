@@ -262,13 +262,9 @@ async def list_projects_for_box(
     """List projects visible through the user's department and ancestors, managed subtrees, or
     public organization-free projects, matching team-inbox scope.
     """
-    from sqlalchemy import or_, select as _sel
     from ..models import Project
-    from ..services import inbox as inbox_svc
-    u, scope = await inbox_svc._me_scope(session, client)
-    q = _sel(Project).where(Project.status == "active")
-    q = q.where(or_(Project.org_id.in_(scope), Project.org_id.is_(None))) if scope \
-        else q.where(Project.org_id.is_(None))
+    from ..services import requirement_projects
+    q = await requirement_projects.visible_query(session, client)
     rows = (await session.execute(q.order_by(Project.created_at.desc()))).scalars().all()
     return [{"id": p.id, "name": p.name, "desc": p.desc or ""} for p in rows]
 

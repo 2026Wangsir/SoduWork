@@ -217,6 +217,7 @@
       },
       onBeforeSubmit: s.onBeforeSubmit || s.bridge?.onBeforeSubmit,
       saveOnly: s.saveOnly === true, triageStage: s.triageStage || 'ready', projectId: s.projectId || '',
+      repoId: s.repoId || s.bridge?.repoId || '',
       visibility: s.visibility || 'related', source: s.source || '需求池',
       attachmentContext: s.attachmentContext || [], conversationContext: s.conversationContext || null,
       instruction: typeof s.instruction === 'string' ? s.instruction : String(s.text || ''),

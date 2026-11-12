@@ -2,9 +2,16 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 function fixture(initial = [], disabled = false) {
-  const scope = {Event}; scope.window = scope;
+  const scope = {Event,document:{createElement(tag){
+    const node={tag,children:[],attributes:{},dataset:{},textContent:'',
+      setAttribute(name,value){this.attributes[name]=value;if(name==='data-rq-tag-remove')this.dataset.rqTagRemove=value;},
+      append(...children){this.children.push(...children);},
+      closest(selector){return selector==='[data-rq-tag-editor]'?editor:selector==='[data-rq-tag-remove]'&&Object.hasOwn(this.attributes,'data-rq-tag-remove')?this:null;}};
+    return node;
+  }}}; scope.window = scope;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/requirements/requirement-fields.js'), 'utf8'), scope);
   const handlers = {}, warning = {hidden: true}, chips = {innerHTML: '', writes: 0};
+  chips.replaceChildren=(...children)=>{chips.children=children;};
   let markup = '';
   Object.defineProperty(chips, 'innerHTML', {get: () => markup, set(value) { markup = value; chips.writes++; }});
   const field = {value: JSON.stringify(initial), dispatchEvent() {}};
@@ -83,4 +90,14 @@ test('unconfirmed tail participates in validation so save never silently drops a
   assert.equal(f.api.validateTags(f.root), true);
   assert.equal(f.api.readTags(f.field).length, 20);
   assert.equal(f.api.readTags(f.field).at(-1), '尾项');
+});
+
+test('reloading tags uses plain DOM text and preserves delegated removal',()=>{
+  const f=fixture();f.api.setTags(f.field,['<img src=x onerror=alert(1)>','保留']);
+  assert.equal(f.chips.writes,0);assert.equal(f.chips.children.length,2);
+  const chip=f.chips.children[0],label=chip.children[0],button=chip.children[1];
+  assert.equal(label.textContent,'<img src=x onerror=alert(1)>');assert.equal(label.children.length,0);
+  assert.ok(Object.hasOwn(label.attributes,'data-user-content'));assert.equal(button.dataset.rqTagRemove,'0');
+  assert.equal(button.attributes['aria-label'],'删除标签：<img src=x onerror=alert(1)>');
+  f.event('click',{target:button});assert.deepEqual(JSON.parse(f.field.value),['保留']);
 });
