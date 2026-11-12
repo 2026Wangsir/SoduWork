@@ -401,7 +401,7 @@ html[data-desk-panel="workspace"]:is([data-workspace-view="history"],[data-works
 /* Requirement detail: keep the identity and next action visible while the
    evidence/material stream scrolls independently. */
 .rq-detail-backdrop{align-items:flex-start;}
-.rq-detail{align-self:flex-start;height:auto;}
+.rq-detail{align-self:flex-start;height:100%;}
 .rq-detail-header{align-items:flex-start!important;padding:17px 24px 15px!important;background:var(--bg-0);}
 .rq-detail-header-copy{min-width:0;display:grid;gap:3px;}
 .rq-detail-eyebrow{margin:0;color:var(--ink-3);font-size:12px;line-height:1.35;letter-spacing:.02em;}
@@ -409,7 +409,7 @@ html[data-desk-panel="workspace"]:is([data-workspace-view="history"],[data-works
 .rq-detail-header-meta{margin:3px 0 0;color:var(--ink-3);font-size:13px;line-height:1.55;overflow-wrap:anywhere;}
 .rq-detail-header>button{flex:0 0 auto;margin-top:1px;}
 .rq-detail-title-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
-.rq-detail-content{flex:0 1 auto;padding:22px 24px 30px!important;font-size:15px;line-height:1.72;}
+.rq-detail-content{flex:1 1 auto;padding:22px 24px 30px!important;font-size:15px;line-height:1.72;}
 .rq-detail-facts{margin:0 0 14px!important;}
 .rq-detail-next{margin-bottom:17px!important;}
 .rq-detail-section-card{margin-top:0;border:0;border-radius:0;padding:0;background:var(--bg-0);}
