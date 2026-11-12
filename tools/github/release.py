@@ -15,7 +15,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
 SHARDS = {"source": ["source"], "hub": ["hub"],
-          "client": ["windows", "linux", "macos-arm64", "macos-x64", "android"]}
+          "client": ["windows", "linux", "macos-arm64", "macos-x64"]}
 
 
 def read(file):
@@ -111,8 +111,7 @@ def expected(ctx, shard):
     stem = "SoduWork-" + ctx["version"]
     return {"source": [stem + "-source.zip"], "hub": [stem + "-hub-image.tar.gz"],
             "windows": [stem + "-Setup.exe"], "linux": [stem + "-linux." + ext for ext in ["deb", "rpm", "tar.gz"]],
-            "macos-arm64": [stem + "-mac-arm64.dmg"], "macos-x64": [stem + "-mac-x64.dmg"],
-            "android": [stem + "-android.apk"]}[shard]
+            "macos-arm64": [stem + "-mac-arm64.dmg"], "macos-x64": [stem + "-mac-x64.dmg"]}[shard]
 
 
 def seal(ctx, shard, folder, checks):
