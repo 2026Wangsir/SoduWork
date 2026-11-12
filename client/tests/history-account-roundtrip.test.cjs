@@ -28,8 +28,8 @@ async function fixture(t, { accountAlias = true } = {}) {
     { id: 'runner-a', adapterId: 'opencode', title: 'Later segment request', at: 20, count: 4 },
     { id: 'local-second', adapterId: 'pi', title: 'Independent conversation', at: 9, count: 2 },
   ];
-  let bridge, history;
-  function start() {
+  let bridge, history, sync;
+  async function start() {
     bridge = createPiSessionBridge({ app, runnerAdapters: [], sessionModule: {
       open: async () => assert.fail('History must not start an execution runtime'),
       probe: async () => ({ ok: true }),
@@ -41,22 +41,28 @@ async function fixture(t, { accountAlias = true } = {}) {
     const store = createStore(path.join(root, 'replicas.sqlite'));
     history = create({ app, session: bridge, store });
     bridge.setReplicaHistory(history);
-    bridge.setExternalHistory({ history: async () => ({ ok: true, chats: [
-      { id: 'remote-' + account, title: 'Remote ' + account, adapterId: 'account-sync',
-        accountConversation: true, accountProjection: true, sourceSessionId: 'foreign-' + account,
-        sourceClientId: 'foreign-device', at: 5 },
+    await history.projectRows(rows);
+    // Use the production authenticated mapper. A bare sourceSessionId is not
+    // sufficient to make the account record an alias of the local archive.
+    sync = require('../main/conversation/account-sync').create({ app,
+      identityOf: () => account === 'a' ? actor : identity('two'), store: { jobs: () => [] },
+      resolveNativeSource: (item, identity) => require('../main/conversation/account-native-source.cjs').resolve({
+        app, identity, item, session: { archivedConversation: (_app, id) => history.resolve(id) } }),
+      fetch: async () => new Response(JSON.stringify({ items: [
+      { id: 'remote-' + account, title: 'Remote ' + account, sourceSessionId: 'foreign-' + account,
+        sourceClientId: 'foreign-device', updatedAt: 5, messageCount: 2 },
       ...(account === 'a' && accountAlias ? [{ id: 'account-copy-a', title: 'Later segment request',
-        adapterId: 'account-sync', accountConversation: true, accountProjection: true,
-        sourceSessionId: record.id, sourceClientId: actor.clientId, accountCanSend: true, at: 20 }] : []),
-    ] }) });
+        sourceSessionId: record.id, sourceClientId: actor.clientId, canSend: true, updatedAt: 20, messageCount: 2 }] : []),
+    ], hasMore: false })) });
+    bridge.setExternalHistory({ history: () => sync.history({ force: true }) });
   }
-  start();
-  t.after(async () => { await history.close(); await bridge.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  await start();
+  t.after(async () => { await sync.close(); await history.close(); await bridge.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   return { app, actor, record, get history() { return history; },
     read: () => bridge.history(app),
     action: (action, id) => require('../main/pi-session/local-history-actions.cjs').create({ app, session: bridge, history })(action, id),
     switch(value) { account = value; rows = []; },
-    async restart() { await history.close(); await bridge.dispose(); start(); },
+    async restart() { await sync.close(); await history.close(); await bridge.dispose(); await start(); },
   };
 }
 

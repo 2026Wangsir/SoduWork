@@ -135,7 +135,10 @@ test('archived task copies keep executable origins out of cold recent history un
   assert.ok((await bridge.archivedHistory()).chats.some(row => row.id === copy.id));
   await f.history.lifecycle(copy.id, 'restore', who);
   const restored = await bridge.history();
-  assert.equal(restored.chats.filter(row => row.taskId === 'task-one').length, 1);
+  const restoredTask = restored.chats.filter(row => row.taskId === 'task-one');
+  assert.equal(restoredTask.length, 2, 'restoring the local transcript also restores access to its independent cloud original');
+  assert.ok(restoredTask.some(row => row.id === copy.id && row.cached));
+  assert.ok(restoredTask.some(row => row.cloud && row.id !== copy.id));
   assert.ok(restored.lifecycle.some(row => row.id === origin.id && !row.archived && row.lifecycleRevision > 0));
   assert.equal((await f.history.read(copy.id)).items[0].text, 'retained');
   await f.history.lifecycle(copy.id, 'delete', who);

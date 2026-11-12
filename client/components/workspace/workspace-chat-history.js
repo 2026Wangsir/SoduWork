@@ -31,11 +31,6 @@
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : Date.parse(value) || 0;
   }
-  function _replicaOriginIds(item) {
-    if (!item?.cached && !item?.localReplica) return [];
-    return [...new Set([item.source?.id, item.source?.conversationId, item.sourceSessionId]
-      .filter(Boolean).map(String))];
-  }
   function _syncedCopy(row, canonical) {
     // Opening a linked task can publish a partial row before runtime presence.
     // Use aliases resolved by the authenticated history source even when that
@@ -47,39 +42,21 @@
     if (row?.cloud === true && row.remoteProjection === true && !row.archived &&
         canonical?.cloud === true && canonical.remoteProjection !== true &&
         !canonical.archived && canonical.taskId && row.taskId === canonical.taskId) return true;
-    // A local replay copy can arrive before the authenticated account
-    // projection. Join only by its persisted origin ID; a matching title is
-    // never sufficient because users may intentionally create namesake chats.
-    const rowReplicaOrigins = _replicaOriginIds(row), canonicalReplicaOrigins = _replicaOriginIds(canonical);
-    if (row?.accountConversation && (canonical?.cached || canonical?.localReplica) &&
-        (canonicalReplicaOrigins.includes(String(row.id)) ||
-         row.sourceSessionId && canonicalReplicaOrigins.includes(String(row.sourceSessionId)))) return true;
-    if (canonical?.accountConversation && (row?.cached || row?.localReplica) &&
-        (rowReplicaOrigins.includes(String(canonical.id)) ||
-         canonical.sourceSessionId && rowReplicaOrigins.includes(String(canonical.sourceSessionId)))) return true;
-    // Hub may contain one projection per historical device for the same
-    // authenticated source session. Keep that logical conversation singular
-    // while preserving distinct sessions that merely share a title.
+    // Source IDs are scoped to a device and authenticated connection. A copy
+    // on another device remains independent even if it preserves the source ID.
     if (row?.id && row.id !== canonical?.id && row?.accountConversation && canonical?.accountConversation &&
         !row.archived && !canonical.archived && row.sourceSessionId &&
         String(row.sourceSessionId) === String(canonical.sourceSessionId) &&
+        row.sourceClientId && row.sourceClientId === canonical.sourceClientId &&
+        row.owner && row.owner === canonical.owner &&
         row.accountCanSend === true && canonical.accountCanSend === true) {
       const rowAt = _chatAt(row), canonicalAt = _chatAt(canonical);
       return rowAt < canonicalAt || rowAt === canonicalAt && String(row.id) > String(canonical.id);
     }
-    if (rowReplicaOrigins.length && !row?.accountConversation && canonical?.id &&
-        rowReplicaOrigins.includes(String(canonical.id))) return true;
-    if (canonicalReplicaOrigins.length && !canonical?.accountConversation && row?.id &&
-        canonicalReplicaOrigins.includes(String(row.id))) return true;
-    if (!row?.accountConversation || row.archived || !row.sourceSessionId) return false;
-    if (!canonical?.id || canonical.accountConversation || canonical.archived || canonical.pending) return false;
-    // An explicitly foreign source must remain independently reachable even
-    // when its local session ID happens to match a native session here.
-    if (!canonical.cloud && row.accountCanSend === false) return false;
-    // Exact source identity joins a sync projection to its native or cloud session.
-    // Titles and task IDs alone cannot identify a conversation.
-    return row.sourceSessionId === canonical.id || (canonical.cloud === true && canonical.taskId &&
-      row.sourceSessionId === 'cloud-task:' + canonical.taskId);
+    // Download origins and unverified native source IDs locate content; they
+    // never establish shared identity. Device-aware display links are applied
+    // separately by the list painter without changing stored lifecycle aliases.
+    return false;
   }
   function _withoutSyncedCopies(rows, available = rows) {
     return rows.filter(row => !available.some(canonical => _syncedCopy(row, canonical)));
@@ -112,7 +89,7 @@
   }
   function _emptyPlaceholderIds(items) {
     return new Set((items || []).filter(row => row?.emptyPlaceholder === true)
-      .flatMap(row => [row.id, row.sourceSessionId, ...(row.historyAliasIds || [])]).filter(Boolean).map(String));
+      .flatMap(row => [row.id, ...(row.historyAliasIds || [])]).filter(Boolean).map(String));
   }
   function _canonicalHistoryRows(rows, canonicalId) {
     const indexed = new Map();

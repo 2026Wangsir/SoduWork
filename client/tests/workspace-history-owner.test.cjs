@@ -24,7 +24,7 @@ function fixture(user = 'user-a', options = {}) {
       const start = source.indexOf('function renderChats() {'), end = source.indexOf('function subscribeConversationPresence()', start);
       assert.ok(start > 0 && end > start);
       // Keep the actual reconciliation and pagination path; only omit DOM painting.
-      source = source.slice(0, start) + 'function renderChats() {}\n' + source.slice(end);
+      source = source.slice(0, start) + 'function renderChats() { ctx.paintedRows = displayRows(ctx.chatItems); }\n' + source.slice(end);
     }
     vm.runInContext(source, sandbox);
   }
@@ -425,13 +425,60 @@ test('meaningful native presence coalesces one delayed durable read and retains 
   assert.equal(f.ctx.chatItems[0].id, 'native-new', 'The durable row now survives an account change');
   blocked = true; const pending = f.api.refreshLocalHistory(); await tick();
   f.api.updateChatState({ kind: 'renamed', presence: { id: 'native-new', title: 'Renamed', state: 'completed' } });
-  await fire(); const count = calls.length;
+  await fire(); const count = calls.filter(call => call.source === 'local').length;
   assert.equal(timers.size, 0);
   blocked = false; rows[0].title = 'Renamed'; revision++; release(response());
   await pending; await tick();
-  assert.equal(calls.length, count + 1, 'A read already in progress cannot consume the trailing invalidation');
-  assert.equal(calls.at(-1).source, 'local'); assert.equal(calls.at(-1).refresh, undefined);
+  const localCalls = calls.filter(call => call.source === 'local');
+  assert.equal(localCalls.length, count + 1, 'A local read already in progress cannot consume the trailing invalidation');
+  assert.equal(localCalls.at(-1).refresh, undefined);
   assert.equal(f.ctx.chatItems[0].title, 'Renamed');
   f.api.updateChatState({ kind: 'renamed', presence: { id: 'native-new', title: 'Closing', state: 'completed' } });
   assert.equal(timers.size, 1); f.unload(); assert.equal(timers.size, 0);
+});
+
+test('verified account display links suppress only loaded native duplicates without changing either lifecycle identity', async () => {
+  const f = localFixture('', 123);
+  await f.api.refreshConversationHistory(); await tick();
+  await f.switch('user-a');
+  const account = (id, source, extra = {}) => ({ id, title: 'Same title', accountProjection: true,
+    accountConversation: true, sourceSessionId: source, sourceClientId: 'device-a', at: 9999, ...extra });
+  const rows = [account('acct-first', 'saved-0', { displayNativeId: 'saved-0' }),
+    account('acct-tail', 'saved-100', { displayNativeId: 'saved-100' }),
+    account('acct-foreign', 'saved-0', { sourceClientId: 'another-device' }),
+    account('acct-unverified', 'saved-0')];
+  const loaded = f.ctx.historyLoad; f.remote[0]({ ok: true, chats: rows }); await loaded;
+  const visible = () => Array.from(f.ctx.paintedRows, row => row.id);
+  assert.equal(visible().includes('acct-first'), false);
+  assert.equal(visible().includes('saved-0'), true);
+  assert.equal(visible().includes('acct-tail'), true, 'An unloaded source must not make the account entry disappear');
+  assert.equal(visible().includes('acct-foreign'), true); assert.equal(visible().includes('acct-unverified'), true);
+  assert.ok(f.ctx.chatItems.some(row => row.id === 'acct-first'), 'Display filtering cannot remove the account action identity');
+  assert.equal(f.window.WorkspaceSidebarState.localHistoryId('acct-first'), '');
+  await f.api.refreshLocalHistory({ append: true }); await f.api.refreshLocalHistory({ append: true });
+  assert.equal(visible().includes('acct-tail'), false); assert.equal(visible().includes('saved-100'), true);
+  // Keep local copies independent even when a persisted origin shares an ID.
+  f.api.setChats([...f.ctx.chatItems, { id: 'independent-copy', cached: true, localReplica: true,
+    source: { id: 'acct-first' }, title: 'Same title' }]);
+  assert.equal(visible().includes('independent-copy'), true);
+});
+
+test('index completion behind an account request refreshes display proof once and discards the previous account epoch', async () => {
+  const f = localFixture('user-a', 1);
+  const first = f.api.refreshConversationHistory(); await f.api.refreshLocalHistory(); await tick();
+  const account = { id: 'acct-a', title: 'Saved native', accountConversation: true, accountProjection: true,
+    sourceClientId: 'device-a', sourceSessionId: 'saved-0' };
+  f.remote[0]({ ok: true, chats: [account] }); await first; await tick();
+  assert.equal(f.remote.length, 2, 'A snapshot prepared before indexing must get one fresh display association read');
+  assert.ok(f.ctx.paintedRows.some(row => row.id === account.id));
+  const second = f.ctx.historyLoad;
+  f.remote[1]({ ok: true, chats: [{ ...account, displayNativeId: 'saved-0' }] }); await second;
+  assert.equal(f.remote.length, 2, 'An unchanged catalog must not cause a refresh loop');
+  assert.equal(f.ctx.paintedRows.some(row => row.id === account.id), false);
+  const pending = f.api.refreshConversationHistory(); await tick();
+  await f.switch('user-b'); const current = f.ctx.historyLoad;
+  f.remote[2]({ ok: true, chats: [{ ...account, displayNativeId: 'saved-0' }] }); await pending;
+  f.remote[3]({ ok: true, chats: [{ ...account, id: 'acct-b' }] }); await current;
+  assert.equal(f.ctx.paintedRows.some(row => row.id === 'acct-a'), false);
+  assert.equal(f.ctx.paintedRows.some(row => row.id === 'acct-b'), true);
 });

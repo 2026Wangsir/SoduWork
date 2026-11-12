@@ -249,6 +249,7 @@ function create({ app, identityOf, request = http, workspace = portable, notify 
       remoteProjection: true, phase: 'committed', title: String(row.title || 'Cloud conversation').slice(0, 200),
       at: Number.isFinite(numericAt) ? numericAt : Date.parse(row.at) || 0,
       taskId, ref: String(row.ref || '').trim(), adapterId, remoteState,
+      ownerClientId: String(row.ownerClientId || ''),
       conversationReview: row.conversationReview || null,
       target: row.target || null, options: { model }, activeExecutionSelection: row.activeExecutionSelection || null,
       workflowKnown: row.workflow === false || row.workflow === true,
@@ -296,7 +297,7 @@ function create({ app, identityOf, request = http, workspace = portable, notify 
       workspaceLabel: record.target?.runnerName || record.target?.host || 'cloud',
       locationMode: 'remote', location: record.target?.runnerKind || 'cloud',
       adapterId: record.adapterId, taskId: record.taskId, state: record.remoteState,
-      ref: record.ref, owner: record.owner, workflowKnown: record.workflowKnown,
+      ref: record.ref, owner: record.owner, ownerClientId: record.ownerClientId || '', workflowKnown: record.workflowKnown,
       workflow: record.workflow,
       cloud: true, remoteProjection: true, canSend: record.canSend === true,
       readOnly: record.canSend !== true };
@@ -313,6 +314,11 @@ function create({ app, identityOf, request = http, workspace = portable, notify 
     // Hub task as the directory entry. Keep its replayable history entry.
     const tasks = new Set((local.chats || []).map(row => row.taskId).filter(Boolean));
     const cached = (local.chats || []).map(row => ({ ...row,
+      // Only authenticated directory provenance can associate an account sync
+      // row with a replay receipt; the receipt's local ID alone is not proof.
+      ...(remote.find(alias => alias.taskId === row.taskId && alias.ownerClientId)
+        ? { owner: remote.find(alias => alias.taskId === row.taskId && alias.ownerClientId).owner,
+          ownerClientId: remote.find(alias => alias.taskId === row.taskId && alias.ownerClientId).ownerClientId } : {}),
       ...(remote.find(alias => alias.taskId === row.taskId && alias.conversationReview)
         ? { title: remote.find(alias => alias.taskId === row.taskId && alias.conversationReview).title } : {}),
       historyAliasIds: remote.filter(alias => alias.taskId && alias.taskId === row.taskId &&

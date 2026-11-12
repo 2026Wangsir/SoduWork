@@ -25,7 +25,7 @@ test('desktop opens a mobile cloud conversation through the Hub directory projec
       title: 'Mobile request', state: 'running', remoteState: 'running', adapterId: 'pi', model: 'model-a',
       at: '2026-10-31T03:34:32Z',
       target: { runnerKind: 'work-computer', runnerName: 'Office PC', runnerId: 'runner:office' },
-      canContinue: true, canSend: true,
+      canContinue: true, canSend: true, ownerClientId: 'mobile-device',
     }] };
     if (route.endsWith('/ai-say')) return { ok: true, accepted: true, delivery: 'accepted' };
     if (route.includes('/ai-session?')) {
@@ -49,6 +49,7 @@ test('desktop opens a mobile cloud conversation through the Hub directory projec
   assert.equal(history.chats[0].location, 'work-computer');
   assert.equal(history.chats[0].readOnly, false);
   assert.equal(history.chats[0].canSend, true);
+  assert.equal(history.chats[0].ownerClientId, 'mobile-device');
   assert.equal(history.chats[0].at, Date.parse('2026-10-31T03:34:32Z'));
 
   // Exercise the actual sidebar ownership filter, not a stubbed access layer.

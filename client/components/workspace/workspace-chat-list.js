@@ -38,6 +38,7 @@
   const lifecycle = new Map(), MAX_LIFECYCLE_IDS = 1024;
   let localRows = [], localLoad = null, localReady = false, localNext = null, localRestart = false;
   let localCatalog = null, localRecords = new Map(), localAliases = new Set();
+  let accountDisplayLinks = new Map();
   let localError = '', accountError = '', nativeRefreshStarted = false;
   let localRefreshTimer = null, localRefreshPending = false, closed = false;
   const historyApi = () => global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
@@ -138,6 +139,7 @@
     const next = accountOwner();
     if (next === historyOwner) return false;
     historyOwner = next;
+    accountDisplayLinks.clear();
     // The initial bootstrap only binds the already-open local history. Token
     // renewal and device replacement have the same Hub/account owner key.
     if (!hadOwner) { hadOwner = Boolean(next); return Boolean(next); }
@@ -737,6 +739,17 @@ function _syncChatList(target, items, isPinned, pool) {
     });
   }
 
+  function displayRows(items, available = items) {
+    // These associations come from the authenticated main-process index. They
+    // affect painting only: account actions and device lifecycle IDs stay separate.
+    const nativeIds = new Set(available.filter(row => !hiddenRow(row) && localVisible(row))
+      .map(row => canonicalLocalId(row.id)));
+    return items.filter(row => {
+      const source = accountDisplayLinks.get(String(row.id || ''));
+      return !source || !nativeIds.has(canonicalLocalId(source));
+    });
+  }
+
 function renderChats() {
     ctx.mount();
     let accountCount = 0;
@@ -757,10 +770,11 @@ function renderChats() {
         return acc;
       }, new Map()));
     const groups = ctx.sidebarProjects?.partition(list);
-    const pinned = (groups ? groups.pinned : list.filter((item) => pins.has(String(item.id || ''))))
-      .filter(item => !hiddenRow(item));
-    const recent = (groups ? groups.recent : list.filter((item) => !pins.has(String(item.id || ''))))
-      .filter(item => !hiddenRow(item));
+    const available = groups ? [...groups.pinned, ...groups.recent, ...(groups.projects || []).flatMap(project => project.items)] : list;
+    const displayedIds = new Set(displayRows(available).map(item => item.id));
+    const visible = items => items.filter(item => !hiddenRow(item) && displayedIds.has(item.id));
+    const pinned = visible(groups ? groups.pinned : list.filter((item) => pins.has(String(item.id || ''))));
+    const recent = visible(groups ? groups.recent : list.filter((item) => !pins.has(String(item.id || ''))));
     const pinnedBox = ctx.root.querySelector('#wsPinnedBox');
     pinnedBox.hidden = !pinned.length;
     pinnedBox.classList.toggle('is-empty', !pinned.length);
@@ -791,7 +805,7 @@ function renderChats() {
         ? historyText('workspace.history.retry', '重新加载') : historyText('workspace.history.more', '加载更多');
     }
     for (const project of groups?.projects || []) {
-      const items = project.items.filter(item => !hiddenRow(item));
+      const items = visible(project.items);
       _syncChatList(project.target, items, false, pool);
       if (!items.length) ctx._empty(project.target, '拖入会话，开始整理');
     }
@@ -823,7 +837,7 @@ function refreshAccountHistory() {
       ctx.renderChats();
       return Promise.resolve(false);
     }
-    const epoch = historyEpoch, generation = accountMutationGeneration;
+    const epoch = historyEpoch, generation = accountMutationGeneration, localRevision = localCatalog?.revision;
     const current = () => { syncHistoryOwner(); return epoch === historyEpoch && generation === accountMutationGeneration; };
     const job = Promise.resolve().then(() => {
       if (!current()) return null;
@@ -832,6 +846,8 @@ function refreshAccountHistory() {
       if (!current()) return false;
       if (got && got.ok) {
         accountError = '';
+        accountDisplayLinks = new Map((got.chats || []).filter(row => row.accountProjection === true &&
+          typeof row.displayNativeId === 'string' && row.displayNativeId).map(row => [String(row.id), row.displayNativeId]));
         // Native history supplies authenticated lifecycle records, including
         // cold-start tombstones that have not produced a presence event.
         const archived = new Set(), deleted = new Set();
@@ -859,7 +875,13 @@ function refreshAccountHistory() {
       ctx.chatsLoading = false;
       ctx.renderChats();
       return false;
-    }).finally(() => { if (ctx.historyLoad === job) ctx.historyLoad = null; });
+    }).finally(() => {
+      if (ctx.historyLoad !== job) return;
+      ctx.historyLoad = null;
+      // Local indexing can finish after the account snapshot was prepared.
+      // Recheck its display associations once, without racing a newer account.
+      if (!closed && epoch === historyEpoch && localCatalog?.revision !== localRevision) void refreshAccountHistory();
+    });
     ctx.historyLoad = job;
     return job;
   }
@@ -897,6 +919,7 @@ function refreshAccountHistory() {
         }
         forgetPinned(archived, '这条会话暂时无法归档', true); forgetPinned(deleted);
       }
+      const previousRevision = localCatalog?.revision;
       localCatalog = { workspace: catalog.workspace, revision: catalog.revision };
       const oldRows = localRows.filter(localVisible), incoming = (got.chats || []).filter(localVisible);
       const ids = new Set(incoming.map(row => row.id));
@@ -912,6 +935,7 @@ function refreshAccountHistory() {
       localReady = true; localError = got.refreshError ? 'refresh' : '';
       const remote = ctx.chatItems.filter(row => !isLocalId(row.id));
       ctx.setChats([...localRows, ...remote]);
+      if (catalog.revision !== previousRevision && !ctx.historyLoad) void refreshAccountHistory();
       return true;
     }).catch(() => { localError = 'unavailable'; ctx.chatsLoading = false; ctx.renderChats(); return false; })
       .finally(() => { if (localLoad === job) localLoad = null; ctx.renderChats(); flushLocalHistoryRefresh(); });

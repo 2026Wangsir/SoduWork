@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
-const METHODS = ['register', 'join', 'importChunk', 'importPlan', 'importPage', 'sealImport', 'get', 'list', 'catalog', 'page', 'directory', 'lifecycleRows', 'remoteLifecycleRows', 'lifecycle', 'cache', 'messages', 'changes', 'ack', 'workspace', 'close'];
+const METHODS = ['register', 'join', 'importChunk', 'importPlan', 'importPage', 'sealImport', 'get', 'nativeRows', 'list', 'catalog', 'page', 'directory', 'lifecycleRows', 'remoteLifecycleRows', 'lifecycle', 'cache', 'messages', 'changes', 'ack', 'workspace', 'close'];
 const REMOTE_LIFECYCLE = "deleted=0 AND revision>0 AND json_extract(data,'$.cached')=1 AND coalesce(json_extract(data,'$.taskId'),'')<>''";
 function key(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 512 || /[\x00-\x1f]/.test(value))
@@ -273,6 +273,16 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       });
     },
     get: id => project(resolve(id)),
+    nativeRows(ids) {
+      if (!Array.isArray(ids) || ids.length > 200) throw Error('Invalid native history batch');
+      const wanted = [...new Set(ids.map(key))];
+      if (!wanted.length) return [];
+      // Only explicit native identities participate. Download origin locators
+      // are deliberately absent from this lookup and remain independent copies.
+      return projectPage(db.prepare(`SELECT DISTINCT r.* FROM replicas r JOIN aliases a ON r.id=a.replica
+        WHERE a.alias IN (${wanted.map(() => '?').join(',')}) AND r.deleted=0
+        AND coalesce(json_extract(r.data,'$.cached'),0)=0`).all(...wanted));
+    },
     remoteLifecycleRows({ account, sourceIds = [], taskIds = [] }) {
       key(account);
       const identities = values => {

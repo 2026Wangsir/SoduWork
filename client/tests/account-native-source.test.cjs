@@ -139,7 +139,7 @@ test('account history canonicalizes both fresh and cached rows while keeping for
   assert.equal(calls, 1);
 });
 
-test('account history collapses device projections that share one source session', async t => {
+test('account history keeps another device source independent even when its source ID and title match', async t => {
   const f = setup(t);
   const duplicate = { ...f.item, id: 'account-old-device', sourceClientId: 'another-device', title: 'Requirement' };
   let calls = 0;
@@ -151,10 +151,28 @@ test('account history collapses device projections that share one source session
   t.after(() => sync.close());
   const result = await sync.history();
   assert.equal(calls, 1);
-  assert.deepEqual(result.chats.map(row => row.id), ['native']);
-  assert.deepEqual(result.chats[0].historyAliasIds, ['native', 'account-copy', 'account-old-device']);
-  assert.equal(result.lifecycle.length, 1);
-  assert.deepEqual(result.lifecycle[0].historyAliasIds, ['account-copy', 'native', 'account-old-device']);
+  assert.deepEqual(result.chats.map(row => row.id), ['native', 'account-old-device']);
+  assert.deepEqual(result.chats[0].historyAliasIds, ['native', 'account-copy']);
+  assert.equal(result.lifecycle.length, 2);
+  assert.deepEqual(result.lifecycle[0].historyAliasIds, ['account-copy', 'native']);
+  assert.deepEqual(result.lifecycle[1].historyAliasIds, ['account-old-device']);
+});
+
+test('account directory aliases require the exact source device and never alias foreign native IDs', async t => {
+  const f = setup(t);
+  const sync = require('../main/conversation/account-sync').create({ app: f.app,
+    identityOf: () => f.identity, store: { jobs: () => [] },
+    fetch: async (_identity, url) => ({ ok: true, json: async () => url.includes('/source') ? {} : {
+      items: [{ ...f.item, id: 'owned-new', revision: 2 }, { ...f.item, id: 'owned-old', revision: 1 },
+        { id: 'foreign', sourceClientId: 'another-device', sourceSessionId: 'foreign-native' }], hasMore: false,
+    } }),
+  });
+  t.after(() => sync.close());
+  const result = await sync.history({ source: 'account' });
+  assert.deepEqual(result.chats.map(row => row.id), ['owned-new', 'foreign']);
+  assert.deepEqual(result.chats[0].historyAliasIds, ['owned-new', 'owned-old']);
+  assert.equal(await sync.row('foreign-native'), null);
+  assert.equal((await sync.row('foreign')).id, 'foreign');
 });
 
 test('source aliases resolve to the current device account record when Hub has a stale duplicate', async t => {

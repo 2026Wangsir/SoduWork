@@ -382,10 +382,8 @@ function createPiSessionBridge(options) {
   }
   function historyPriority(row) {
     if (normalizeHistoryRow(row).cloud) return 4;
-    // A cached replica is a complete local read-only transcript. Prefer it
-    // over an account directory projection when both describe one origin, so
-    // a temporary Hub message read failure cannot leave an unusable sidebar
-    // row. Hub lifecycle metadata remains authoritative through the aliases.
+    // Explicitly aliased read-only transcripts remain preferable to directory
+    // metadata. Origin locators alone never make independent copies aliases.
     if (row?.cached === true || row?.localReplica === true) return 3;
     if (row?.accountProjection === true || row?.accountConversation === true) return 2;
     return 1;
@@ -397,9 +395,8 @@ function createPiSessionBridge(options) {
       ...(Array.isArray(value.historyAliasIds) ? value.historyAliasIds : []),
       ...(Array.isArray(value.aliasIds) ? value.aliasIds : []),
       value.accountId,
-      value.sourceSessionId,
-      value.source?.id,
-      value.source?.conversationId,
+      // Source locators can name independent copies on other devices/accounts.
+      // Only aliases already verified by the owning history provider join rows.
     ].filter(Boolean).map(String))];
   }
   function prefersHistoryRow(candidate, candidateSource, current, currentSource) {

@@ -285,6 +285,7 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
     app, store: accountSyncStore, identityOf: sendIdentityOf || identityOf,
     localIdentityOf: async () => (sendIdentityOf || identityOf)(app),
     resolveNativeSource: (item, identity) => require('../conversation/account-native-source.cjs').resolve({ app, session, item, identity }),
+    resolveDisplayLinks: (items, identity) => _sharedHistory.accountDisplayLinks(items, identity),
     realtime: true, metadataOnly: true,
     preserveLegacyOutbox: (job, identity) => _sharedHistory.preserveLegacyOutbox(job, identity),
   });
@@ -328,7 +329,8 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       if (cloud.status === 'fulfilled') rows.push(...(cloud.value.chats || []));
       if (account.status === 'fulfilled') rows.push(...(account.value.chats || []));
       const seen = new Set();
-      return { ok: true, chats: rows.filter(row => row && row.id && !seen.has(row.id) && seen.add(row.id)),
+      return { ok: true, chats: require('../conversation/account-sync').linkCloudHistory(rows)
+        .filter(row => row && row.id && !seen.has(row.id) && seen.add(row.id)),
         lifecycle: account.status === 'fulfilled' ? account.value.lifecycle || [] : [] };
     },
     isRemote(id) { return typeof _cloudHandoff.isRemote === 'function' && _cloudHandoff.isRemote(id); },

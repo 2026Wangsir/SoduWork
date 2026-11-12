@@ -53,6 +53,39 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     }
     return store.lifecycle(row.id, action, { account: accountId(identity), hub: identity?.hub, device: identity?.clientId });
   }
+  async function accountDisplayLinks(items, identity) {
+    if (!identity?.clientId || !identity?.session || !accountId(identity)) return [];
+    const account = accountId(identity);
+    let hub;
+    try { hub = new URL(identity.hub).origin; } catch (_) { return []; }
+    const sources = new Map();
+    for (const item of items || []) {
+      if (!item?.id || item.deleted || item.sourceClientId !== identity.clientId || !item.sourceSessionId) continue;
+      const id = String(item.sourceSessionId);
+      if (!sources.has(id)) sources.set(id, []);
+      sources.get(id).push(String(item.id));
+    }
+    const ids = [...sources.keys()], links = [], captured = access.actor(app, identity);
+    for (let offset = 0; offset < ids.length; offset += 200) {
+      const rows = await store.nativeRows(ids.slice(offset, offset + 200));
+      for (const row of rows) {
+        if (!isNative(row) || row.cached || row.deleted) continue;
+        // General archive ownership intentionally survives Hub changes. A
+        // display join needs the stricter original Hub/account provenance too.
+        if (row.creator?.account !== account) continue;
+        try { if (new URL(row.creator.hub).origin !== hub) continue; }
+        catch (_) { continue; }
+        try { access.assertOwner(app, row.id, captured, row); }
+        catch (_) { continue; }
+        for (const alias of [row.id, ...(row.historyAliasIds || [])])
+          for (const accountId of sources.get(alias) || []) links.push([accountId, row.id]);
+      }
+      // This is metadata-only reconciliation, never a native SDK/archive scan.
+      // Yield between batches even when a large directory matches local history.
+      if (offset + 200 < ids.length) await new Promise(resolve => setImmediate(resolve));
+    }
+    return links;
+  }
   async function remoteLifecycle(rows, identity = require('./requirement-context').cachedIdentity(app)) {
     const remote = rows.filter(row => row.cloud || row.remoteProjection || row.accountProjection);
     if (!remote.length) return [];
@@ -223,7 +256,7 @@ function create({ app, session, store = require('./replica-store.cjs').createWor
     await refreshing;
     return { ...await store.directory(after, limit), workspace: await store.workspace() };
   }
-  return { resolve, read, open, register, projectRows, lifecycle, remoteLifecycle, capture, observe, store, directory, preserveLegacyOutbox,
+  return { resolve, read, open, register, projectRows, lifecycle, remoteLifecycle, accountDisplayLinks, capture, observe, store, directory, preserveLegacyOutbox,
     list: options => store.list(options),
     page: options => store.page(options),
     async indexedRows(archived, limit) {
