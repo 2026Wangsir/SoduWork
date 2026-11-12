@@ -1,5 +1,7 @@
 if (require('./main/app-preflight-entry.cjs').dispatch()) return;
 
+require('./main/terminal-output.cjs').initialize();
+
 const { app, BrowserWindow, WebContentsView, webContents, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, Notification, shell, safeStorage, dialog, net, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
