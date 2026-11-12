@@ -36,7 +36,11 @@
     return out;
   }
   const kinds = { requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' };
-  const scopes = { related: '与我相关', actionable: '需要我处理', created: '我提出', all: '全部' };
+  const scopes = { related: '与我相关', actionable: '需要我处理', created: '我提出', all: '全部可见' };
+  const scopeDescriptions = {
+    related: '我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。',
+    all: '当前账号有权查看的全部需求，不限于与我相关的需求。',
+  };
   function scopeOptions(archive) { return archive === 'archived' ? {related: scopes.related, all: scopes.all} : scopes; }
   function normalizeScope(scope, archive) { return Object.hasOwn(scopeOptions(archive), scope) ? scope : 'related'; }
   function content(task) {
@@ -327,7 +331,7 @@
     if (action === 'triage' && !patch) return { blocked: true };
     return { action, patch };
   }
-  return { lanes, columns, priorities, sorts, defaults, viewSettings, kinds, scopes, scopeOptions, normalizeScope, content, displayNote, stage, column,
+  return { lanes, columns, priorities, sorts, defaults, viewSettings, kinds, scopes, scopeDescriptions, scopeOptions, normalizeScope, content, displayNote, stage, column,
     day, timeInfo, dateTimestamp, overdue, blocked, roles, approval, canReview, approvalActionable, waitingOn, actionable, inScope, isRequirement, select, owner, nextStep,
     canEdit, canManageMaterials, canSubmitReview, canManageAutomation, canTriage, executing, maintenance,
     canArchive, canDelete, canOpenConversation, editPatch, stagePatch, resolveStageMove };

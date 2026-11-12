@@ -33,6 +33,21 @@ test('personal action scope guidance follows every supported locale', () => {
   }
 });
 
+test('scope and approval tooltips explain visibility in all four locales', () => {
+  const c = client();
+  const phrases = ['全部可见','我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。',
+    '当前账号有权查看的全部需求，不限于与我相关的需求。','查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。',
+    '查看已归档或已取消的需求；它们不再显示在当前需求池中。','返回未归档且未取消的当前需求。'];
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    for (const phrase of phrases) {
+      const translated = c.api.translateText(phrase);
+      if (locale === 'zh-CN') assert.equal(translated,phrase);
+      else assert.notEqual(translated,phrase,locale+': '+phrase);
+    }
+  }
+});
+
 test('renderer catalog packages preserve frozen snapshots and match canonical package order', () => {
   const context = vm.createContext({}), expected = {};
   const directory = path.join(__dirname, '../core/locales');
