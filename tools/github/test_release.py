@@ -108,8 +108,9 @@ class ReleaseTests(unittest.TestCase):
                           [{"private": False}, gate, {"object": {"sha": "b" * 40}}]]:
             with patch.object(release, "api", side_effect=responses), self.assertRaises(ValueError):
                 release.preflight(self.ctx)
-        with patch.object(release, "api", side_effect=[{"private": False}, gate, branch]):
+        with patch.object(release, "api", side_effect=[{"private": False}, gate, branch]) as api:
             release.preflight(self.ctx)
+            api.assert_called_with('/git/ref/heads/release/1.2.3')
 
     def test_annotated_tag_is_peeled_and_wrong_commit_is_rejected(self):
         with patch.object(release, "preflight"), patch.object(release, "api", side_effect=[

@@ -93,7 +93,7 @@ def preflight(ctx):
     environment = api("/environments/public-release")
     require(any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
                 for rule in environment.get("protection_rules", [])), "Configure required reviewers on public-release")
-    require(api("/git/ref/heads/release/" + ctx["component"] + "-" + ctx["version"])["object"]["sha"] == ctx["commit"], "Release branch moved")
+    require(api("/git/ref/heads/release/" + ctx["version"])["object"]["sha"] == ctx["commit"], "Release branch moved")
 
 
 def fingerprint(file):
