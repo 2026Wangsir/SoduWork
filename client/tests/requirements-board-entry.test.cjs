@@ -21,7 +21,8 @@ function fixture(saved, clock) {
     querySelectorAll() { return []; }
     matches() { return false; }
     contains() { return false; }
-    setAttribute() {}
+    setAttribute(name, value) { this.attributes ||= {}; this.attributes[name] = String(value); }
+    getAttribute(name) { return this.attributes?.[name] ?? null; }
     addEventListener(type, listener) { this.listeners.set(type, listener); }
     dispatchEvent(event) { this.listeners.get(event.type)?.(event); }
   }
@@ -29,7 +30,7 @@ function fixture(saved, clock) {
   let mounted = !clock;
   const context = { Requirements,
     RequirementsView: { labels: {phase: '', kind: '', priority: '', project: '', owner: '', tag: '', due: '', attention: ''},
-      icon: () => '', chips: () => '', options: () => '', board: (rows, state) => { rendered.push({ids: rows.map(row => row.id), state: {...state}}); return ''; } },
+      esc: value => String(value), icon: () => '', chips: () => '', options: () => '', board: (rows, state) => { rendered.push({ids: rows.map(row => row.id), state: {...state}}); return ''; } },
     document: {
       getElementById: id => id === 'historyBoard' && mounted ? root : null,
       createElement: () => root,
@@ -111,6 +112,43 @@ test('personal action scope explains where active work remains and links to rela
   assert.equal(hint.hidden,true);
   assert.equal(f.root.querySelector('#rqScope').value,'related');
   assert.match(f.root.querySelector('.hb-body').innerHTML,/data-hbid="streaming"/);
+});
+
+test('scope help uses tooltips without changing scope membership, counts or the existing action hint', () => {
+  const f = fixture({}, {now:Date.now()});
+  f.context.tasks = [
+    {id:'created',status:'todo',myRoles:['creator']},
+    {id:'assigned',status:'todo',myRoles:['assignee']},
+    {id:'running',status:'doing',myRoles:['assignee'],ai:{state:'running'}},
+    {id:'shared',status:'todo',myRoles:[],canViewExecution:false},
+    {id:'review',status:'doing',requirementStage:'reviewing',myRoles:[],canReview:true},
+    {id:'archived',status:'done',archivedAt:1,myRoles:['creator']},
+    {id:'cancelled',status:'cancel',myRoles:[]},
+    {id:'conversation',status:'doing',origin:'cloud-conversation',myRoles:['creator']},
+  ];
+  f.context.TaskApprovalInbox = {snapshot:()=>[{taskId:'review',id:'approval',action:'review'}],refresh:async()=>{}};
+  f.api.open();
+  const change = (id,value) => f.root.dispatchEvent({type:'change',target:{id,value,dataset:{},hasAttribute:()=>false}});
+  for (const [scope,ids] of Object.entries({related:['assigned','created','review','running'],
+    actionable:['assigned','review'],created:['created'],all:['assigned','created','review','running','shared']})) {
+    change('rqScope',scope);
+    const actual = [...f.root.querySelector('.hb-body').innerHTML.matchAll(/data-hbid="([^"]+)"/g)].map(match=>match[1]).sort();
+    assert.deepEqual(actual,ids);
+    assert.equal(f.root.querySelector('#hbCount').textContent,'· '+ids.length+' 条');
+    assert.equal(f.root.querySelector('#rqScopeHint').hidden,scope!=='actionable');
+    if (['related','all'].includes(scope)) assert.equal(f.root.querySelector('#rqScope').getAttribute('title'),f.context.Requirements.scopeDescriptions[scope]);
+  }
+  const scopes = f.root.querySelector('.rq-scopes').innerHTML;
+  assert.match(scopes,/data-rq-scope="all"[^>]*>全部可见<b>/);
+  assert.match(scopes,/data-rq-scope="related"[^>]*title="[^"]+"/);
+  assert.match(f.root.innerHTML,/id="hbApprovalInbox" title="[^\"]*交付验收[^\"]*"/);
+  assert.match(f.root.querySelector('#rqArchiveEntry').getAttribute('title'),/已归档或已取消/);
+  change('rqArchive','archived');
+  assert.equal(f.root.querySelector('#hbCount').textContent,'· 已归档 · 2 条');
+  assert.match(f.root.querySelector('#rqArchiveEntry').getAttribute('title'),/返回/);
+  change('rqScope','related');
+  assert.equal(f.root.querySelector('#hbCount').textContent,'· 已归档 · 1 条');
+  assert.equal(f.root.querySelector('#rqScopeHint').hidden,true);
 });
 
 test('entering the pool reconciles a stale failure without rerunning the requirement', async () => {

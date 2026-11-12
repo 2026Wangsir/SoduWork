@@ -1,5 +1,12 @@
 (function (global) {
   const messages = {
+    "待整理的需求；“待补充”表示仍需完善背景或完成标准": "Issues to organize; “More information needed” means the background or acceptance criteria still need to be completed",
+    "全部可见": "All visible",
+    "我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。": "Issues I created, own, or execute, plus issues awaiting my confirmation or involving me as a repository member.",
+    "当前账号有权查看的全部需求，不限于与我相关的需求。": "All issues this account is allowed to view, including issues unrelated to me.",
+    "查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。": "View requirements, delivery reviews, merges, environment acceptance, or releases currently awaiting my confirmation.",
+    "查看已归档或已取消的需求；它们不再显示在当前需求池中。": "View archived or canceled issues, which are no longer shown in the current Issues view.",
+    "返回未归档且未取消的当前需求。": "Return to current issues that are neither archived nor canceled.",
     "需求标题最多 200 个字符": "Requirement titles can contain up to 200 characters",
     '同公司可见': 'Visible within the company',
     '仓库成员可见': 'Visible to repository members',

@@ -146,12 +146,13 @@
     archiveEntry.dataset.rqArchive = state.archive === 'archived' ? 'active' : 'archived';
     archiveEntry.textContent = state.archive === 'archived' ? '返回需求池' : '归档';
     archiveEntry.setAttribute('aria-label', state.archive === 'archived' ? '返回当前需求' : '查看归档需求');
+    archiveEntry.setAttribute('title', state.archive === 'archived' ? '返回未归档且未取消的当前需求。' : '查看已归档或已取消的需求；它们不再显示在当前需求池中。');
     root.querySelector('#hbCount').textContent = available ? '· ' + (state.archive === 'archived' ? '已归档 · ' : '') + list.length + ' 条' : '';
     const scopeControls = root.querySelector('.rq-scopes');
     if (scopeControls.dataset.archive !== state.archive) {
       const choices = Object.entries(R.scopeOptions(state.archive));
       scopeControls.innerHTML = choices.map(([key,label]) => '<button type="button" data-rq-scope="' + key +
-        '" aria-pressed="false">' + label + '<b>0</b></button>').join('');
+        '" title="' + V.esc(R.scopeDescriptions[key] || '') + '" aria-pressed="false">' + label + '<b>0</b></button>').join('');
       root.querySelector('#rqScope').innerHTML = V.options(choices, state.scope);
       scopeControls.dataset.archive = state.archive;
     }
@@ -160,6 +161,7 @@
       const badge = button.querySelector('b'); if (badge) badge.textContent = available ? R.select(data, {scope:button.dataset.rqScope,archive:state.archive}, ctx).length : '–';
     });
     for (const [id,key] of [['rqScope','scope'],['rqArchive','archive'],['rqArchiveMore','archive'],['rqSort','sort'],['rqGroup','group']]) root.querySelector('#' + id).value = state[key];
+    root.querySelector('#rqScope').setAttribute('title', R.scopeDescriptions[state.scope] || '');
     const sortControl = root.querySelector('#rqSort');
     sortControl.disabled = state.view === 'kanban';
     if (sortControl.disabled) sortControl.value = 'updated';
@@ -293,14 +295,14 @@
   function mount() {
     const root = document.createElement('section'); root.id = 'historyBoard'; root.className = 'history-board requirements-board';
     root.innerHTML = '<header class="hb-head ws-page-head"><div class="hb-title"><span id="hbTitleText">需求池</span><span class="hb-count" id="hbCount"></span></div>' +
-      '<div class="hb-head-actions"><button type="button" id="rqArchiveEntry" data-rq-archive="archived" aria-label="查看归档需求">归档</button><button type="button" id="hbApprovalInbox" title="查看需要你确认的需求" aria-label="待我确认" aria-expanded="false" aria-controls="taskApprovalInbox">待我确认<em data-task-approval-count></em></button>' +
+      '<div class="hb-head-actions"><button type="button" id="rqArchiveEntry" data-rq-archive="archived" aria-label="查看归档需求">归档</button><button type="button" id="hbApprovalInbox" title="查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。" aria-label="待我确认" aria-expanded="false" aria-controls="taskApprovalInbox">待我确认<em data-task-approval-count></em></button>' +
       '<div class="rq-create-group"><button type="button" id="hbAdd" class="rq-primary" data-rq-create>＋ 新建需求</button>' +
       '<button type="button" id="hbAddMenuToggle" class="rq-create-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="rqCreateMenu" aria-label="选择需求创建方式" title="选择需求创建方式"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button>' +
       '<div id="rqCreateMenu" class="rq-create-menu" role="menu" aria-label="需求创建方式" hidden>' +
       '<button type="button" role="menuitem" tabindex="-1" data-rq-create-chat="intake"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-3.5-.7L3 21l1.7-5a9 9 0 0 1-.7-3.5A8.5 8.5 0 1 1 20 11.5Z"/></svg><span>从对话创建</span><small>边聊边整理需求</small></button>' +
       '<button type="button" role="menuitem" tabindex="-1" data-rq-create-manual="intake"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 1-4-4l-11 11L4 20Z"/></svg><span>手动录入</span><small>直接填写标题和完成标准</small></button></div></div>' +
       '<button type="button" class="hb-close" aria-label="关闭需求池" data-rq-close>×</button></div></header>' +
-      '<div class="rq-controls"><div class="rq-scopes" role="group" aria-label="需求视图">' + Object.entries(R.scopeOptions(state.archive)).map(([key,label]) => '<button type="button" data-rq-scope="' + key + '" aria-pressed="false">' + label + '<b>0</b></button>').join('') +
+      '<div class="rq-controls"><div class="rq-scopes" role="group" aria-label="需求视图">' + Object.entries(R.scopeOptions(state.archive)).map(([key,label]) => '<button type="button" data-rq-scope="' + key + '" title="' + V.esc(R.scopeDescriptions[key] || '') + '" aria-pressed="false">' + label + '<b>0</b></button>').join('') +
       '</div><select id="rqScope" aria-label="需求视图">' + V.options(Object.entries(R.scopeOptions(state.archive)), state.scope) + '</select>' +
       '<label class="rq-search">' + V.icon('search') + '<input id="hbSearch" placeholder="搜索需求" aria-label="搜索需求"></label>' +
       '<button type="button" class="rq-filter-toggle" id="rqFilterToggle" popovertarget="rqFilters" aria-label="筛选需求">' + V.icon('filter') + '<span>筛选</span><b id="rqFilterCount"></b></button>' +
