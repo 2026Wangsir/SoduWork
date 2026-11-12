@@ -48,6 +48,32 @@ test('personal action scope guidance follows every supported locale', () => {
   }
 });
 
+test('scope and approval tooltips explain visibility in all four locales', () => {
+  const c = client();
+  const phrases = ['全部可见','我提出、负责或执行的需求，以及待我确认或我作为仓库成员参与的需求。',
+    '当前账号有权查看的全部需求，不限于与我相关的需求。','查看当前需要我确认的需求、交付验收、合并、环境验收或发布事项。',
+    '查看已归档或已取消的需求；它们不再显示在当前需求池中。','返回未归档且未取消的当前需求。'];
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    for (const phrase of phrases) {
+      const translated = c.api.translateText(phrase);
+      if (locale === 'zh-CN') assert.equal(translated,phrase);
+      else assert.notEqual(translated,phrase,locale+': '+phrase);
+    }
+  }
+});
+
+test('collection inbox guidance names the same clarification flag in every locale', () => {
+  const c = client(),phrase = '待整理的需求；“待补充”表示仍需完善背景或完成标准';
+  for (const locale of ['zh-CN','en-US','ja-JP','ko-KR']) {
+    c.api.setLocale(locale);
+    const translated = c.api.translateText(phrase);
+    assert.ok(translated.includes(c.api.translateText('待补充')),locale);
+    if (locale === 'zh-CN') assert.equal(translated,phrase);
+    else assert.notEqual(translated,phrase,locale);
+  }
+});
+
 test('business project association and conflict recovery copy follow all four locales',()=>{
   const c=client(),phrases=['关联项目','不关联项目','当前关联项目','当前关联项目（不可用）',
     '项目由已关联仓库确定，本次不迁移仓库','项目列表暂时无法加载，当前关联已保留。','项目列表响应不完整，请重试',
