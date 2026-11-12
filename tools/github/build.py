@@ -83,6 +83,11 @@ def package_native(ctx, shard, scratch, *, validation=False):
         # Validation emits only a checksum report. Public release entry points
         # still require the distribution review and full upgrade acceptance.
         env["SODUWORK_INTERNAL_BUILD"] = "1"
+    if shard == "linux":
+        # Electron's V8 headers mix standard and GNU attributes in a form
+        # rejected by GCC. Use Clang for both npm install and Electron rebuild.
+        require(shutil.which("clang") and shutil.which("clang++"), "Linux packaging requires Clang")
+        env.update(CC="clang", CXX="clang++")
     if shard.startswith("macos-"):
         configure_macos_signing(env, validation=validation)
     npm = "npm.cmd" if shard == "windows" else "npm"

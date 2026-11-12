@@ -42,6 +42,7 @@ async function cachedBaseline(output, digest, directory, download) {
 async function run(file, args, options = {}) {
   const { log, timeout = 15 * 60 * 1000, ...rest } = options;
   const sink = log ? createWriteStream(log, { flags: 'a' }) : null;
+  let failed = false;
   try {
     return await new Promise((resolve, reject) => {
       const child = spawn(file, args, { windowsHide: true, ...rest });
@@ -61,7 +62,27 @@ async function run(file, args, options = {}) {
         code === 0 ? resolve(stdout.trim()) : reject(Error(`${path.basename(file)} exited ${code}; see ${log || 'job log'}`));
       });
     });
-  } finally { if (sink) await new Promise(resolve => sink.end(resolve)); }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (sink) {
+      await new Promise(resolve => sink.end(resolve));
+      if (failed) {
+        // Preserve the child failure in the job log as well as its artifact.
+        // Read only a bounded tail, even for verbose installer output.
+        try {
+          const file = await fs.open(log, 'r');
+          try {
+            const { size } = await file.stat();
+            const buffer = Buffer.alloc(Math.min(size, 16384));
+            const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+            process.stderr.write(buffer.subarray(0, bytesRead));
+          } finally { await file.close(); }
+        } catch (error) { console.error('Cannot read acceptance diagnostics:', error.message); }
+      }
+    }
+  }
 }
 async function baseline(key, directory, { file = process.env.SODUWORK_ACCEPT_BASELINES_FILE, productName,
   candidateVersion = require('../../client/package.json').version,

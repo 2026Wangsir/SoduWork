@@ -110,7 +110,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm libarchive-tools
+          sudo apt-get install -y clang rpm libarchive-tools
       - name: Prepare macOS signing and notarization
         if: startsWith(matrix.shard, 'macos-')
         run: bash tools/ci/prepare-macos-signing.sh
@@ -137,6 +137,16 @@ jobs:
       - name: Clean up macOS signing material
         if: always() && startsWith(matrix.shard, 'macos-')
         run: bash tools/ci/cleanup-macos-signing.sh
+      - name: Retain failed installation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: diagnostics-${{ matrix.shard }}
+          path: |
+            release-evidence/**/*.log
+            release-evidence/**/*.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   hub:
     needs: [quality, security]

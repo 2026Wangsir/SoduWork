@@ -159,3 +159,19 @@ test('public Windows acceptance reaches artifact validation without private dist
   }), /Provide the immutable build artifact SHA-256/);
   assert.equal(sideEffects, 0);
 });
+
+test('failed child acceptance exposes its diagnostic tail and preserves failure', t => {
+  const fs = require('node:fs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-log-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, 'acceptance.log');
+  const helper = require.resolve('../../tools/ci/acceptance-common.cjs');
+  const script = `require(${JSON.stringify(helper)}).run(process.execPath,
+    ['-e', 'process.stderr.write("actual installation failure"); process.exitCode=7'],
+    {log:${JSON.stringify(log)}}).catch(e => {console.error(e.message);process.exitCode=1})`;
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /actual installation failure/);
+  assert.match(result.stderr, /exited 7/);
+  assert.match(fs.readFileSync(log, 'utf8'), /actual installation failure/);
+});
