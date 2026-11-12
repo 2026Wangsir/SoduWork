@@ -98,3 +98,9 @@ python3 quality_gate.py --list
 此路径的 `POST /api/v1/schedules` 接收 `sourceRequirement: {id, requirementVersion}` 和稳定的 `creationRequestId`。Hub 检查当前管理权限、归档状态和预期版本，随后由服务端生成 `source_requirement` 快照，记录来源 ID、公开标题及版本。响应以 `sourceRequirement` 返回这三项；普通自动化编辑不能替换来源，来源记录也不会扩大对原需求的访问权限。不复制执行路由、凭据或本地模型引用。
 
 同一账号、设备重复发送相同创建请求会返回已创建的自动化；同一标识携带不同内容时返回 409。原需求后来发生变化也不影响恢复丢失的创建响应。迁移 `0088_schedule_requirement_source` 为已有自动化增加默认空 JSON 字段，不推断历史来源，也不改写旧关联。
+
+## 受管 ACP 状态目录
+
+Codex Harness、Qwen、Kimi 和 DeepSeek Harness 使用 Runner 数据根目录下的独立状态目录。如果权限、同名文件或存储故障导致目录无法创建，准备阶段会在启动执行组件前拒绝本轮执行，并返回不含个人路径或文件系统异常内容的可操作提示。继承的个人状态保持不变；修复目录后，可以通过正常准入检查重新派发。
+
+`python3 -m unittest test_acp_home_isolation` 验证真实文件冲突、模拟权限拒绝，以及真实子进程与 ACP 桥接下使用合成底座的 Runner 准入流程，确认准备失败时执行组件未启动、修复目录后能够执行。这不等同真实模型服务或原生平台验收。

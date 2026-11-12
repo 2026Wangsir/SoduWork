@@ -149,7 +149,9 @@ def home_env(key: str, env: dict, work_root: str) -> None:
     try:
         os.makedirs(home, exist_ok=True)
     except OSError:
-        return
+        # A private-home failure must not launch against inherited account state.
+        # Suppress filesystem diagnostics that may contain personal paths.
+        raise RuntimeError("执行组件的独立数据目录无法创建，请检查 Runner 数据目录权限、同名文件或磁盘空间后重试。") from None
     # Only reviewed env names and a relative one-segment folder are accepted by
     # the catalog loader; no source-controlled declaration can escape this root.
     env[declaration["env"]] = home

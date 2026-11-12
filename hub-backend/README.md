@@ -102,3 +102,9 @@ An authorized manager of an unarchived requirement can copy its public content i
 `POST /api/v1/schedules` accepts `sourceRequirement: {id, requirementVersion}` and a stable `creationRequestId` for this path. Hub checks current management access, archive state and the expected version, then stores a server-derived `source_requirement` snapshot of the source ID, public title and version. The response exposes these three fields as `sourceRequirement`; ordinary schedule edits cannot replace them, and provenance grants no additional task access. No execution routing, credentials or local model references are copied.
 
 Repeating the same creation request for the same account and device returns its existing schedule. Reusing its ID with different content returns 409. This also recovers a lost response after the source changes. Migration `0088_schedule_requirement_source` adds an empty JSON default for existing schedules; it does not infer historical sources or rewrite old links.
+
+## Managed ACP state directories
+
+Codex Harness, Qwen, Kimi and DeepSeek Harness use private state directories under the Runner data root. If a directory cannot be created because of permissions, a conflicting file or storage failure, preparation rejects the turn before launching an executor. The client receives an actionable diagnostic without personal paths or filesystem exception contents. Inherited personal state remains untouched; repairing the directory allows a new dispatch through the normal admission checks.
+
+`python3 -m unittest test_acp_home_isolation` checks real file collisions, injected permission failures, and Runner admission through a real subprocess/ACP bridge with a synthetic vendor. It verifies that failed preparation launches no executor and that a repaired directory permits execution. This does not establish real-provider or native-platform acceptance.

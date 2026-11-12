@@ -328,6 +328,7 @@ RELEASE_SMOKES = tuple(sorted((
     "smoke/smoke_ws_frames.py",
     "smoke/smoke_zero_route.py",
     "test_acp_error_messages.py",
+    "test_acp_home_isolation.py",
     "test_cloud_agent_inventory.py",
     "test_codex_runtime_home.py",
     "test_conversation_execution_switch.py",
