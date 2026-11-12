@@ -32,8 +32,10 @@ function fixture(t, { realHistory = false } = {}) {
     openAppConversation: async (_event, saved, id, payload, guard, attach) => {
       guard(); await beforeAttach(); await attach(composer); routed.push({ saved, id, payload });
     } };
-  const accountRow = { id: 'acct-original-chat', sourceSessionId: row.id, sourceClientId: original.clientId,
-    accountProjection: true, accountConversation: true, adapterId: 'account-sync', owner: runtime.connectionScope(original) };
+  // account-sync.row() returns the authenticated raw Hub item, not its renderer
+  // history projection. In particular, it carries no native execution owner.
+  const accountRow = { id: 'acct-original-chat', sourceSessionId: row.id, sourceClientId: original.clientId };
+  const accountHistory = { isAccountConversation: id => id === accountRow.id, row: async () => accountRow };
   const source = fs.readFileSync(path.join(__dirname, '../main/conversation/app-entry.cjs'), 'utf8');
   const nativeRequire = require('node:module').createRequire(path.join(__dirname, '../main/conversation/app-entry.cjs'));
   const module = { exports: {} };
@@ -47,9 +49,9 @@ function fixture(t, { realHistory = false } = {}) {
   const router = module.exports.create({ app, session, identityOf: async () => current, preview,
     reattach: (handle, sender) => { attachments.push({ handle, sender }); },
     history,
-    accountHistory: { isAccountConversation: id => id === accountRow.id, row: async () => accountRow },
+    accountHistory,
     entry: { resolve: async (...args) => { await beforeResolve(); return entry.resolve(...args); } } });
-  return { app, root, row, live, origin, installed, router, session, history, sender, event, routed, opened, attachments, composer, accountRow,
+  return { app, root, row, live, origin, installed, router, session, history, sender, event, routed, opened, attachments, composer, accountRow, accountHistory,
     bind: () => origins.bind(app, row.id, original, origin),
     setOrigin: value => { originSource = value; }, setIdentity: value => { current = value; },
     setAvailable: value => { available = value; }, beforeResolve: fn => { beforeResolve = fn; },
@@ -125,7 +127,7 @@ test('only a verified application composer records immutable navigation provenan
   assert.throws(() => origins.read(f.app, f.row.id, { ...identity(), hub: 'https://another.example.test' }), /其他账号/);
 });
 
-test('recent, project alias and own account projection route to one canonical session without execution', async t => {
+test('recent, project alias and raw account directory item route to one canonical session without execution', async t => {
   const f = fixture(t); f.bind();
   for (const id of [f.row.id, 'project-alias', f.accountRow.id]) {
     const result = await f.router.navigate(f.event, id);
@@ -145,6 +147,53 @@ test('unknown legacy and ordinary chats stay ordinary, including offline navigat
   assert.equal((await f.router.navigate(f.event, 'unknown-history')).handled, false);
   assert.equal((await f.router.navigate(f.event, f.row.id)).handled, false);
   assert.deepEqual(f.routed, []); assert.deepEqual(f.opened, []);
+});
+
+test('ordinary raw account history falls through and app history still requires native execution ownership', async t => {
+  const f = fixture(t);
+  assert.equal((await f.router.navigate(f.event, f.accountRow.id)).handled, false);
+  assert.equal(origins.exists(f.app, f.row.id), false, 'ordinary history must not acquire application provenance');
+  f.bind();
+  f.row.workOwner = runtime.scope(identity('two'));
+  await assert.rejects(f.router.navigate(f.event, f.accountRow.id), /当前账号|原账号/);
+  delete f.row.workOwner;
+  await assert.rejects(f.router.navigate(f.event, f.accountRow.id), { code: 'HISTORY_OWNER_MISSING' });
+  assert.deepEqual(f.routed, []); assert.deepEqual(f.opened, []); assert.deepEqual(f.attachments, []);
+});
+
+test('missing, deleted and other-device account items cannot open an application', async t => {
+  const f = fixture(t); f.bind();
+  f.accountHistory.row = async () => null;
+  assert.equal((await f.router.navigate(f.event, f.accountRow.id)).handled, false);
+  f.accountHistory.row = async () => ({ ...f.accountRow, deleted: true });
+  await assert.rejects(f.router.navigate(f.event, f.accountRow.id), /已经删除/);
+  f.accountHistory.row = async () => ({ ...f.accountRow, sourceClientId: 'other-device' });
+  assert.equal((await f.router.navigate(f.event, f.accountRow.id)).handled, false);
+  assert.deepEqual(f.routed, []); assert.deepEqual(f.opened, []); assert.deepEqual(f.attachments, []);
+});
+
+test('account changes while reading raw directory items reject even ordinary or missing fallbacks', async t => {
+  for (const kind of ['ordinary', 'missing', 'deleted', 'other-device']) await t.test(kind, async t => {
+    const f = fixture(t);
+    f.accountHistory.row = async () => {
+      f.setIdentity(identity('two'));
+      if (kind === 'missing') return null;
+      return { ...f.accountRow, ...(kind === 'deleted' ? { deleted: true } : {}),
+        ...(kind === 'other-device' ? { sourceClientId: 'other-device' } : {}) };
+    };
+    await assert.rejects(f.router.navigate(f.event, f.accountRow.id), /账号.*切换|账号或服务已变化/);
+    assert.deepEqual(f.routed, []); assert.deepEqual(f.opened, []); assert.deepEqual(f.attachments, []);
+  });
+});
+
+test('account and Hub changes while resolving a native source cannot fall through as ordinary history', async t => {
+  for (const changed of [identity('two'), { ...identity(), hub: 'https://another.example.test' }]) {
+    const f = fixture(t);
+    f.session.findBySessionId = () => null;
+    f.session.archivedConversation = async () => { f.setIdentity(changed); return f.row; };
+    await assert.rejects(f.router.navigate(f.event, f.accountRow.id), /账号.*切换|账号或服务已变化/);
+    assert.deepEqual(f.routed, []); assert.deepEqual(f.opened, []); assert.deepEqual(f.attachments, []);
+  }
 });
 
 test('origin does not replace current session ownership, source-device checks or current install permission', async t => {

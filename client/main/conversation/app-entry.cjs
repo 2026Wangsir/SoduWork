@@ -49,10 +49,13 @@ function create({ app, session, identityOf, preview, history, accountHistory, re
     if (!accountAlias && !origins.exists(app, row?.id || id)) return { ok: true, handled: false };
     const { identity, assertCurrent } = await context();
     if (accountAlias) {
-      const projection = await accountHistory.row(id);
-      if (projection) access.assertOwner(app, id, access.actor(app, identity), projection);
-      if (projection?.deleted) throw Error('这个会话已经删除');
-      row = await require('./account-native-source.cjs').resolve({ app, session, item: projection, identity });
+      // row() returns an authenticated Hub directory item, not a history
+      // projection. Only its verified native source can grant execution access.
+      const item = await accountHistory.row(id);
+      assertCurrent();
+      if (item?.deleted) throw Error('这个会话已经删除');
+      row = await require('./account-native-source.cjs').resolve({ app, session, item, identity });
+      assertCurrent();
     }
     const canonical = row?.id || id;
     const origin = origins.read(app, canonical, identity);
