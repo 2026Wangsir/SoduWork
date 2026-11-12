@@ -66,18 +66,22 @@ class BuildTests(unittest.TestCase):
     def exercise_hub(self, fault=None):
         calls = []
         inspections = 0
+        restarted = False
         def docker(*args, **kwargs):
-            nonlocal inspections
+            nonlocal inspections, restarted
             calls.append(args)
             if args[:2] == ('image', 'inspect'):
                 inspections += 1
                 return 'sha256:' + ('b' if fault == 'export' and inspections == 2 else 'a') * 64
             if args[0] == 'inspect':
                 return 'sha256:' + 'a' * 64
+            if args[0] == 'restart':
+                restarted = True
             if args[0] == 'port':
-                return '127.0.0.1:12345'
+                return '127.0.0.1:23456' if restarted else '127.0.0.1:12345'
             return ''
         def response(url, **kwargs):
+            self.assertTrue(url.startswith('http://127.0.0.1:23456/' if restarted else 'http://127.0.0.1:12345/'))
             if url.endswith('/readyz'):
                 return Response(b'{"ready":true}', 'application/json')
             if url.endswith('/healthz'):

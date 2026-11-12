@@ -90,6 +90,10 @@ async function baseline(key, directory, { file = process.env.SODUWORK_ACCEPT_BAS
     path.join(require('node:os').homedir(), '.cache/soduwork-ci/downloads') : null) } = {}) {
   assert.ok(file, 'Configure a baseline file with pinned old installers');
   const config = await contract.read(file);
+  const first = config.firstRelease;
+  if (productName === 'SoduWork' && first?.version === candidateVersion &&
+      first.excludedProduct === 'SoduWork Global' &&
+      ['macos-arm64-dmg', 'macos-x64-dmg'].includes(key) && first.keys?.includes(key)) return null;
   const item = config[key];
   assert.ok(item && /^\d+\.\d+\.\d+$/.test(item.version), 'Missing baseline: ' + key);
   assertUpgradeVersion(item.version, candidateVersion);

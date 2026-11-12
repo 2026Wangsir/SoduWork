@@ -24,15 +24,24 @@
     "url": "https://github.com/mdiri-ai/SoduWork/releases/download/client-v1.13.13/SoduWork-1.13.13-linux.tar.gz"
   },
   "macos-arm64-dmg": {
-    "productName": "SoduWork",
+    "productName": "SoduWork Global",
     "version": "1.13.13",
     "sha256": "df7a4c632f19baae95e5db6cd416e34b3af4d669fed05a657a3291e2201dbb4a",
     "url": "https://github.com/mdiri-ai/SoduWork/releases/download/client-v1.13.13/SoduWork-1.13.13-mac-arm64.dmg"
   },
   "macos-x64-dmg": {
-    "productName": "SoduWork",
+    "productName": "SoduWork Global",
     "version": "1.13.13",
     "sha256": "3e813c9538846f0452b116126c68a1838918ce8f11544ee41c888a82eea8c3c5",
     "url": "https://github.com/mdiri-ai/SoduWork/releases/download/client-v1.13.13/SoduWork-1.13.13-mac-x64.dmg"
+  },
+  "firstRelease": {
+    "version": "1.13.15",
+    "keys": [
+      "macos-arm64-dmg",
+      "macos-x64-dmg"
+    ],
+    "excludedProduct": "SoduWork Global",
+    "reason": "The published 1.13.13 Mac DMGs contain SoduWork Global.app. First SoduWork Mac release verifies fresh install, restart, reinstall and persisted data; Global credential migration is not supported."
   }
 }

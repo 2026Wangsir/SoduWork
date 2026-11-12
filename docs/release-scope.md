@@ -33,3 +33,5 @@
 从已验证的源码 ZIP 初始化公开仓库，或将审查后的源码合并为单个提交放入公开分支。私有开发历史、旧标签和历史产物不在范围内，不要直接公开原始开发仓库。`tools/export_source.py` 只导出当前已提交的文件树，根据压缩包内的文件自动生成 `tools/distribution/SOURCE-MANIFEST.json`、记录源码提交，并验证最终 ZIP。该清单是导出产物，不应提交到 Git；源码包不包含 Git 历史、未提交的改动、未跟踪文件或依赖缓存。
 
 只报告实际验证过的平台。Windows 检查不能替代原生 macOS/Linux 验证，合成数据检查也不能证明真实模型或生产环境已完成验收。
+
+macOS 1.13.15 按首次 SoduWork Mac 发版验收，覆盖新装、重启、重装以及数据和加密凭据保留。不支持从 SoduWork Global 1.13.13 迁移凭据。Client/Hub 合并流程仅生成 Draft Release 供内部测试，不会自动公开发布。

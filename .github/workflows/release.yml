@@ -1,12 +1,13 @@
-name: Public release
+name: Draft release
 
 on:
   workflow_dispatch:
     inputs:
       component:
-        description: Component to build and accept once
+        description: all builds Client and Hub together; source/client/hub are diagnostic subsets
         type: choice
-        options: [source, client, hub]
+        options: [all, source, client, hub]
+        default: all
         required: true
       version:
         description: Unified version X.Y.Z matching the protected release/X.Y.Z branch
@@ -17,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: public-release-${{ inputs.component }}-${{ inputs.version }}
+  group: draft-release-${{ inputs.version }}
   cancel-in-progress: false
 
 env:
@@ -78,7 +79,7 @@ jobs:
 
   client:
     needs: [quality, security]
-    if: inputs.component == 'client'
+    if: inputs.component == 'client' || inputs.component == 'all'
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +111,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang rpm libarchive-tools
+          sudo apt-get install -y clang-15 rpm libarchive-tools
       - name: Prepare macOS signing and notarization
         if: startsWith(matrix.shard, 'macos-')
         run: bash tools/ci/prepare-macos-signing.sh
@@ -150,7 +151,7 @@ jobs:
 
   hub:
     needs: [quality, security]
-    if: inputs.component == 'hub'
+    if: inputs.component == 'hub' || inputs.component == 'all'
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
@@ -202,17 +203,16 @@ jobs:
       - name: Explain the manual gate
         shell: bash
         run: |
-          echo 'Candidate passed. Create the protected vX.Y.Z tag at this exact commit, then approve public-release. Do not start another run or rebuild.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Candidate passed. The next job creates a Draft Release for internal testing. No automatic public publication.' >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA / Run: $GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
     outputs:
       artifact-id: ${{ steps.candidate.outputs.artifact-id }}
 
-  publish:
+  draft:
     needs: candidate
     if: ${{ !cancelled() && needs.candidate.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
-    environment: public-release
     permissions:
       contents: write
       actions: read
@@ -229,7 +229,7 @@ jobs:
           artifact-ids: ${{ needs.candidate.outputs.artifact-id }}
           path: release-out/candidate
           merge-multiple: true
-      - name: Verify tag, publish the accepted bytes and verify public downloads
-        run: python tools/github/release.py publish --folder release-out/candidate
+      - name: Upload and verify the accepted bytes as a draft only
+        run: python tools/github/release.py draft --folder release-out/candidate
         env:
           GH_TOKEN: ${{ github.token }}

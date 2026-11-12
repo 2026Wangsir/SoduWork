@@ -111,6 +111,8 @@ async function main() {
         'Isolated app copies; no Gatekeeper quarantine/notarization or drag-and-drop UI certification.',
         'Mock Keychain in isolated test profiles; no system Keychain authorization or credential migration certification.',
       ];
+    if (checks.some(check => check.upgraded === false)) limitations.push(
+      'First SoduWork macOS release: fresh install, restart and reinstall preserve data and ciphertext; SoduWork Global credential migration is not supported.');
     await contract.acceptance('macos', checks, limitations, arch);
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 }

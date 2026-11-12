@@ -4,7 +4,7 @@
 
 `ci.yml` and `security.yml` run ordinary push/PR checks and provide the shared quality gates for `release.yml`. Release branch pushes and tags do not trigger duplicate checks. Client tests run on Linux and Windows; source HTTP startup checks run on all three operating systems. The PostgreSQL job checks migrations, schema drift, backup and restore using a disposable database.
 
-**Public release** offers three manual paths: source, Client and Hub. Client and Hub preflight fails while `PUBLIC-SOURCE.json` sets `sourceOnly: true`, any item in `third-party/public-release.json` is pending, or previous-installer baselines are missing. The source path does not depend on these gates. `SODUWORK_INTERNAL_BUILD` cannot bypass publication gates. Workflow source does not establish a successful GitHub-hosted run.
+**Draft release** defaults to the combined Client + Hub path, with source, Client and Hub subsets for diagnostics. Client and Hub preflight fails while `PUBLIC-SOURCE.json` sets `sourceOnly: true`, any item in `third-party/public-release.json` is pending, or previous-installer baselines are missing. The source path does not depend on these gates. `SODUWORK_INTERNAL_BUILD` cannot bypass publication gates. Workflow source does not establish a successful GitHub-hosted run.
 
 | Component | Build and acceptance | GitHub Release assets |
 | --- | --- | --- |
@@ -26,22 +26,22 @@ It builds Windows x64, Linux x64 (DEB/RPM/tar.gz), and Mac ARM64/x64 on native
 GitHub-hosted runners. Each job uploads only its build/checksum report.
 Installers stay on the ephemeral runner while binary distribution review remains
 pending. This workflow neither creates a Release nor supplies
-upgrade-acceptance receipts to `Public release`.
+upgrade-acceptance receipts to `Draft release`.
 
 1. Set the repository variable `PUBLIC_RELEASE_REPOSITORY` to the final public repository's `owner/name`. The workflow must exist on the default branch before its manual entry appears in Actions.
 2. Protect `release/*`, prohibit force pushes and restrict updates to maintainers. Protect `v*`; prohibit moving or deleting published tags.
 3. Create the `public-release` Environment in advance, configure **Required reviewers**, restrict deployment to protected release branches and disable administrator bypass. Configure self-review according to team responsibilities. Preflight checks the actual reviewer gate through the GitHub API and fails if it is missing; it does not rely on YAML to create the environment automatically.
-4. Keep `GITHUB_TOKEN` read-only by default. Only the approved publication job receives `contents: write` and `actions: read`. Do not configure company credentials, cluster addresses, private registries, upload tokens or SSH keys. PR jobs receive no release credentials; these workflows do not use `pull_request_target` or self-hosted runners.
+4. Keep `GITHUB_TOKEN` read-only by default. Only the draft upload job receives `contents: write` and `actions: read`. Do not configure company credentials, cluster addresses, private registries, upload tokens or SSH keys. PR jobs receive no release credentials; these workflows do not use `pull_request_target` or self-hosted runners.
 5. Allow the official checkout/setup/artifact actions pinned to commit SHAs. Artifacts are downloaded from the current run; final publication uses the candidate's immutable artifact ID. Candidates are retained for 30 days and must be approved before expiry. Expired or missing artifacts require a new candidate, not receipts borrowed from another run.
 
 ## Release procedure
 
 1. Create one unified `release/X.Y.Z` branch from reviewed public source. Client and Hub use the same X.Y.Z version; the version is recorded in receipts and written to Hub OCI labels.
-2. Manually run **Public release** on that branch with the matching component and version. Build and accept each candidate once. A source fix creates a new SHA and requires a new candidate.
-3. After candidate preparation, stop at the `public-release` approval gate. For preparation-only work, do not create a formal tag or approve publication.
-4. Review the receipts, create `vX.Y.Z` at **the same SHA**, then approve the original run. Before publishing, the workflow rechecks the unified release branch head, lightweight or annotated tag, source version, run ID, all platform receipts and file digests.
-5. Create a draft Release, upload the original bytes and download each asset for verification. Publish only after all checks pass, then verify complete anonymous downloads. Never rebuild or overwrite assets. Retry only the publication job after a network failure. A draft from the same run can resume; a Release belonging to another run or containing different bytes is rejected.
-6. Preserve the release branch head and tag. Merge release completion work into the public mainline while preserving history. New changes belong to a new version.
+2. Manually run **Draft release** on that branch with the matching component and version. Build and accept each candidate once. A source fix creates a new SHA and requires a new candidate.
+3. The final job creates a **Draft Release only**, targeting the accepted SHA. It downloads every uploaded asset with authentication and verifies its digest. It never publishes the draft and does not require creating a formal tag first. An existing tag must point to the accepted SHA.
+4. Maintainers with access to draft releases download and test the candidate internally. Draft assets are not anonymous public downloads. The workflow contains no public-publish command; publishing later requires an explicit, separate maintainer action after internal testing.
+5. Never rebuild or overwrite accepted assets. Retry the draft job after a network failure: a draft from the same run can resume, while another candidate or an already public Release is rejected. For a new candidate of the same version, explicitly review and remove the obsolete draft first.
+6. Use `component: all` to build Client and Hub together with one shared quality/security gate and one manifest. Individual components are diagnostic subsets and cannot be merged into another run's draft. Preserve the accepted SHA for the eventual `vX.Y.Z` tag.
 
 When preparing the public repository, reviewed source may be squashed into `public` without private development history, old tags or internal artifacts. The source exporter creates a ZIP from the committed tree, generates its manifest from the archived bytes, and verifies the archive before returning it. The manifest is not tracked in Git.
 
@@ -49,7 +49,7 @@ When preparing the public repository, reviewed source may be squashed into `publ
 
 Review and commit genuine resolution evidence for `third-party/public-release.json`: original licenses, corresponding source archives and actual artifact inventories. Then update the distribution scope in `PUBLIC-SOURCE.json`. Do not simply clear pending items to make CI pass.
 
-Client desktop acceptance requires six entries in `tools/ci/soduwork-acceptance-baselines.json`: `windows-x64-exe`, `linux-x64-deb`, `linux-x64-rpm`, `linux-x64-tar.gz`, `macos-arm64-dmg` and `macos-x64-dmg`. Each entry includes `productName: SoduWork`, a strictly older `version`, `sha256`, and a `url` pointing to the same public GitHub repository, with optional `format`/`size`. Local paths and internal fallback downloads are rejected. The first public binary release has no previous public baseline and needs a separately reviewed first-release acceptance contract. Never substitute the candidate as an older version to claim a successful upgrade.
+Client desktop acceptance requires six entries in `tools/ci/soduwork-acceptance-baselines.json`: `windows-x64-exe`, `linux-x64-deb`, `linux-x64-rpm`, `linux-x64-tar.gz`, `macos-arm64-dmg` and `macos-x64-dmg`. Each entry includes `productName: SoduWork`, a strictly older `version`, `sha256`, and a `url` pointing to the same public GitHub repository, with optional `format`/`size`. Local paths and internal fallback downloads are rejected. For macOS 1.13.15 only, the committed `firstRelease` contract replaces upgrade acceptance with fresh install, restart, reinstall, ciphertext/data persistence and uninstall checks. The older 1.13.13 DMGs contain `SoduWork Global.app`; migration of its credentials is explicitly unsupported. The exception does not apply to Windows, Linux or subsequent versions. Never substitute the candidate as an older version to claim a successful upgrade.
 
 Hub images are delivered as Release assets. After downloading and verifying the manifest, run `docker load --input <image.tar.gz>` and configure your environment using the [self-hosting guide](../ops/self-host/README.md). This workflow does not push to GHCR or migrate company cluster deployment, backup schedules, domains or update services.
 

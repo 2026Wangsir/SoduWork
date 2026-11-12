@@ -124,12 +124,12 @@ class ReleaseTests(unittest.TestCase):
     def test_publication_never_takes_over_another_run(self):
         self.bundle()
         release.candidate(self.ctx, self.root)
-        with patch.object(release, "authorize"), patch.object(release, "api", return_value={"body": "other candidate"}), \
+        with patch.object(release, "preflight"), patch.object(release, "authorize"), patch.object(release, "api", return_value={"body": "other candidate", "draft": True}), \
                 patch.object(release, "gh") as gh, self.assertRaisesRegex(ValueError, "another candidate"):
-            release.publish(self.ctx, self.root)
+            release.draft(self.ctx, self.root)
         gh.assert_not_called()
 
-    def test_publication_resumes_draft_without_overwriting_and_rechecks_public_bytes(self):
+    def test_draft_resumes_without_overwriting_and_never_publishes(self):
         self.bundle()
         manifest = release.candidate(self.ctx, self.root)
         names = [a['name'] for a in manifest['assets']] + ['release-manifest.json']
@@ -154,15 +154,81 @@ class ReleaseTests(unittest.TestCase):
                 self.fail('Unexpected publication command')
         def response(url, **kwargs):
             return io.BytesIO((self.root / url.rsplit('/', 1)[-1]).read_bytes())
-        with patch.object(release, 'authorize'), patch.object(release, 'api', return_value=existing), \
+        with patch.object(release, 'preflight'), patch.object(release, 'authorize'), patch.object(release, 'api', return_value=existing), \
                 patch.object(release, 'gh', side_effect=gh), patch.object(release.urllib.request, 'urlopen', side_effect=response):
-            release.publish(self.ctx, self.root)
+            release.draft(self.ctx, self.root)
             self.assertEqual(len([c for c in calls if c[1] == 'upload']), len(names) - 1)
-            self.assertFalse(existing['draft'])
+            self.assertTrue(existing['draft'])
+            self.assertFalse(any(c[1] == 'edit' for c in calls))
             calls.clear()
-            release.publish(self.ctx, self.root)
+            release.draft(self.ctx, self.root)
             self.assertTrue(all(c[1] == 'download' for c in calls))
         self.assertTrue(all('--clobber' not in c for c in calls))
+
+    def test_new_draft_targets_accepted_sha_without_creating_a_tag_or_publishing(self):
+        self.bundle()
+        release.candidate(self.ctx, self.root)
+        existing = None
+        calls = []
+        def api(route, optional=False):
+            if route.startswith('/git/ref/tags/'):
+                return None
+            return existing
+        def gh(*args):
+            nonlocal existing
+            calls.append(args)
+            if args[1] == 'create':
+                self.assertIn('--draft', args)
+                self.assertEqual(args[args.index('--target') + 1], self.ctx['commit'])
+                existing = {'draft': True, 'assets': []}
+            elif args[1] == 'upload':
+                existing['assets'].append({'name': Path(args[3]).name})
+            elif args[1] == 'download':
+                name = args[args.index('--pattern') + 1]
+                (Path(args[args.index('--dir') + 1]) / name).write_bytes((self.root / name).read_bytes())
+            else:
+                self.fail('Draft must never publish or mutate tags')
+        with patch.object(release, 'preflight'), patch.object(release, 'api', side_effect=api), \
+                patch.object(release, 'gh', side_effect=gh):
+            release.draft(self.ctx, self.root)
+        self.assertTrue(existing['draft'])
+
+    def test_draft_rejects_public_release_even_for_same_candidate(self):
+        self.bundle()
+        release.candidate(self.ctx, self.root)
+        marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
+        with patch.object(release, 'preflight'), patch.object(release, 'authorize'), \
+                patch.object(release, 'api', return_value={'body': marker, 'draft': False}), \
+                patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, 'public Release'):
+            release.draft(self.ctx, self.root)
+        gh.assert_not_called()
+
+    def test_combined_candidate_requires_hub_and_every_desktop_shard(self):
+        ctx = {**self.ctx, 'component': 'all'}
+        import shutil
+        for shard in release.SHARDS['all']:
+            folder = self.root / shard
+            folder.mkdir()
+            for name in release.expected(ctx, shard):
+                (folder / name).write_bytes(b'accepted fixture')
+            release.seal(ctx, shard, folder, {'ok': True})
+            for file in folder.iterdir():
+                shutil.move(file, self.root / file.name)
+            folder.rmdir()
+        manifest = release.candidate(ctx, self.root)
+        self.assertEqual(len(manifest['receipts']), 5)
+        self.assertEqual(release.verify(ctx, self.root), manifest)
+        (self.root / 'hub-receipt.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'regular artifact'):
+            release.verify(ctx, self.root)
+
+    def test_first_release_exception_is_mac_and_version_scoped(self):
+        contract = {'firstRelease': {'version': '1.13.15',
+            'keys': ['macos-arm64-dmg', 'windows-x64-exe'], 'excludedProduct': 'SoduWork Global'}}
+        ctx = {**self.ctx, 'version': '1.13.15'}
+        self.assertTrue(release.first_release(ctx, 'macos-arm64-dmg', contract))
+        self.assertFalse(release.first_release(ctx, 'windows-x64-exe', contract))
+        self.assertFalse(release.first_release({**ctx, 'version': '1.13.16'}, 'macos-arm64-dmg', contract))
 
     def test_client_baselines_must_be_older_public_assets(self):
         ctx = {**self.ctx, 'component': 'client'}
