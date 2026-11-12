@@ -72,6 +72,8 @@ class OpenCodeNativeModelSelectionTests(unittest.TestCase):
                     "OPENCODE_DB": str(root / "native.db"), "OPENCODE_DISABLE_AUTOUPDATE": "1",
                     "OPENCODE_DISABLE_MODELS_FETCH": "1", "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
                     "OPENCODE_DISABLE_SHARE": "1", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+                from tests.opencode_native_dependencies import seed
+                seed(executable, root / "runner")
                 sid = ""
                 for index, model in enumerate(("original", "replacement", "replacement")):
                     key = "fixture-key-" + str(index)
