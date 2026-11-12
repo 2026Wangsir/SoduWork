@@ -57,9 +57,9 @@ async function run(file, args, options = {}) {
       child.stdout.on('data', bytes => { if (!log) stdout += bytes; if (sink) sink.write(bytes); else process.stdout.write(bytes); });
       child.stderr.on('data', bytes => { if (sink) sink.write(bytes); else process.stderr.write(bytes); });
       child.once('error', error => { clearTimeout(timer); reject(error); });
-      child.once('close', code => {
+      child.once('close', (code, signal) => {
         clearTimeout(timer);
-        code === 0 ? resolve(stdout.trim()) : reject(Error(`${path.basename(file)} exited ${code}; see ${log || 'job log'}`));
+        code === 0 ? resolve(stdout.trim()) : reject(Object.assign(Error(`${path.basename(file)} exited ${code}; see ${log || 'job log'}`), { exitCode: code, signal }));
       });
     });
   } catch (error) {

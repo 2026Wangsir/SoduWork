@@ -17,6 +17,19 @@ async function legacyNotarizationBaseline(file, baseline) {
   return true;
 }
 
+// Apple can drop the CloudKit connection even after a ticket was stapled.
+// Retry that network status only; invalid signatures/tickets still fail closed.
+async function validateNotarization(app, { execute = run, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await execute('xcrun', ['stapler', 'validate', app]); }
+    catch (error) {
+      if (error.exitCode !== 68 || attempt >= 3) throw error;
+      console.warn(`Apple ticket validation connection failed (68); retry ${attempt + 1}/3`);
+      await sleep((attempt + 1) * 10000);
+    }
+  }
+}
+
 async function unpack(file, format, destination, { execute = run, mountRoot = os.tmpdir(), legacyBaseline } = {}) {
   const release = process.env.SODUWORK_MAC_RELEASE === '1';
   const legacy = release && await legacyNotarizationBaseline(file, legacyBaseline);
@@ -52,7 +65,7 @@ async function unpack(file, format, destination, { execute = run, mountRoot = os
   if (release) {
     if (!legacy) {
       await execute('spctl', ['--assess', '--type', 'execute', app]);
-      await execute('xcrun', ['stapler', 'validate', app]);
+      await validateNotarization(app, { execute });
     }
     signature.notarization = legacy ? 'pinned-legacy-ad-hoc' : 'verified';
   }
@@ -116,5 +129,5 @@ async function main() {
     await contract.acceptance('macos', checks, limitations, arch);
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 }
-module.exports = { unpack };
+module.exports = { unpack, validateNotarization };
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

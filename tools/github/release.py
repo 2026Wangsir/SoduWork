@@ -188,13 +188,28 @@ def gh(*args):
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+def find_release_by_tag(tag):
+    # The tag endpoint only finds published releases. Authenticated listing also
+    # includes drafts whose pending tag has not been created yet.
+    found, page = None, 1
+    while True:
+        releases = api(f"/releases?per_page=100&page={page}")
+        for item in releases:
+            if item.get("tag_name") == tag:
+                require(found is None, "Multiple Releases use the requested tag")
+                found = item
+        if len(releases) < 100:
+            return found
+        page += 1
+
+
 def draft(ctx, folder):
     manifest = verify(ctx, folder)
     preflight(ctx)
     # A draft can precede the formal tag; an existing tag must match.
     if api("/git/ref/tags/" + ctx["tag"], optional=True):
         authorize(ctx)
-    existing = api("/releases/tags/" + ctx["tag"], optional=True)
+    existing = find_release_by_tag(ctx["tag"])
     marker = f"Candidate: {ctx['repository']} / run {ctx['runId']} / {ctx['commit']}"
     if existing:
         require(existing.get("draft") is True, "Refusing to modify a public Release")
@@ -203,8 +218,14 @@ def draft(ctx, folder):
         gh("release", "create", ctx["tag"], "--repo", ctx["repository"], "--target", ctx["commit"], "--draft",
            "--title", "SoduWork " + ("Client + Hub" if ctx["component"] == "all" else ctx["component"]) + " " + ctx["version"],
            "--notes", marker + "\n\nDraft for internal testing only. See release-manifest.json for checksums and acceptance scope.")
+        existing = find_release_by_tag(ctx["tag"])
+    require(existing is not None, "Created Draft Release could not be found")
+    release_route = "/releases/" + str(existing["id"])
     # Never overwrite an asset: a retry downloads and compares assets already uploaded.
-    existing = api("/releases/tags/" + ctx["tag"])
+    existing = api(release_route)
+    require(existing.get("tag_name") == ctx["tag"], "Release tag changed")
+    require(existing.get("draft") is True, "Refusing to modify a public Release")
+    require(marker in existing.get("body", ""), "Release belongs to another candidate; refusing overwrite")
     actual_names = {a["name"] for a in existing["assets"]}
     desired = {a["name"] for a in manifest["assets"]} | {"release-manifest.json"}
     require(actual_names <= desired, "Unexpected assets on existing Release")
@@ -215,7 +236,7 @@ def draft(ctx, folder):
                 gh("release", "upload", ctx["tag"], str(folder / name), "--repo", ctx["repository"])
             gh("release", "download", ctx["tag"], "--repo", ctx["repository"], "--pattern", name, "--dir", scratch)
             require(fingerprint(Path(scratch) / name) == fingerprint(folder / name), "Uploaded asset differs: " + name)
-    saved = api("/releases/tags/" + ctx["tag"])
+    saved = api(release_route)
     require(saved["draft"] is True, "Release must remain a draft")
     require({a["name"] for a in saved["assets"]} == desired, "Draft assets differ")
 

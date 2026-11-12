@@ -124,7 +124,10 @@ class ReleaseTests(unittest.TestCase):
     def test_publication_never_takes_over_another_run(self):
         self.bundle()
         release.candidate(self.ctx, self.root)
-        with patch.object(release, "preflight"), patch.object(release, "authorize"), patch.object(release, "api", return_value={"body": "other candidate", "draft": True}), \
+        existing = {"body": "other candidate", "draft": True}
+        with patch.object(release, "preflight"), patch.object(release, "authorize"), \
+                patch.object(release, "api", return_value=existing), \
+                patch.object(release, "find_release_by_tag", return_value=existing), \
                 patch.object(release, "gh") as gh, self.assertRaisesRegex(ValueError, "another candidate"):
             release.draft(self.ctx, self.root)
         gh.assert_not_called()
@@ -134,7 +137,7 @@ class ReleaseTests(unittest.TestCase):
         manifest = release.candidate(self.ctx, self.root)
         names = [a['name'] for a in manifest['assets']] + ['release-manifest.json']
         marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
-        existing = {'body': marker, 'draft': True, 'assets': []}
+        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'body': marker, 'draft': True, 'assets': []}
         # Simulate one asset already uploaded by a previous attempt of this run.
         def add(name):
             existing['assets'].append({'name': name, 'browser_download_url': 'https://example.test/' + name})
@@ -155,6 +158,7 @@ class ReleaseTests(unittest.TestCase):
         def response(url, **kwargs):
             return io.BytesIO((self.root / url.rsplit('/', 1)[-1]).read_bytes())
         with patch.object(release, 'preflight'), patch.object(release, 'authorize'), patch.object(release, 'api', return_value=existing), \
+                patch.object(release, 'find_release_by_tag', return_value=existing), \
                 patch.object(release, 'gh', side_effect=gh), patch.object(release.urllib.request, 'urlopen', side_effect=response):
             release.draft(self.ctx, self.root)
             self.assertEqual(len([c for c in calls if c[1] == 'upload']), len(names) - 1)
@@ -170,17 +174,29 @@ class ReleaseTests(unittest.TestCase):
         release.candidate(self.ctx, self.root)
         existing = None
         calls = []
+        api_calls = []
         def api(route, optional=False):
+            api_calls.append(route)
             if route.startswith('/git/ref/tags/'):
                 return None
-            return existing
+            # A draft has a pending tag only: the published-by-tag API is 404.
+            if route.startswith('/releases/tags/'):
+                if optional:
+                    return None
+                raise RuntimeError('GitHub API: HTTP 404')
+            if route == '/releases?per_page=100&page=1':
+                return [existing] if existing else []
+            if route == '/releases/42':
+                return existing
+            self.fail('Unexpected GitHub API route: ' + route)
         def gh(*args):
             nonlocal existing
             calls.append(args)
             if args[1] == 'create':
                 self.assertIn('--draft', args)
                 self.assertEqual(args[args.index('--target') + 1], self.ctx['commit'])
-                existing = {'draft': True, 'assets': []}
+                existing = {'id': 42, 'tag_name': self.ctx['tag'],
+                            'body': args[args.index('--notes') + 1], 'draft': True, 'assets': []}
             elif args[1] == 'upload':
                 existing['assets'].append({'name': Path(args[3]).name})
             elif args[1] == 'download':
@@ -192,13 +208,47 @@ class ReleaseTests(unittest.TestCase):
                 patch.object(release, 'gh', side_effect=gh):
             release.draft(self.ctx, self.root)
         self.assertTrue(existing['draft'])
+        self.assertFalse(any(route.startswith('/releases/tags/') for route in api_calls))
+        self.assertEqual(api_calls.count('/releases/42'), 2)
 
     def test_draft_rejects_public_release_even_for_same_candidate(self):
         self.bundle()
         release.candidate(self.ctx, self.root)
         marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
+        existing = {'body': marker, 'draft': False}
         with patch.object(release, 'preflight'), patch.object(release, 'authorize'), \
-                patch.object(release, 'api', return_value={'body': marker, 'draft': False}), \
+                patch.object(release, 'api', return_value=existing), \
+                patch.object(release, 'find_release_by_tag', return_value=existing), \
+                patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, 'public Release'):
+            release.draft(self.ctx, self.root)
+        gh.assert_not_called()
+
+    def test_release_lookup_paginates_and_matches_exact_pending_tag(self):
+        other_releases = [{'id': i, 'tag_name': 'v9.0.' + str(i)} for i in range(100)]
+        wanted = {'id': 101, 'tag_name': self.ctx['tag'], 'draft': True}
+        with patch.object(release, 'api', side_effect=[other_releases, [wanted]]) as api:
+            self.assertEqual(release.find_release_by_tag(self.ctx['tag']), wanted)
+        self.assertEqual([call.args[0] for call in api.call_args_list], [
+            '/releases?per_page=100&page=1', '/releases?per_page=100&page=2'])
+        with patch.object(release, 'api', return_value=[{'tag_name': self.ctx['tag'] + '-rc1'}]):
+            self.assertIsNone(release.find_release_by_tag(self.ctx['tag']))
+
+    def test_release_lookup_rejects_duplicate_tags_across_pages(self):
+        first_page = [{'id': i, 'tag_name': 'v9.0.' + str(i)} for i in range(99)]
+        first_page.append({'id': 100, 'tag_name': self.ctx['tag'], 'draft': True})
+        second_page = [{'id': 101, 'tag_name': self.ctx['tag'], 'draft': False}]
+        with patch.object(release, 'api', side_effect=[first_page, second_page]), \
+                self.assertRaisesRegex(ValueError, 'Multiple Releases'):
+            release.find_release_by_tag(self.ctx['tag'])
+
+    def test_draft_refuses_public_release_after_refresh(self):
+        self.bundle()
+        release.candidate(self.ctx, self.root)
+        marker = f"Candidate: {self.ctx['repository']} / run {self.ctx['runId']} / {self.ctx['commit']}"
+        existing = {'id': 42, 'tag_name': self.ctx['tag'], 'body': marker, 'draft': True, 'assets': []}
+        with patch.object(release, 'preflight'), \
+                patch.object(release, 'find_release_by_tag', return_value=existing), \
+                patch.object(release, 'api', side_effect=[None, {**existing, 'draft': False}]), \
                 patch.object(release, 'gh') as gh, self.assertRaisesRegex(ValueError, 'public Release'):
             release.draft(self.ctx, self.root)
         gh.assert_not_called()
