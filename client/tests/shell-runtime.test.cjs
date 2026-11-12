@@ -8,6 +8,19 @@ const test = require('node:test');
 
 const runtime = require('../main/pi-session/shell-runtime');
 
+test('Linux packages install the command tools required to start conversations', () => {
+  const pkg = require('../package.json');
+  const packages = { git: 'git', find: 'findutils', grep: 'grep', sed: 'sed', tar: 'tar' };
+  for (const format of ['deb', 'rpm']) {
+    const dependencies = pkg.build[format].depends;
+    assert.ok(dependencies.includes('bash'), `${format} must install the system shell`);
+    for (const tool of runtime.REQUIRED_TOOLS) {
+      assert.ok(packages[tool], `Map the Linux package supplying ${tool}`);
+      assert.ok(dependencies.includes(packages[tool]), `${format} must install ${tool}`);
+    }
+  }
+});
+
 function fixture(root, relative) {
   const file = path.join(root, ...relative.split('/'));
   fs.mkdirSync(path.dirname(file), { recursive: true });
