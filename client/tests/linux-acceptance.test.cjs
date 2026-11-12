@@ -30,6 +30,10 @@ for (const firstRelease of [true, false]) test(`Linux acceptance preserves ${fir
     assert.equal(row.upgraded, !firstRelease);
     assert.equal(row.reinstalled, firstRelease);
   }
+  for (const [, args] of calls.filter(([, args]) => args[0] === 'create')) {
+    assert.equal(args[args.indexOf('--cap-add') + 1], 'IPC_LOCK');
+    assert.equal(args.includes('--privileged'), false);
+  }
   const verifies = calls.filter(([, args]) => args[0] === 'exec' && args[4] === 'verify');
   assert.equal(verifies.length, 4);
   for (const [, args] of verifies) {

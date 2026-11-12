@@ -28,7 +28,7 @@ async function main() {
       const container = 'soduwork-public-' + require('node:crypto').randomUUID();
       let created = false;
       try {
-        await run('docker', ['create', '--name', container, '--cpus', '2', '--memory', '4g', '--pids-limit', '512',
+        await run('docker', ['create', '--name', container, '--cap-add', 'IPC_LOCK', '--cpus', '2', '--memory', '4g', '--pids-limit', '512',
           '-v', packages + ':/pkg:ro', '-v', path.join(contract.root, 'tools') + ':/checks:ro',
           '-v', output + ':/evidence', '-e', 'SODUWORK_ACCEPT_UID=' + (os.userInfo().uid || 12001), image, 'sleep', 'infinity']);
         created = true;

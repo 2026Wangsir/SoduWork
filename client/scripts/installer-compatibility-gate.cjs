@@ -16,6 +16,11 @@ async function fingerprint(file) {
   for await (const bytes of createReadStream(file)) { hash.update(bytes); size += bytes.length; }
   return { size, sha256: hash.digest('hex') };
 }
+async function copyFixture(source, target) {
+  for (const name of ['build', 'scripts', 'e2e', 'tests', 'main', 'package.json', 'update-trust.json', 'icon.ico']) {
+    await fs.cp(path.join(source, name), path.join(target, name), { recursive: true });
+  }
+}
 async function main() {
   const [input, destination] = process.argv.slice(2);
   assert.ok(input && path.isAbsolute(input), 'Usage: node installer-compatibility-gate.cjs <absolute installer.exe> [new report.json]');
@@ -77,9 +82,7 @@ async function main() {
   }
   try {
     // No .runtime output or production data is shared with test fixture builds.
-    for (const name of ['build', 'scripts', 'e2e', 'tests', 'main', 'package.json', 'icon.ico']) {
-      await fs.cp(path.join(client, name), path.join(fixture, name), { recursive: true });
-    }
+    await copyFixture(client, fixture);
     await fs.symlink(await fs.realpath(path.join(client, 'node_modules')), path.join(fixture, 'node_modules'), 'junction');
     const fixturePkg = await readJson(path.join(fixture, 'package.json'));
     fixturePkg.version = version;
@@ -118,4 +121,5 @@ async function main() {
     console.log('Installer compatibility receipt: ' + reportFile);
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { copyFixture };
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

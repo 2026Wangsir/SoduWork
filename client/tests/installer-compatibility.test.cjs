@@ -89,3 +89,15 @@ test('real uploader refuses missing or mismatched compatibility evidence before 
   fs.writeFileSync(receipt, JSON.stringify({ ...good(), ok: false }));
   assert.match(run().stderr, /has not passed/);
 });
+
+test('isolated compatibility fixture loads real distribution and update trust', async t => {
+  const { copyFixture } = require('../scripts/installer-compatibility-gate.cjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-compatibility-fixture-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  await copyFixture(path.resolve(__dirname, '..'), root);
+  const result = spawnSync(process.execPath, ['-e', "const d=require('./main/distribution.cjs'); console.log(JSON.stringify(d.getProfile()))"],
+    { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).updateTrust, require('../update-trust.json'));
+  assert.equal(fs.existsSync(path.join(root, '.runtime')), false);
+});
