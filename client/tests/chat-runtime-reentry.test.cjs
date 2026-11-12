@@ -15,13 +15,14 @@ function fixture(runtime = 'opencode') {
   const opened = [], reset = [];
   const ctx = {
     global: {}, document: { getElementById: () => null }, setTimeout: () => 1, clearTimeout() {},
-    _ref: '', _sessionId: '', _draftKey: 'new', _busy: false, _viewEpoch: 1,
+    _ref: '', _sessionId: '', _draftKey: 'new', _busy: false, _viewEpoch: 1, _entryRequest: 0,
     _openingTask: null, _openingEpoch: -1, _sessionOptions: {}, _snap: null,
     _wd: {}, _mode: 'full', _sessionCaps: [], _sessionInputs: [], _activeCollabTaskId: '', _workModel: () => 'selected-model',
     _collabEntries: () => [], _mount() {}, _render() {}, _paintOpening() {},
     _pending: '', _pendingPlugins: [], _pendingAttachmentNames: [], _restoreFailedDraft() {},
     _rememberConversationDraft() {}, _clearConversationDraft() {}, _restoreConversationDraft() {},
     _restoreRetainedConversationFailure() {},
+    _api: () => ({}),
     async _ensureOnce(chatId) {
       opened.push({ id: chatId, options: { ...ctx._sessionOptions } });
       ctx._ref = 'ref-' + chatId; ctx._sessionId = chatId;
@@ -132,6 +133,33 @@ test('same-conversation navigation cannot relabel a live adapter or pretend to s
   assert.equal(opened.length, 1);
   ctx._sessionOptions.adapterId = 'pi';
   assert.equal(ctx.sessionInfo().adapterId, 'opencode', 'the active runtime snapshot remains authoritative');
+});
+
+test('application preflight redirects or denies without resetting the current main chat', async () => {
+  const { ctx, opened, reset } = fixture();
+  await ctx.enter('', 'current-chat');
+  ctx._busy = true; ctx._snap.status = 'streaming'; ctx._pending = 'accepted turn';
+  const options = ctx._sessionOptions, snapshot = ctx._snap, viewEpoch = ctx._viewEpoch, errors = [];
+  ctx.global.petSay = reason => errors.push(reason);
+  ctx._api = () => ({ openApplication: async id => id === 'app-chat'
+    ? { ok: true, handled: true } : { ok: false, reason: 'Application unavailable' } });
+  assert.equal(await ctx.enter('', 'app-chat'), false);
+  assert.equal(await ctx.enter('', 'denied-app'), false);
+  assert.equal(ctx._sessionId, 'current-chat'); assert.equal(ctx._sessionOptions, options); assert.equal(ctx._snap, snapshot);
+  assert.equal(ctx._busy, true); assert.equal(ctx._pending, 'accepted turn'); assert.equal(ctx._viewEpoch, viewEpoch);
+  assert.equal(opened.length, 1); assert.equal(reset.length, 0); assert.deepEqual(errors, ['Application unavailable']);
+});
+
+test('a later application redirect cancels an older pending ordinary history preflight', async () => {
+  const { ctx, opened, reset } = fixture();
+  let resolve;
+  ctx._api = () => ({ openApplication: id => id === 'older-chat'
+    ? new Promise(done => { resolve = done; }) : Promise.resolve({ ok: true, handled: true }) });
+  const older = ctx.enter('', 'older-chat');
+  assert.equal(await ctx.enter('', 'app-chat'), false);
+  resolve({ ok: true, handled: false });
+  assert.equal(await older, false);
+  assert.equal(opened.length, 0); assert.equal(reset.length, 0);
 });
 
 test('re-entering the same work-only conversation preserves its choices for the first ordinary send', async () => {
