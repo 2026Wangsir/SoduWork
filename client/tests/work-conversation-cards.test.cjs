@@ -170,6 +170,73 @@ test('native work-card reads and writes require the original Hub and never claim
   assert.equal(fs.existsSync(f.module.location(f.app, 'unknown')), false);
 });
 
+test('work-card protection refreshes same-size owner changes using only the bounded header', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-work-cards-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = { getPath: () => root }, module = require('../main/conversation/work-conversation-cards');
+  const id = 'header-owner', file = module.location(app, id);
+  const make = owner => JSON.stringify({ version: 1, sessionId: id, owner,
+    protection: { version: 1, owner, hasRequirement: true }, cards: [{ data: 'x'.repeat(2300000) }] });
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, make('owner-a'));
+  const original = fs.lstatSync, stat = original(file), big = original(file, { bigint: true });
+  fs.lstatSync = function (target, options) {
+    return String(target) === file ? options?.bigint ? big : stat : original.apply(this, arguments);
+  };
+  const read = fs.readSync; let bytesRead = 0;
+  fs.readSync = function (...args) { const count = read.apply(this, args); bytesRead += count; return count; };
+  try {
+    const first = module.protectionSnapshot(app, file);
+    assert.equal(first.summary.owner, 'owner-a'); assert.ok(bytesRead <= 8192);
+    bytesRead = 0;
+    assert.strictEqual(module.protection(app, id), first.summary, 'unchanged header bytes reuse the parsed summary');
+    assert.ok(bytesRead <= 8192, 'even a cache check reads only the bounded header');
+    assert.equal(Buffer.byteLength(make('owner-b')), stat.size);
+    fs.writeFileSync(file, make('owner-b')); bytesRead = 0;
+    const changed = module.protectionSnapshot(app, file);
+    assert.equal(changed.summary.owner, 'owner-b'); assert.notEqual(changed.revision, first.revision);
+    assert.ok(bytesRead <= 8192, 'authorization never reads the large attachment payload');
+  } finally { fs.lstatSync = original; fs.readSync = read; }
+});
+
+test('legacy work-card protection hashes bounded contents beyond the header despite timestamp collisions', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-work-cards-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = { getPath: () => root }, module = require('../main/conversation/work-conversation-cards');
+  const id = 'legacy-body', file = module.location(app, id);
+  const make = (actionId, padding) => Buffer.from(JSON.stringify({ version: 1, sessionId: id, owner: 'owner-a',
+    cards: [{ padding: 'x'.repeat(padding), actionId }] }));
+  const before = make('work.automation.create', 9000), after = make('work.requirement.create', 8999);
+  assert.equal(before.length, after.length); assert.deepEqual(before.subarray(0, 8192), after.subarray(0, 8192));
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, before);
+  const original = fs.lstatSync, stat = original(file), big = original(file, { bigint: true });
+  fs.lstatSync = function (target, options) {
+    return String(target) === file ? options?.bigint ? big : stat : original.apply(this, arguments);
+  };
+  try {
+    const first = module.protectionSnapshot(app, file); assert.equal(first.summary.hasRequirement, false);
+    fs.writeFileSync(file, after);
+    const changed = module.protectionSnapshot(app, file);
+    assert.equal(changed.summary.hasRequirement, true); assert.notEqual(changed.revision, first.revision);
+  } finally { fs.lstatSync = original; }
+});
+
+test('work-card protection snapshots reject mismatched filenames and outside paths', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-work-cards-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = { getPath: () => root }, module = require('../main/conversation/work-conversation-cards');
+  const id = 'valid-identity', file = module.location(app, id);
+  const bytes = JSON.stringify({ version: 1, sessionId: id, owner: 'owner-a',
+    protection: { version: 1, owner: 'owner-a', hasRequirement: true }, cards: [] });
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes);
+  assert.equal(module.protectionSnapshot(app, file).summary.hasRequirement, true);
+  const mismatch = module.location(app, 'different-identity'); fs.writeFileSync(mismatch, bytes);
+  const outside = path.join(root, path.basename(file)); fs.writeFileSync(outside, bytes);
+  for (const candidate of [mismatch, outside]) {
+    const value = module.protectionSnapshot(app, candidate);
+    assert.equal(value.summary.invalid, true); assert.equal(typeof value.revision, 'string');
+  }
+});
+
 for (const actionId of ['work.automation.create', 'work.requirement.create']) {
   test(`large ${actionId} records persist a bounded protection header before intact attachments`, async t => {
     const f = await fixture(t), made = await f.store.reserve({ title: 'Large synthetic work card' });
@@ -205,7 +272,7 @@ for (const actionId of ['work.automation.create', 'work.requirement.create']) {
   });
 }
 
-test('large legacy automation records stay conservative until a verified full read warms their classification', async t => {
+test('large legacy automation records stay conservative after a full read without a bounded protection header', async t => {
   const f = await fixture(t), made = await f.store.reserve({ title: 'Legacy synthetic automation' });
   const saved = await f.store.save(made.sessionId, card({ actionId: 'work.automation.create',
     files: [{ name: 'synthetic.txt', type: 'text/plain', lastModified: 1, data: Buffer.alloc(1700000, 66).toString('base64') }] }));
@@ -217,7 +284,8 @@ test('large legacy automation records stay conservative until a verified full re
   const row = (await sessions.historyEntry(f.app, made.sessionId)).entry;
   assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0);
   assert.equal((await f.store.read(made.sessionId)).ok, true);
-  assert.equal(f.module.protection(f.app, made.sessionId).hasRequirement, false);
+  assert.equal(f.module.protection(f.app, made.sessionId).unknown, true,
+    'a full UI read cannot turn a stat-only cache into authority for an unbounded legacy record');
   assert.equal(f.module.visibleHistory(f.app, [row], identity('other')).length, 0,
     'warming classification cannot bypass account and Hub isolation');
   assert.deepEqual(f.module.visibleHistory(f.app, [row], f.current()).map(item => item.id), [made.sessionId]);

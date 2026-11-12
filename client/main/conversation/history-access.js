@@ -120,7 +120,7 @@ function classify(app, id, row, metadata) {
         protectedData ||= tasks.length > 0;
       }
       const forms = metadata.contains('conversation-work-cards', current)
-        ? require('./work-conversation-cards').protection(app, current) : null;
+        ? (metadata.protection ? metadata.protection(current) : require('./work-conversation-cards').protection(app, current)) : null;
       if (forms) {
         if (forms.invalid || forms.unknown && (typeof forms.owner !== 'string' || !forms.owner)) return result('unknown', true);
         if (forms.hasRequirement || forms.unknown) {
@@ -170,6 +170,47 @@ function classify(app, id, row, metadata) {
 }
 function classifyLocal(app, id, row = {}) {
   return classify(app, id, row, app?.getPath ? metadataReader(app) : () => null);
+}
+function catalogChecker(app, captured, entries) {
+  const snapshots = new Map(entries.map(entry => [entry.name + '/' + entry.file, entry]));
+  const key = (directory, id) => directory + '/' + crypto.createHash('sha256').update(String(id)).digest('hex') + '.json';
+  const metadata = (directory, id) => {
+    const entry = snapshots.get(key(directory, id));
+    if (!entry) return null;
+    if (!Object.hasOwn(entry, 'value')) entry.value = JSON.parse(entry.bytes.toString('utf8'));
+    if (!entry.value || typeof entry.value !== 'object') throw Error('Invalid conversation metadata');
+    return entry.value;
+  };
+  metadata.contains = (directory, id) => snapshots.has(key(directory, id));
+  metadata.protection = id => metadata('conversation-work-cards', id);
+  let parents, parentFailure;
+  metadata.parents = id => {
+    if (parentFailure) throw parentFailure;
+    if (!parents) {
+      const index = new Map();
+      try {
+        for (const entry of entries) {
+          if (entry.name !== 'conversation-runtime-segments') continue;
+          const record = entry.value;
+          for (const part of [...record.segments, record.active]) {
+            if (typeof part?.sessionId !== 'string' || !part.sessionId || part.sessionId.length > 512)
+              throw Error('Invalid runtime segment identity');
+            if (!index.has(part.sessionId)) index.set(part.sessionId, new Set());
+            index.get(part.sessionId).add(record.id);
+          }
+        }
+        parents = index;
+      } catch (error) { parentFailure = error; throw error; }
+    }
+    return parents.get(id) || [];
+  };
+  // The stamp, ownership evidence and classification must describe the same
+  // bytes, even if a file changes and changes back while the query yields.
+  const snapshotActor = { ...captured, readMetadata: metadata };
+  return row => {
+    try { assertClassifiedReadable(app, row.id, snapshotActor, row, classify(app, row.id, row, metadata)); return true; }
+    catch (_) { return false; }
+  };
 }
 function actor(app, identity) {
   const auth = require('../device-auth');
@@ -270,19 +311,21 @@ function assertClassifiedOwner(app, id, captured, row, options, classified) {
       // Adding a requirement to a shared ordinary draft does not transfer its
       // private memory binding. Preserve that creator proof, but reject an
       // unrelated or corrupt native form owner rather than trusting one file.
-      const original = metadataReader(app)('session-memory-bindings', local.id);
+      const original = (captured.readMetadata || metadataReader(app))('session-memory-bindings', local.id);
       if (!original?.owner || original.owner !== row.workOwner)
         throw Error('无法确认这条会话属于当前账号，请切回原账号');
     }
     if (options.readOnly) return;
   }
   const records = ['session-memory-bindings', 'requirement-session-context', 'conversation-runtime-segments']
-    .map(directory => saved(app, directory, id)).filter(Boolean);
+    .map(directory => captured.readMetadata ? captured.readMetadata(directory, id) : saved(app, directory, id)).filter(Boolean);
   const owners = records.map(record => record.owner);
   if (row.workOwner) owners.push(row.workOwner);
-  const legacy = legacyOwner(app, id);
+  const legacy = captured.readMetadata ? captured.readMetadata(LEGACY_OWNER_DIRECTORY, id) : legacyOwner(app, id);
+  if (legacy && (legacy.version !== 1 || legacy.sessionId !== id || !/^[a-f0-9]{32}$/.test(legacy.owner)))
+    throw Error('无法读取会话归属记录，请重新打开 SoduWork');
   if (legacy) owners.push(legacy.owner);
-  const cloud = saved(app, 'conversation-handoffs', id);
+  const cloud = captured.readMetadata ? captured.readMetadata('conversation-handoffs', id) : saved(app, 'conversation-handoffs', id);
   if (cloud) {
     const syncOwner = require('./cloud-execution-sync').scope(captured.identity);
     if (cloud.sessionId !== id || !cloud.owner || (cloud.owner !== runtime.connectionScope(captured.identity) &&
@@ -313,7 +356,7 @@ function assertClassifiedReadable(app, id, captured, row, classified) {
   if (local.invalid) throw Error('无法读取会话归属记录，请重新打开 SoduWork');
   if (row.remoteProjection === true || row.accountProjection === true || row.accountConversation === true ||
       (!row.localReplica && row.adapterId === 'account-sync') || row.cloud === true)
-    return assertOwner(app, id, captured, row);
+    return assertClassifiedOwner(app, id, captured, row, {}, local);
   const hub = new URL(captured.identity.hub).origin;
   const provenance = row.creator || (row.cached && row.source?.account ? row.source : null);
   let proven = false;
@@ -412,4 +455,4 @@ function assertCurrent(app, captured, identity) {
     throw Error('账号已切换，请在当前账号重新打开会话');
 }
 module.exports = { assertLocalCurrent, assertLocalMutation, actor, assertOwner, assertReadable, assertCurrent,
-  visible, visibleAsync, isOwnerlessNativeArchive, classifyLocal, readScope };
+  visible, visibleAsync, isOwnerlessNativeArchive, classifyLocal, catalogChecker, readScope };

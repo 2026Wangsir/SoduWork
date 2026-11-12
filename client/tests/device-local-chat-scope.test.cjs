@@ -157,15 +157,16 @@ test('large legacy runtime prefixes do not hide unrelated chats and revision cha
     segments: [{ sessionId: 'large', adapterId: 'pi' }], active: { sessionId: 'large-child', adapterId: 'pi' } };
   f.save('conversation-runtime-segments', manifest.id, manifest);
   assert.equal(segments.read(f.app, manifest.id).prefix.messages[0].text.length, 2300000);
-  const read = fs.readFileSync; let manifestReads = 0;
-  fs.readFileSync = function (file, ...args) {
-    if (String(file).includes('conversation-runtime-segments')) manifestReads++;
-    return read.call(this, file, ...args);
+  const parse = JSON.parse; let manifestParses = 0;
+  JSON.parse = function (...args) {
+    const value = parse.apply(this, args);
+    if (value?.version === 1 && value.id === manifest.id && Array.isArray(value.segments)) manifestParses++;
+    return value;
   };
   try {
     for (let i = 0; i < 10; i++) assert.equal(access.visible(f.app, [f.row], f.a).length, 1);
-    assert.equal(manifestReads, 0, 'Warm permission checks reuse validated native identity metadata');
-  } finally { fs.readFileSync = read; }
+    assert.equal(manifestParses, 0, 'Warm permission checks hash current bytes and reuse the validated manifest parse');
+  } finally { JSON.parse = parse; }
   f.save('requirement-session-context', manifest.id, { version: 1, owner: runtime.scope(f.b), hub: f.b.hub });
   f.save('conversation-runtime-segments', manifest.id, { ...manifest, active: { sessionId: f.row.id, adapterId: 'pi' } });
   assert.equal(access.visible(f.app, [f.row], f.a).length, 0, 'A replaced manifest immediately protects its newly attached child');
@@ -190,22 +191,31 @@ test('repeated 1200-row directories use bounded metadata batches and never read 
   for (let i = 100; i < 220; i++) f.save('conversation-runtime-segments', rows[i].id, {
     version: 1, id: rows[i].id, owner: runtime.scope(f.a), hub: f.a.hub,
     segments: [{ sessionId: rows[i].id, adapterId: 'pi' }], active: { sessionId: rows[i + 700].id, adapterId: 'pi' } });
-  const originals = { readdirSync: fs.readdirSync, readFileSync: fs.readFileSync };
-  let directoryReads = 0, contentReads = 0, manifestReads = 0;
+  const originals = { readdirSync: fs.readdirSync, readFileSync: fs.readFileSync, openSync: fs.openSync };
+  const parse = JSON.parse; let directoryReads = 0, contentReads = 0, manifestParses = 0;
   fs.readdirSync = function (...args) { directoryReads++; return originals.readdirSync.apply(this, args); };
   fs.readFileSync = function (file, ...args) {
     assert.ok(!String(file).endsWith('.jsonl'), 'Authorization must not scan transcript bodies');
     if (String(file).includes('requirement-session-context')) contentReads++;
-    if (String(file).includes('conversation-runtime-segments')) manifestReads++;
     return originals.readFileSync.call(this, file, ...args);
+  };
+  fs.openSync = function (file, ...args) {
+    assert.ok(!String(file).endsWith('.jsonl'), 'Bounded metadata reads must not open transcript bodies');
+    return originals.openSync.call(this, file, ...args);
+  };
+  JSON.parse = function (...args) {
+    const value = parse.apply(this, args);
+    if (value?.version === 1 && /^local-\d+$/.test(value.id) && Array.isArray(value.segments) && value.active?.sessionId)
+      manifestParses++;
+    return value;
   };
   const started = performance.now();
   try {
     for (let run = 0; run < 3; run++) assert.equal(access.visible(f.app, rows, f.a).length, 1188);
     assert.equal(directoryReads, 18, 'Each of six fixed metadata directories is read once per batch');
     assert.equal(contentReads, 36, 'Only the twelve existing metadata files are parsed per batch');
-    assert.equal(manifestReads, 120, 'The existing revision-validated native cache parses each cold manifest once, never per conversation');
-  } finally { Object.assign(fs, originals); }
+    assert.equal(manifestParses, 120, 'Content validation reuses each unchanged manifest parse, never parsing per conversation');
+  } finally { Object.assign(fs, originals); JSON.parse = parse; }
   assert.ok(performance.now() - started < 5000, 'A 3600-row directory check must remain bounded');
   f.save('requirement-session-context', rows[20].id, { version: 1, owner: runtime.scope(f.a) });
   assert.throws(() => access.assertOwner(f.app, rows[20].id, f.actor(f.b), rows[20]), 'Operations re-read newly protected metadata');

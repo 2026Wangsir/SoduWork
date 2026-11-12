@@ -4,6 +4,19 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { identity } = require('./helpers/platform-session-fixture.cjs');
 const { scope } = require('../main/platform-connections/runtime.cjs');
 const access = require('../main/conversation/history-access');
+function collidingOwnerTimes(t, file) {
+  const original = fs.lstatSync, target = path.resolve(file);
+  t.mock.method(fs, 'lstatSync', function (name, ...args) {
+    const stat = original.call(this, name, ...args);
+    if (path.resolve(String(name)) === target && typeof stat.mtimeNs === 'bigint') {
+      // Windows can report identical timestamps for same-size rewrites. Keep
+      // the real file identity, size and type; only force that clock collision.
+      stat.mtimeNs = 1767225600000000000n;
+      stat.ctimeNs = 1767225600000000000n;
+    }
+    return stat;
+  });
+}
 async function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-account-isolation-'));
   const app = { getPath: () => root }, a = identity(), b = identity('two'); let current = a;
@@ -82,11 +95,19 @@ test('unknown native ownership is never claimed and sidecar conflicts invalidate
   const before = await f.history.page();
   const folder = path.join(f.root, 'session-memory-bindings'); fs.mkdirSync(folder);
   const binding = path.join(folder, crypto.createHash('sha256').update('owned').digest('hex') + '.json');
+  collidingOwnerTimes(t, binding);
   fs.writeFileSync(binding, JSON.stringify({ owner: scope(f.b), ids: [] }));
+  const deniedBytes = fs.readFileSync(binding), deniedStat = fs.lstatSync(binding, { bigint: true });
   const denied = await f.history.page({ workspace: before.localCatalog.workspace, catalogRevision: before.localCatalog.revision });
   assert.deepEqual(denied.chats, []); assert.deepEqual(denied.localCatalog.items, []);
   await assert.rejects(f.history.read('owned'), /不存在/);
   fs.writeFileSync(binding, JSON.stringify({ owner: scope(f.a), ids: [] }));
+  const restoredBytes = fs.readFileSync(binding), restoredStat = fs.lstatSync(binding, { bigint: true });
+  assert.equal(restoredBytes.length, deniedBytes.length);
+  assert.notDeepEqual(restoredBytes, deniedBytes);
+  assert.equal(restoredStat.ino, deniedStat.ino, 'The test changes the existing file in place');
+  assert.deepEqual([restoredStat.mtimeNs, restoredStat.ctimeNs, restoredStat.size],
+    [deniedStat.mtimeNs, deniedStat.ctimeNs, deniedStat.size]);
   assert.equal((await f.history.page()).chats.length, 1, 'In-place sidecar changes are also observed');
 });
 test('a late A read and an already loaded view cannot return content after account switch', async t => {
@@ -123,11 +144,20 @@ test('ownership changes during a warm catalog or lifecycle query cannot publish 
   const f = await fixture(t); await f.cached('owned', f.a, { historyAliasIds: ['private-alias'] });
   const memory = require('../main/conversation/session-memory');
   memory.bind(f.app, 'owned', f.a, [], true);
+  const binding = path.join(f.root, 'session-memory-bindings', crypto.createHash('sha256').update('owned').digest('hex') + '.json');
+  collidingOwnerTimes(t, binding);
+  const originalBytes = fs.readFileSync(binding);
   await f.store.lifecycle('owned', 'archive');
   const initial = await f.history.page({ archived: true });
   const catalog = f.store.catalog; let change = true;
   f.store.catalog = async (...args) => { const result = await catalog(...args);
-    if (change) { change = false; memory.bind(f.app, 'owned', f.b, [], true); } return result; };
+    if (change) {
+      change = false; memory.bind(f.app, 'owned', f.b, [], true);
+      const changed = fs.readFileSync(binding);
+      assert.equal(changed.length, originalBytes.length); assert.notDeepEqual(changed, originalBytes);
+    }
+    return result;
+  };
   const latest = await f.history.page({ archived: true, workspace: initial.localCatalog.workspace,
     catalogRevision: initial.localCatalog.revision });
   assert.deepEqual(latest.chats, []); assert.deepEqual(latest.localCatalog.items, []);
@@ -137,6 +167,154 @@ test('ownership changes during a warm catalog or lifecycle query cannot publish 
   f.store.lifecycleRows = async () => { const result = await lifecycle(); memory.bind(f.app, 'owned', f.b, [], true); return result; };
   await assert.rejects(f.history.lifecycleRows(), /归属已变化/);
   assert.deepEqual((await f.history.page()).localCatalog.items, []);
+});
+
+test('all seven metadata types invalidate warm catalogs and lifecycle responses when their bytes change', async t => {
+  const connectionScope = require('../main/platform-connections/runtime.cjs').connectionScope;
+  const cases = [
+    ['session-memory-bindings', actor => ({ owner: scope(actor), hub: actor.hub, ids: [] })],
+    ['requirement-session-context', actor => ({ version: 1, owner: scope(actor) })],
+    ['conversation-runtime-segments', actor => ({ version: 1, id: 'owned', owner: scope(actor),
+      segments: [], active: { sessionId: 'owned', adapterId: 'pi' } })],
+    ['conversation-history-owners', actor => ({ version: 1, sessionId: 'owned', owner: scope(actor) })],
+    ['acceptance-session-context', actor => ({ version: 1, owner: scope(actor) })],
+    ['conversation-handoffs', actor => ({ sessionId: 'owned', owner: connectionScope(actor) })],
+    // A task association protects a conversation but is not an ownership record.
+    ['conversation-tasks', (_actor, suffix) => [{ taskId: 'task-' + suffix }], true],
+  ];
+  for (const [directory, record, taskAssociation] of cases) await t.test(directory, async t => {
+    const f = await fixture(t);
+    await f.cached('owned', f.a, { historyAliasIds: ['private-alias'] });
+    await f.store.lifecycle('owned', 'archive');
+    const file = path.join(f.root, directory, crypto.createHash('sha256').update('owned').digest('hex') + '.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    collidingOwnerTimes(t, file);
+    const before = JSON.stringify(record(f.a, 'a')), after = JSON.stringify(record(f.b, 'b'));
+    assert.equal(Buffer.byteLength(before), Buffer.byteLength(after));
+    assert.notEqual(before, after);
+    fs.writeFileSync(file, before);
+    const originalStat = fs.lstatSync(file, { bigint: true });
+    const initial = await f.history.page({ archived: true });
+    assert.deepEqual(initial.chats.map(row => row.id), ['owned']);
+    const catalog = f.store.catalog; let change = true;
+    f.store.catalog = async (...args) => {
+      const result = await catalog(...args);
+      if (change) { change = false; fs.writeFileSync(file, after); }
+      return result;
+    };
+    const latest = await f.history.page({ archived: true, workspace: initial.localCatalog.workspace,
+      catalogRevision: initial.localCatalog.revision });
+    const changedStat = fs.lstatSync(file, { bigint: true });
+    assert.deepEqual([changedStat.mtimeNs, changedStat.ctimeNs, changedStat.size, changedStat.ino],
+      [originalStat.mtimeNs, originalStat.ctimeNs, originalStat.size, originalStat.ino]);
+    const expected = taskAssociation ? ['owned'] : [];
+    assert.deepEqual(latest.chats.map(row => row.id), expected);
+    assert.deepEqual(latest.localCatalog.items.map(row => row.id), expected);
+    assert.ok(latest.localCatalog.revision > initial.localCatalog.revision);
+    if (taskAssociation) {
+      assert.equal(access.classifyLocal(f.app, 'owned', await f.store.get('owned')).kind, 'protected');
+      assert.equal((await f.history.read('owned')).items.length, 2, 'Task changes do not transfer ownership');
+    } else {
+      assert.equal(await f.history.resolve('private-alias'), null);
+      await assert.rejects(f.history.read('owned'), /不存在/);
+    }
+    fs.writeFileSync(file, before); await f.history.page({ archived: true });
+    const lifecycle = f.store.lifecycleRows;
+    f.store.lifecycleRows = async () => {
+      const result = await lifecycle(); fs.writeFileSync(file, after); return result;
+    };
+    await assert.rejects(f.history.lifecycleRows(), /归属已变化/);
+    assert.deepEqual((await f.history.page({ archived: true })).localCatalog.items.map(row => row.id), expected);
+  });
+});
+
+test('malformed or oversized owner metadata cannot retain warm catalog authorization', async t => {
+  for (const kind of ['malformed', 'oversized']) await t.test(kind, async t => {
+    const f = await fixture(t); await f.cached('owned');
+    assert.equal((await f.history.page()).chats.length, 1);
+    const folder = path.join(f.root, 'session-memory-bindings'); fs.mkdirSync(folder);
+    const file = path.join(folder, crypto.createHash('sha256').update('owned').digest('hex') + '.json');
+    const bytes = kind === 'malformed' ? '{broken' : JSON.stringify({ owner: scope(f.a),
+      hub: f.a.hub, padding: 'x'.repeat(2 * 1024 * 1024) });
+    fs.writeFileSync(file, bytes);
+    let unboundedReads = 0;
+    const read = fs.readFileSync;
+    t.mock.method(fs, 'readFileSync', function (target, ...args) {
+      if (kind === 'oversized' && typeof target === 'string' && path.resolve(target) === file) unboundedReads++;
+      return read.call(this, target, ...args);
+    });
+    try {
+      const page = await f.history.page();
+      assert.deepEqual(page.chats, []); assert.deepEqual(page.localCatalog.items, []);
+    } catch (error) {
+      if (error.code === 'ERR_ASSERTION') throw error;
+      assert.match(error.message, /metadata|归属|过大|变化/i);
+    }
+    assert.equal(unboundedReads, 0, 'Oversized metadata must be rejected or read with an explicit byte bound');
+    assert.equal(fs.statSync(file).size, Buffer.byteLength(bytes), 'Permission checks never rewrite the invalid sidecar');
+  });
+});
+
+test('linked owner metadata fails closed without granting the target owner or changing the target', async t => {
+  const f = await fixture(t); await f.cached('owned');
+  assert.equal((await f.history.page()).chats.length, 1);
+  const folder = path.join(f.root, 'session-memory-bindings'); fs.mkdirSync(folder);
+  const file = path.join(folder, crypto.createHash('sha256').update('owned').digest('hex') + '.json');
+  const target = path.join(f.root, 'untrusted-owner.json'), bytes = JSON.stringify({ owner: scope(f.a), hub: f.a.hub });
+  fs.writeFileSync(target, bytes);
+  try { fs.symlinkSync(target, file, 'file'); }
+  catch (error) {
+    if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('Host does not allow creating file symlinks');
+    throw error;
+  }
+  try {
+    const page = await f.history.page();
+    assert.deepEqual(page.chats, []); assert.deepEqual(page.localCatalog.items, []);
+  } catch (error) {
+    if (error.code === 'ERR_ASSERTION') throw error;
+    assert.match(error.message, /metadata|归属|变化|链接|联接|link/i);
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), bytes);
+});
+
+test('an invalid runtime parent index cannot authorize later catalog rows after its first failure', async t => {
+  const f = await fixture(t);
+  await f.history.register(['one', 'two', 'three'].map(id => f.row(id, f.a, { historyAliasIds: [id + '-alias'] })));
+  const folder = path.join(f.root, 'conversation-runtime-segments'); fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder, crypto.createHash('sha256').update('broken').digest('hex') + '.json'),
+    JSON.stringify({ version: 1, id: 'broken', owner: scope(f.a), segments: [{ sessionId: '' }],
+      active: { sessionId: 'broken', adapterId: 'pi' } }));
+  const page = await f.history.page();
+  assert.deepEqual(page.chats, []);
+  assert.deepEqual(page.localCatalog.items, [], 'A failed parent index must remain invalid for every row in the batch');
+  assert.equal((await f.store.catalog()).items.length, 3, 'Failing closed never deletes the underlying histories');
+});
+
+test('catalog authorization cannot use transient ownership outside its captured metadata snapshot', async t => {
+  const f = await fixture(t);
+  await f.history.register([f.row('owned', f.a, { workOwner: undefined, historyAliasIds: ['private-alias'] })]);
+  const filename = crypto.createHash('sha256').update('owned').digest('hex') + '.json';
+  const tasks = path.join(f.root, 'conversation-tasks'), memory = path.join(f.root, 'session-memory-bindings');
+  fs.mkdirSync(tasks); fs.mkdirSync(memory);
+  fs.writeFileSync(path.join(tasks, filename), JSON.stringify([{ taskId: 'task' }]));
+  const binding = path.join(memory, filename), read = fs.readFileSync; let injected = 0;
+  t.mock.method(fs, 'readFileSync', function (file, ...args) {
+    if (typeof file === 'string' && path.resolve(file) === binding && !injected) {
+      // The initial and final stamps both see an absent file. Only an unsafe
+      // fresh fallback read sees these real, temporarily present owner bytes.
+      injected++;
+      fs.writeFileSync(binding, JSON.stringify({ owner: scope(f.a), hub: f.a.hub, ids: [] }));
+      try { return read.call(this, file, ...args); }
+      finally { fs.unlinkSync(binding); }
+    }
+    return read.call(this, file, ...args);
+  });
+  const page = await f.history.page();
+  assert.deepEqual(page.chats, []);
+  assert.deepEqual(page.localCatalog.items, [], 'A transient fallback binding cannot authorize private aliases');
+  assert.equal(injected, 0, 'Catalog authorization uses only the captured metadata, including fallback ownership');
+  assert.equal(fs.existsSync(binding), false);
+  assert.equal((await f.store.catalog()).items.length, 1);
 });
 
 test('native body reads reject a fresh transcript owner that conflicts with the older index', async t => {

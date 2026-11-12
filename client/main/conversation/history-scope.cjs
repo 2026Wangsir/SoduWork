@@ -4,17 +4,36 @@
 // other accounts and unknown archives; none of their metadata leaves this view.
 const access = require('./history-access');
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const snapshots = require('./metadata-snapshot.cjs');
+const OWNER_DIRECTORIES = new Set(['session-memory-bindings', 'requirement-session-context',
+  'conversation-runtime-segments', 'conversation-history-owners']);
 async function ownerStamp(app) {
   const hash = crypto.createHash('sha256'), entries = []; let inspected = 0;
-  for (const name of ['session-memory-bindings', 'requirement-session-context', 'conversation-runtime-segments', 'conversation-history-owners']) {
+  for (const name of [...OWNER_DIRECTORIES, 'acceptance-session-context', 'conversation-handoffs',
+    'conversation-tasks', 'conversation-work-cards']) {
     const folder = path.join(app.getPath('userData'), name);
     let files;
     try { files = fs.readdirSync(folder).sort(); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     for (const file of files) {
       if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
-      const full = path.join(folder, file), stat = fs.lstatSync(full, { bigint: true });
-      hash.update(name + '/' + file + ':' + stat.mtimeNs + ':' + stat.ctimeNs + ':' + stat.size);
-      entries.push({ name, file, full });
+      const full = path.join(folder, file);
+      if (name === 'conversation-work-cards') {
+        const snapshot = require('./work-conversation-cards').protectionSnapshot(app, full);
+        hash.update(name + '/' + file + ':' + snapshot.revision + '\n');
+        entries.push({ name, file, value: snapshot.summary });
+      } else if (name === 'conversation-runtime-segments') {
+        const snapshot = require('./runtime-segments').snapshot(app, full);
+        hash.update(name + '/' + file + ':' + snapshot.revision + '\n');
+        const { version, id, owner, hub, segments, active } = snapshot.record;
+        entries.push({ name, file, value: { version, id, owner, hub,
+          segments: segments.map(part => ({ sessionId: part.sessionId })), active: { sessionId: active.sessionId } } });
+      } else {
+        const snapshot = snapshots.read(app.getPath('userData'), full);
+        hash.update(name + '/' + file + ':' + snapshot.revision + '\n');
+        // Parse ownership from exactly the bytes that produced the stamp.
+        // Other metadata types invalidate the view but retain their own rules.
+        entries.push({ name, file, bytes: snapshot.bytes });
+      }
       if (++inspected % 100 === 0) await new Promise(resolve => setImmediate(resolve));
     }
   }
@@ -23,12 +42,12 @@ async function ownerStamp(app) {
 async function ownerEvidence(app, entries) {
   const records = new Map(); let count = 0;
   for (const entry of entries) {
+    if (!OWNER_DIRECTORIES.has(entry.name)) continue;
     const id = entry.file.slice(0, -5);
     if (!records.has(id)) records.set(id, { records: [], legacy: null });
     let value;
     try {
-      require('../plugin-resources').assertNoLinks(app.getPath('userData'), entry.full);
-      value = JSON.parse(fs.readFileSync(entry.full, 'utf8'));
+      value = entry.value || JSON.parse(entry.bytes.toString('utf8'));
     } catch (_) { value = { owner: '' }; }
     if (entry.name === 'conversation-history-owners') records.get(id).legacy = value;
     else records.get(id).records.push(value || { owner: '' });
@@ -58,21 +77,20 @@ function create({ app, store, identityOf }) {
     if (flight && !refresh) return flight;
     const previous = cached;
     const job = (async () => {
-      const { stamp, entries } = await ownerStamp(app);
       let source = await store.catalog(refresh ? undefined : previous?.sourceRevision, true);
       guard(captured);
+      const { stamp, entries } = await ownerStamp(app); guard(captured);
       if (!source.items && previous?.stamp === stamp) {
-        const latest = await ownerStamp(app); guard(captured);
-        if (latest.stamp === stamp) return previous;
-        if (retry) throw Error('会话归属正在变化，请刷新后重试');
-        return catalog(captured, true, true);
+        // Every caller rechecks this content stamp after its own awaited read.
+        return previous;
       }
       if (!source.items) source = await store.catalog(undefined, true);
       const checked = { ...captured, ownership: await ownerEvidence(app, entries) };
+      const canRead = access.catalogChecker(app, checked, entries);
       const items = [], allowed = new Set(), origins = [];
       for (let index = 0; index < source.items.length; index++) {
         const item = source.items[index];
-        if (readable({ ...item.ownership, historyAliasIds: item.historyAliasIds }, checked)) {
+        if (canRead({ ...item.ownership, historyAliasIds: item.historyAliasIds })) {
           const { ownership, ...publicItem } = item;
           publicItem.originIds = [];
           items.push(publicItem); allowed.add(item.id);
