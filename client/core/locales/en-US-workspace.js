@@ -20,6 +20,7 @@
     '仅支持本机索引中的旧 Pi JSONL 会话，其它原生格式暂不支持': 'Only legacy Pi JSONL conversations in this computer’s index are supported. Other native formats are not supported yet.',
     '这条会话已有归属记录，不能作为未知会话导入。有明确归属时，请切回原账号和服务查看；缺少服务归属信息的旧记录无法通过此入口恢复，原文件已保留': 'This conversation has ownership records and cannot be imported as unknown history. If its ownership is known, switch to its original account and service to view it. Legacy records missing service provenance cannot be recovered through this importer. The original file is preserved.',
     '导入期间会话文件或归属已变化，原文件已保留，请重新选择': 'The conversation file or ownership changed during import. The original is preserved; select it again.',
+    '会话路径不能经过链接或联接点，原文件已保留': 'Conversation paths cannot traverse symbolic links or junctions. The original file is preserved.',
     '会话过大，无法完整导入；原文件已保留': 'The conversation is too large to import in full. The original file is preserved.',
     '会话格式不完整，无法安全导入；原文件已保留': 'The conversation format is incomplete and cannot be imported safely. The original file is preserved.',
     '会话包含暂不支持的消息或附件格式，无法完整导入；原文件已保留': 'The conversation contains an unsupported message or attachment format and cannot be imported in full. The original file is preserved.',

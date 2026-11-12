@@ -29,12 +29,29 @@ function unknown(app, row) {
     }
   }
 }
-async function readFile(app, file, guard) {
+function checkedPath(app, file) {
+  if (!path.isAbsolute(file || '')) throw Error(FORMAT);
   const base = path.join(app.getPath('userData'), 'pi-agent');
-  assertNoLinks(base, file);
-  const [root, real] = await Promise.all([fs.promises.realpath(base), fs.promises.realpath(file)]); guard();
+  const root = fs.realpathSync.native(base), real = fs.realpathSync.native(file);
   const relative = path.relative(root, real);
   if (!relative || relative.startsWith('..' + path.sep) || relative === '..' || path.isAbsolute(relative)) throw Error(FORMAT);
+  // Windows native discovery expands 8.3 names, while the picker and stored
+  // index may retain either spelling. Check both original path chains before
+  // comparing physical paths; realpath alone would also accept junctions.
+  if (fs.lstatSync(base).isSymbolicLink()) throw Error('会话路径不能经过链接或联接点，原文件已保留');
+  for (let cursor = path.resolve(file);;) {
+    if (fs.lstatSync(cursor).isSymbolicLink()) throw Error('会话路径不能经过链接或联接点，原文件已保留');
+    if (root === fs.realpathSync.native(cursor)) break;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) throw Error(FORMAT);
+    cursor = parent;
+  }
+  assertNoLinks(root, real);
+  return real;
+}
+async function readFile(app, file, guard, expected) {
+  const real = checkedPath(app, file); guard();
+  if (expected !== real) throw Error(CHANGED);
   const handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
   try {
     guard();
@@ -46,7 +63,7 @@ async function readFile(app, file, guard) {
       if (!result.bytesRead) break;
       size += result.bytesRead;
     }
-    assertNoLinks(base, file);
+    if (real !== checkedPath(app, file)) throw Error(CHANGED);
     const after = await fs.promises.stat(file); guard();
     if (size !== stat.size || stamp(after) !== stamp(stat)) throw Error(CHANGED);
     const bytes = buffer.subarray(0, size);
@@ -129,13 +146,13 @@ function create({ app, session, history, dialog, BrowserWindow,
     };
     guard(); busy = true;
     const id = 'imported-' + crypto.randomUUID(); let sealed = false;
-    async function verify(row) {
+    async function verify(row, expected) {
       guard();
       const current = (await history.store.nativeRows([row.id])).find(item => item.id === row.id); guard();
-      if (!current || path.resolve(current.path || '') !== path.resolve(row.path)) throw Error(CHANGED);
+      if (!current || expected !== checkedPath(app, current.path)) throw Error(CHANGED);
       unknown(app, current);
       const fresh = await session.historyEntry(app, row.id, { strict: true }); guard();
-      if (!fresh?.ok || fresh.entry?.id !== row.id || path.resolve(fresh.entry.path || '') !== path.resolve(row.path)) throw Error(CHANGED);
+      if (!fresh?.ok || fresh.entry?.id !== row.id || expected !== checkedPath(app, fresh.entry.path)) throw Error(CHANGED);
       unknown(app, fresh.entry);
       return current;
     }
@@ -146,10 +163,14 @@ function create({ app, session, history, dialog, BrowserWindow,
         filters: [{ name: 'Pi 会话', extensions: ['jsonl'] }] })); guard();
       if (chosen.canceled || !chosen.filePaths?.length) return { ok: false, canceled: true };
       if (chosen.filePaths.length !== 1) throw Error(FORMAT);
-      const file = path.resolve(chosen.filePaths[0]); let row, cursor = 0;
+      const file = path.resolve(chosen.filePaths[0]), expected = checkedPath(app, file); let row, cursor = 0;
       do {
         const page = await history.store.directory(cursor, 200); guard();
-        const matches = page.items.filter(item => item.path && path.resolve(item.path) === file);
+        const matches = page.items.filter(item => {
+          if (!item.path || !path.isAbsolute(item.path)) return false;
+          try { return expected === fs.realpathSync.native(item.path); }
+          catch (_) { return false; } // Unrelated stale index entries cannot be imported.
+        });
         if (matches.length > 1 || row && matches.length) throw Error(CHANGED);
         row ||= matches[0];
         if (!page.hasMore) break;
@@ -157,24 +178,26 @@ function create({ app, session, history, dialog, BrowserWindow,
         cursor = page.cursor;
       } while (true);
       if (!row) throw Error(FORMAT);
-      unknown(app, row); await verify(row);
-      const original = await readFile(app, file, guard);
+      unknown(app, row);
+      if (expected !== checkedPath(app, row.path)) throw Error(CHANGED);
+      await verify(row, expected);
+      const original = await readFile(app, file, guard, expected);
       const projection = project(original.bytes, row.id);
       const confirmed = await dialog.showMessageBox(win, locale.dialogOptions({ type: 'question', title: '导入旧 Pi 会话',
         message: '将所选会话导入为当前账号的只读副本？',
         detail: '原文件保持不变。仅导入此会话，不恢复原账号、工具权限或执行状态。',
         buttons: ['取消', '导入副本'], defaultId: 0, cancelId: 0, noLink: true })); guard();
       if (confirmed.response !== 1) return { ok: false, canceled: true };
-      await verify(row);
-      if ((await readFile(app, file, guard)).fingerprint !== original.fingerprint) throw Error(CHANGED);
+      await verify(row, expected);
+      if ((await readFile(app, file, guard, original.real)).fingerprint !== original.fingerprint) throw Error(CHANGED);
       const pointer = { sha256: hash(projection.body), size: projection.body.length };
       for (let offset = 0; offset < projection.body.length; offset += 256 * 1024) {
         guard();
         const result = await history.store.importChunk(id, pointer, offset, projection.body.subarray(offset, offset + 256 * 1024).toString('base64'));
         guard(); if (!result?.ok) throw Error('导入未完成，原文件已保留');
       }
-      await verify(row);
-      if ((await readFile(app, file, guard)).fingerprint !== original.fingerprint) throw Error(CHANGED);
+      await verify(row, expected);
+      if ((await readFile(app, file, guard, original.real)).fingerprint !== original.fingerprint) throw Error(CHANGED);
       guard();
       const result = await history.store.sealImport(id, pointer, { title: String(row.title || row.name || '旧 Pi 会话').slice(0, 200),
         archived: true, adapterId: 'pi', creator: { account: require('../device-auth-request').accountId(captured.identity),

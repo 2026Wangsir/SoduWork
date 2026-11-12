@@ -20,12 +20,30 @@ function entries(count = 4, tool = false) {
   }
   return rows;
 }
-async function fixture(t, data = entries()) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-import-history-'));
+function shortPath(root) {
+  const query = require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);$f=New-Object -ComObject Scripting.FileSystemObject;[Console]::Write($f.GetFolder($env:SODUWORK_TEST_ROOT).ShortPath)'],
+    { env: { ...process.env, SODUWORK_TEST_ROOT: root }, windowsHide: true, encoding: 'utf8', timeout: 10000 });
+  assert.equal(query.status, 0, query.stderr);
+  const alias = query.stdout.trim();
+  assert.ok(path.isAbsolute(alias), 'Windows must return an absolute short-path spelling');
+  assert.equal(fs.realpathSync.native(alias), fs.realpathSync.native(root));
+  return alias;
+}
+async function fixture(t, data = entries(), { rootSpelling = value => value } = {}) {
+  const ownedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-import-history-'));
+  let store;
+  t.after(async () => {
+    await store?.close();
+    assert.equal(path.dirname(ownedRoot), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(ownedRoot).startsWith('soduwork-import-history-'));
+    fs.rmSync(ownedRoot, { recursive: true, force: true });
+  });
+  const root = rootSpelling(ownedRoot);
   const app = { getPath: () => root }, file = path.join(root, 'pi-agent', 'sessions', 'project', 'legacy.jsonl');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, data.map(row => JSON.stringify(row)).join('\n') + '\n');
-  const store = require('../main/conversation/replica-store.cjs').createWorker(path.join(root, 'replicas.sqlite'));
+  store = require('../main/conversation/replica-store.cjs').createWorker(path.join(root, 'replicas.sqlite'));
   const row = { id: 'legacy', path: file, count: data.length - 1, adapterId: 'pi', title: '旧会话' };
   await store.register([row]);
   let current = identity(), destroyed = false, url = pathToFileURL(path.resolve(__dirname, '../desk.html')).href;
@@ -34,7 +52,6 @@ async function fixture(t, data = entries()) {
   const dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }), showMessageBox: async () => ({ response: 1 }) };
   const session = { historyEntry: async (_app, id) => ({ ok: true, entry: id === row.id ? { ...row } : null }) };
   const importer = create({ app, history: { store }, session, dialog, BrowserWindow: { fromWebContents: () => win }, identityOf: () => current });
-  t.after(async () => { await store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const staging = () => {
     const db = new (require('node:sqlite').DatabaseSync)(path.join(root, 'replicas.sqlite'));
     try { return ['import_chunks', 'import_pages', 'import_messages'].map(name => db.prepare('SELECT count(*) AS n FROM ' + name).get().n); }
@@ -99,6 +116,34 @@ test('production native index and shared-history enforce A to B to A visibility 
   assert.equal(await history.resolve('legacy'), null);
   await view.close();
 });
+for (const spelling of ['short-root-long-picker', 'long-root-short-picker']) {
+  test('Windows native import accepts the same archive through ' + spelling,
+    { skip: process.platform !== 'win32' }, async t => {
+      const f = await fixture(t, entries(), { rootSpelling: spelling === 'short-root-long-picker'
+        ? shortPath : root => fs.realpathSync.native(root) });
+      const longRoot = fs.realpathSync.native(f.root), alias = shortPath(longRoot);
+      if (path.resolve(alias).toLowerCase() === path.resolve(longRoot).toLowerCase())
+        return t.skip('The temporary volume does not provide a native 8.3 alias');
+      const canonicalFile = fs.realpathSync.native(f.file), picked = spelling === 'short-root-long-picker'
+        ? canonicalFile : path.join(alias, path.relative(f.root, f.file));
+      assert.notEqual(path.resolve(picked).toLowerCase(), path.resolve(f.row.path).toLowerCase());
+      assert.equal(fs.realpathSync.native(picked), canonicalFile);
+      const before = fs.readFileSync(f.file), originalCreator = (await f.store.get('legacy')).creator;
+      const native = require('../main/pi-session/session');
+      f.dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [picked] });
+      f.session.historyEntry = native.historyEntry;
+      const fresh = await native.historyEntry(f.app, 'legacy', { strict: true });
+      assert.equal(fresh.ok, true);
+      assert.equal(fs.realpathSync.native(fresh.entry.path), canonicalFile);
+      const result = await f.importer(f.event);
+      assert.equal(result.ok, true); assert.equal(result.count, 4);
+      assert.notEqual(result.id, 'legacy');
+      assert.deepEqual((await f.store.get(result.id)).creator, { account: 'one', hub: 'https://fixture.invalid' });
+      assert.deepEqual((await f.store.get('legacy')).creator, originalCreator);
+      assert.deepEqual(fs.readFileSync(f.file), before);
+      assert.deepEqual(f.staging(), [0, 0, 0]);
+    });
+}
 test('ordinary cached rows do not publish imported-only tool records', async () => {
   const view = await require('../main/conversation/local-history-view.cjs').create({ row: { id: 'ordinary' },
     read: async () => ({ items: [{ role: 'assistant', text: 'answer', historyTools: [{ id: 'hidden', result: 'not a verified import' }] }], nextCursor: null }) });
@@ -185,6 +230,62 @@ test('linked indexed paths are rejected before opening their contents', async t 
   try { fs.symlinkSync(original, f.file, 'file'); } catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('Host does not allow creating symlinks'); throw error; }
   await assert.rejects(f.importer(f.event), /symlink|link|链接|符号/i); assert.deepEqual(f.staging(), [0, 0, 0]);
 });
+for (const kind of ['copy', 'hardlink']) for (const mismatch of ['picker', 'native-index']) {
+  test(kind + ' with identical content at a different canonical path cannot match the ' + mismatch, async t => {
+    const f = await fixture(t), before = fs.readFileSync(f.file), other = path.join(path.dirname(f.file), 'different.jsonl');
+    if (kind === 'copy') fs.copyFileSync(f.file, other);
+    else {
+      try { fs.linkSync(f.file, other); }
+      catch (error) {
+        if (['EPERM', 'EACCES', 'ENOTSUP', 'EXDEV'].includes(error.code)) return t.skip('Host does not allow creating hard links');
+        throw error;
+      }
+    }
+    assert.notEqual(fs.realpathSync.native(other), fs.realpathSync.native(f.file));
+    if (mismatch === 'picker') f.dialog.showOpenDialog = async () => ({ filePaths: [other] });
+    else f.session.historyEntry = async () => ({ ok: true, entry: { ...f.row, path: other } });
+    await assert.rejects(f.importer(f.event), /索引|变化|路径/);
+    assert.deepEqual(fs.readFileSync(other), before);
+    await unchanged(f, before);
+  });
+}
+test('a directory junction to the same indexed file is rejected rather than canonicalized into permission', async t => {
+  const f = await fixture(t), before = fs.readFileSync(f.file);
+  const link = path.join(f.root, 'pi-agent', 'sessions', 'linked-project');
+  fs.symlinkSync(path.dirname(f.file), link, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    const selected = path.join(link, path.basename(f.file));
+    assert.equal(fs.realpathSync.native(selected), fs.realpathSync.native(f.file));
+    f.row.path = selected; await f.store.register([f.row]);
+    f.dialog.showOpenDialog = async () => ({ filePaths: [selected] });
+    await assert.rejects(f.importer(f.event), /symlink|link|链接|联接|符号/i);
+    await unchanged(f, before);
+  } finally { fs.unlinkSync(link); }
+});
+for (const replacement of ['same-bytes-file', 'parent-junction']) {
+  test('confirmation rejects ' + replacement + ' replacement and leaves no staged copy', async t => {
+    const f = await fixture(t), before = fs.readFileSync(f.file), parent = path.dirname(f.file);
+    const retained = replacement === 'same-bytes-file' ? f.file + '.original' : parent + '-original';
+    let changed = false;
+    f.dialog.showMessageBox = async () => {
+      fs.renameSync(replacement === 'same-bytes-file' ? f.file : parent, retained);
+      changed = true;
+      if (replacement === 'same-bytes-file') fs.writeFileSync(f.file, before);
+      else fs.symlinkSync(retained, parent, process.platform === 'win32' ? 'junction' : 'dir');
+      return { response: 1 };
+    };
+    try {
+      await assert.rejects(f.importer(f.event), /变化|symlink|link|链接|联接|符号/i);
+      assert.equal(changed, true, 'the importer must reach native confirmation before the replacement');
+      await unchanged(f, before);
+      assert.deepEqual(fs.readFileSync(replacement === 'same-bytes-file' ? retained : path.join(retained, path.basename(f.file))), before);
+    } finally {
+      if (changed && replacement === 'parent-junction') {
+        fs.unlinkSync(parent); fs.renameSync(retained, parent);
+      }
+    }
+  });
+}
 test('chunk failure cleans only the unsealed copy, preserving source and existing replicas', async t => {
   const f = await fixture(t, entries(30)), before = fs.readFileSync(f.file), original = f.store.importChunk;
   f.store.importChunk = async (...args) => { await original(...args); throw Error('synthetic storage failure'); };
