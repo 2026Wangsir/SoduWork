@@ -263,6 +263,7 @@ html[data-desk-panel="workspace"][data-workspace-layout="utility"] .ws-resizer{d
   stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s ease}
 .ws-chat-group .ws-section-toggle{min-height:30px;margin-bottom:2px;line-height:1.3}
 .ws-chat-group .ws-section-toggle:focus-visible{outline-offset:-2px}
+.ws-chat-group .ws-section-toggle[aria-expanded="false"]{margin-bottom:0}
 .ws-chat-group .ws-list-body[hidden]{display:none}
 .ws-chat-group .ws-section-toggle[aria-expanded="false"] svg{transform:rotate(-90deg)}
 .ws-recent.is-collapsed{flex:0 0 auto;padding:4px 0}
