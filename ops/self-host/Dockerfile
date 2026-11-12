@@ -10,6 +10,8 @@ COPY hub-frontend/public ./public
 COPY hub-frontend/index.html hub-frontend/vite.config.js ./
 COPY client/core/connector-brand.js /build/client/core/connector-brand.js
 COPY client/components/panels/connector-config.js /build/client/components/panels/connector-config.js
+COPY client/components/client-auth/legal-html.js /build/client/components/client-auth/legal-html.js
+COPY client/components/client-auth/legal-html.css /build/client/components/client-auth/legal-html.css
 COPY client/assets/connector-brands /build/client/assets/connector-brands
 RUN npm run build
 
