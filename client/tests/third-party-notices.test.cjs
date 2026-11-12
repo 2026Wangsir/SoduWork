@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const vm = require('node:vm');
 const { check, hash, ROOT } = require('../../tools/check-third-party.cjs');
 const { collect, packages, distributionReview } = require('../scripts/prepare-third-party.cjs');
 function temp(t) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'license-test-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root; }
@@ -47,6 +48,40 @@ test('public installers fail closed while internal builds retain all unresolved 
   assert.throws(() => distributionReview(root), /source-only-release-scope/);
   write(root, 'tools/distribution/PUBLIC-SOURCE.json', JSON.stringify({schema: 1, sourceOnly: false}));
   assert.equal(distributionReview(root).publicDistributionAllowed, true);
+});
+
+test('packaging hook checks distribution before downloads and records internal build blockers', async t => {
+  const root = temp(t), client = path.join(root, 'client'), calls = [];
+  write(root, 'third-party/public-release.json', JSON.stringify({schema: 1, pending: [{id: 'original-license', reason: 'Missing original grant'}]}));
+  write(root, 'tools/distribution/PUBLIC-SOURCE.json', JSON.stringify({schema: 1, sourceOnly: true}));
+  write(root, 'third-party/manifest.json', JSON.stringify({...manifest(), piVersion: '1.0.0'}));
+  for (const name of ['@earendil-works/pi-coding-agent', 'ssh2', 'asn1', 'bcrypt-pbkdf', 'safer-buffer', 'tweetnacl']) {
+    const dir = pkg(client, name);
+    write(dir, 'LICENSE', fs.readFileSync(path.join(ROOT, 'LICENSE')));
+  }
+  const env = {}, exported = {exports: {}};
+  vm.runInNewContext(fs.readFileSync(require.resolve('../scripts/prepare-third-party.cjs'), 'utf8'), {
+    module: exported, process: {env}, console: {log() {}},
+    require(name) {
+      if (name === '../../tools/check-third-party.cjs') return {ROOT: root, check: () => ({ok: true})};
+      if (name === './prepare-client-runtime.cjs') return async () => { calls.push('download'); };
+      if (name === './prepare-pi-runtime.cjs') return {preparePiRuntime: () => ({output: client})};
+      return require(name);
+    },
+  });
+  await assert.rejects(exported.exports({electronPlatformName: 'linux'}), /Public installer distribution is blocked/);
+  assert.deepEqual(calls, [], 'blocked public builds must not download runtimes');
+  const output = path.join(client, '.runtime/compliance/distribution-review.json');
+  assert.equal(fs.existsSync(output), false);
+
+  env.SODUWORK_INTERNAL_BUILD = '1';
+  const rows = await exported.exports({electronPlatformName: 'linux'});
+  assert.equal(rows.length, 6);
+  assert.deepEqual(calls, ['download']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), {
+    schema: 1, internalOnly: true, publicDistributionAllowed: false,
+    blockers: ['source-only-release-scope', 'original-license'],
+  });
 });
 test('an unknown missing license blocks packaging instead of silently declaring MIT sufficient', t => {
   const root = temp(t), dir = pkg(root, 'missing');
