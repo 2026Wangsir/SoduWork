@@ -76,6 +76,25 @@ function fixture() {
   return { ctx, calls };
 }
 
+test('the built-in trial label follows the locale while custom plan names remain unchanged', () => {
+  const f = fixture();
+  const english = require('../core/locales/en-US');
+  f.ctx.SoduWorkI18n = { getLocale: () => 'en-US', translateText: value => english[value] || value };
+  f.ctx.SoduWorkQuota = require('../core/token-quota');
+  const composer = { parentElement: {}, previousElementSibling: null, before(card) { card.isConnected = true; } };
+  const card = f.ctx.SoduWorkQuotaNotice.mount(composer);
+  const base = { enabled: true, exceeded: true, limit: 100000, used: 101614, period: 'trial' };
+  for (const [planId, planName, expected] of [
+    ['trial', '试用', 'Trial'], ['trial', '销售团队试用', '销售团队试用'], ['custom', '试用', '试用'],
+  ]) {
+    f.ctx.SoduWorkQuotaNotice.update({ quota: { ...base, planId, planName } });
+    assert.equal(card.querySelector('[data-quota-detail]').textContent.split('\n')[0], expected);
+  }
+  f.ctx.SoduWorkI18n = { getLocale: () => 'zh-CN', translateText: value => value };
+  f.ctx.SoduWorkQuotaNotice.update({ quota: { ...base, planId: 'trial', planName: '试用' } });
+  assert.equal(card.querySelector('[data-quota-detail]').textContent.split('\n')[0], '试用');
+});
+
 test('额度恢复通知立即隐藏额度卡，并在后台确认最新额度', async () => {
   const f = fixture(), composer = { parentElement: {}, previousElementSibling: null, before(card) { card.isConnected = true; this.card = card; } };
   const card = f.ctx.SoduWorkQuotaNotice.mount(composer);
