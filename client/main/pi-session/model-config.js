@@ -19,6 +19,7 @@ const contextWindow = require('../conversation/context-window');
 const thinkingCapabilities = require('../conversation/thinking-capabilities');
 const localModels = require('../local-model-store.cjs');
 const runtimeContext = require('../agent-runtime/process-context');
+const localPrivacy = require('./local-model-runtime-privacy.cjs');
 
 const ENV_KEY = 'SODUWORK_PROXY_KEY';          // Environment variable referenced by models.json.
 const ENV_MCP_KEY = 'SODUWORK_MCP_KEY';
@@ -116,13 +117,15 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
         : localModels.resolve(modelName);
     } catch (_) { local = null; }
     if (!local) return { ok: false, reason: '本地模型不存在或凭据未配置，请在「我的模型」中刷新' };
-    const thinking = thinkingCapabilities.profile(local);
+    const thinking = thinkingCapabilities.profile({ ...local, id: local.name });
     return { ok: true, localOnly: true, model: {
-      baseUrl: local.baseUrl, key: local.key, id: local.name, label: local.label || local.name,
+      baseUrl: local.baseUrl, key: local.key, id: local.runtimeId || local.modelRef,
+      wireModelId: local.name, label: local.label || local.name,
       provider: local.provider, providerName: local.providerName, keyFrom: 'local', modelRef: local.modelRef,
+      configRevision: local.configRevision,
       input: ['text'], modality: local.modality || 'chat', maxOutputTokens: local.config?.maxOutputTokens,
       ...contextWindow.resolveContextWindow({ contextWindow: local.ctxWindow, modelName: local.name, provider: local.provider }),
-      ...thinkingCapabilities.profile(local),
+      ...thinking,
       ...(thinking.format ? { thinkingFormat: thinking.format } : {}),
       localOnly: true, proxyExpiresAt: 0,
     } };
@@ -269,15 +272,21 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
 
 /* Write models.json only when content changes to avoid unnecessary concurrent file replacement. */
 function writeModels(dir, model) {
+  const localRef = model.localOnly ? localPrivacy.reference(model) : '';
+  // Local runtime capabilities are registered in memory after SDK construction.
+  // The bootstrap file must not reveal even a private model-family hint.
+  if (localRef) model = { id: localRef, label: localPrivacy.LOCAL_LABEL,
+    baseUrl: localPrivacy.LOCAL_ENDPOINT, localOnly: true, modelRef: localRef,
+    reasoning: false, contextWindow: DEFAULT_CTX, input: ['text'] };
   const thinking = thinkingCapabilities.profile(model);
   const want = {
     providers: {
       soduwork: {
         name: 'SoduWork 模型服务',
-        baseUrl: model.baseUrl,
+        baseUrl: model.localOnly ? localPrivacy.LOCAL_ENDPOINT : model.baseUrl,
         api: 'openai-completions',
         ...(model.localOnly ? { localOnly: true } : {}),
-        ...(model.modelRef ? { localRef: model.modelRef } : {}),
+        ...(localRef ? { localRef } : {}),
         ...(model.key ? { apiKey: '$' + ENV_KEY } :
           (model.localOnly ? { apiKey: 'soduwork-local-no-key' } : {})),
         // OpenAI-compatible services may not support these two optional capabilities; disable them by default.
@@ -287,8 +296,8 @@ function writeModels(dir, model) {
           ...(thinking.format ? { thinkingFormat: thinking.format } : {}),
         },
         models: [{
-          id: model.id, name: model.label,
-          ...(model.localOnly && model.modelRef ? { localRef: model.modelRef } : {}),
+          id: localRef || model.id, name: model.localOnly ? localPrivacy.LOCAL_LABEL : model.label,
+          ...(localRef ? { localRef } : {}),
           input: model.input || ['text'],
           reasoning: Boolean(thinking.reasoning),
           ...(thinking.reasoning && thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
@@ -303,7 +312,8 @@ function writeModels(dir, model) {
   try {
     if (fs.readFileSync(file, 'utf8') === blob) return file;
   } catch (e) { /* Write the configuration when the existing file is absent or unreadable. */ }
-  fs.writeFileSync(file, blob, 'utf8');
+  fs.writeFileSync(file, blob, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return file;
 }
 
@@ -378,6 +388,8 @@ async function fetchSelection(identity, name = '', timeoutMs = 8000, fetchImpl =
 }
 
 async function prepare(app, identity, modelName = '', options = {}) {
+  try { await require('../local-model-privacy.cjs').prepare(app); }
+  catch (_) { return { ok: false, reason: '本地模型隐私保护初始化失败，请检查本机安全存储后重试' }; }
   const got = await fetchSelection(identity, modelName, 8000, global.fetch, false, 'pi', { ...options, app });
   if (!got.ok) return got;
   const dir = agentDir(app);

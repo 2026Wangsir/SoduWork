@@ -8,7 +8,8 @@ const recovery = require('../main/pi-session/context-recovery');
 const events = require('../main/pi-session/event-stream');
 const { piProvider } = require('../main/conversation/model-selection');
 
-test('real SDK + HTTP overflow: failed native summary recovers once, tool is not replayed, next turn works', { timeout: 30000 }, async t => {
+for (const localOnly of [false, true]) test('real SDK + HTTP overflow (' + (localOnly ? 'local' : 'managed') +
+  '): failed native summary recovers once, tool is not replayed, next turn works', { timeout: 30000 }, async t => {
   const sdk = await import('../node_modules/@earendil-works/pi-coding-agent/dist/index.js');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-context-http-'));
   let toolCalls = 0, requests = 0, rejections = 0;
@@ -39,16 +40,23 @@ test('real SDK + HTTP overflow: failed native summary recovers once, tool is not
   let session;
   t.after(async () => { if (session) session.dispose(); await new Promise(resolve => server.close(resolve)); fs.rmSync(root, { recursive: true, force: true }); });
   const runtime = await sdk.ModelRuntime.create({ modelsPath: null, authPath: path.join(root, 'auth.json'), modelsStorePath: path.join(root, 'models.db') });
-  const provider = piProvider({ id: 'context-test', baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1', key: 'isolated-fixture', contextWindow: 8192 });
+  const next = { id: localOnly ? 'local:model-' + 'd'.repeat(32) : 'context-test',
+    ...(localOnly ? { localOnly, wireModelId: 'context-test', label: 'Private context fixture' } : {}),
+    baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1', key: 'isolated-fixture',
+    contextWindow: localOnly ? 32000 : 8192 };
+  const provider = piProvider(next);
   provider.models[0].maxTokens = 1000;
-  runtime.registerProvider('context-test', provider);
+  const providerId = localOnly ? 'soduwork' : 'context-test';
+  runtime.registerProvider(providerId, provider);
+  const model = localOnly ? require('../main/pi-session/local-model-runtime-privacy.cjs')
+    .configure(runtime, runtime.getModel(providerId, next.id), next) : runtime.getModel(providerId, next.id);
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
   const loader = new sdk.DefaultResourceLoader({ cwd: root, agentDir: root, settingsManager: settings,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: 'A deterministic integration test.' });
   await loader.reload();
   const manager = sdk.SessionManager.create(root, root);
   ({ session } = await sdk.createAgentSession({ cwd: root, agentDir: root, modelRuntime: runtime,
-    model: runtime.getModel('context-test', 'context-test'), settingsManager: settings, resourceLoader: loader,
+    model, settingsManager: settings, resourceLoader: loader,
     sessionManager: manager, tools: ['context_probe'], customTools: [{ name: 'context_probe', label: 'probe', description: 'Test tool',
       parameters: { type: 'object', properties: {} }, execute: async () => { toolCalls++; return { content: [{ type: 'text', text: 'TOOL_OK ' + 'archived evidence ' .repeat(3000) }], details: {} }; } }] }));
   const acc = events.create();
@@ -68,4 +76,14 @@ test('real SDK + HTTP overflow: failed native summary recovers once, tool is not
   const users = manager.getBranch().filter(e => e.type === 'message' && e.message.role === 'user');
   assert.equal(users.length, 2, 'hidden recovery never duplicates user messages');
   assert.ok(JSON.stringify(bodies.at(-1)).includes('不得重复调用'));
+  if (localOnly) {
+    assert.ok(bodies.every(body => body.model === next.wireModelId), 'normal turns and compaction use the private wire name');
+    const archive = fs.readFileSync(manager.getSessionFile(), 'utf8');
+    for (const privateValue of [next.wireModelId, next.baseUrl, next.key, next.label]) {
+      assert.ok(!archive.includes(privateValue), 'session recovery cannot persist private model configuration');
+    }
+    const learned = manager.getBranch().find(entry => entry.customType === 'soduwork.context-window');
+    assert.equal(learned.data.key, providerId + '|' + next.id);
+    assert.equal(learned.data.window, 8192);
+  }
 });

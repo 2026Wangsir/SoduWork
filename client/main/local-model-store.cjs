@@ -5,7 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { replaceFileSync } = require('./verified-file-replace.cjs');
 
-const SCHEMA = 1;
+const SCHEMA = 2;
+const OPAQUE_REF = /^local:model-[a-f0-9]{32}$/;
 const ID = /^[a-z][a-z0-9_-]{0,47}$/;
 const MODEL_ID = /^[^\u0000\r\n]{1,160}$/u;
 let deps = null;
@@ -18,19 +19,29 @@ function secure() {
     throw Error('系统安全存储不可用，无法保存本地模型凭据');
   }
 }
-function empty() { return { schema: SCHEMA, revision: 0, providers: [], models: [], keys: {} }; }
+function empty() { return { schema: SCHEMA, revision: 0, providers: [], models: [], keys: {}, aliases: {} }; }
 function readRaw() {
   if (!deps?.app || !deps?.safeStorage) return empty();
+  let encoded;
+  try { encoded = fs.readFileSync(file(), 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return empty(); throw Error('本地模型配置无法读取'); }
   try {
-    const value = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    if (value?.schema !== SCHEMA || typeof value.cipher !== 'string') throw Error();
+    const value = JSON.parse(encoded);
+    if (![1, SCHEMA].includes(value?.schema) || typeof value.cipher !== 'string') throw Error();
     secure();
     const decoded = JSON.parse(deps.safeStorage.decryptString(Buffer.from(value.cipher, 'base64')));
-    if (!decoded || decoded.schema !== SCHEMA || !Array.isArray(decoded.providers) ||
+    if (!decoded || decoded.schema !== value.schema || !Array.isArray(decoded.providers) ||
         !Array.isArray(decoded.models) || !record(decoded.keys) || !Number.isSafeInteger(decoded.revision)) throw Error();
-    return normalize(decoded);
+    const normalized = normalize(decoded);
+    if (decoded.schema === SCHEMA) return normalized;
+    if (normalized.revision === Number.MAX_SAFE_INTEGER) invalid('配置版本');
+    // Persist the random identity once before exposing it. A failed migration
+    // must not return references that a subsequent read cannot recover.
+    const migrated = identify(normalized, empty());
+    migrated.revision = normalized.revision + 1;
+    write(migrated);
+    return migrated;
   } catch (error) {
-    if (error.code === 'ENOENT') return empty();
     if (error.message === '系统安全存储不可用，无法保存本地模型凭据') throw error;
     throw Error('本地模型配置无法读取');
   }
@@ -71,18 +82,23 @@ function normalize(input) {
       authMode: raw.authMode === 'none' ? 'none' : 'key', note: field(raw.note, 300, '服务备注'), localOnly: true });
     seen.add(id);
   }
-  const models = [], modelSeen = new Set();
+  const models = [], modelSeen = new Set(), references = new Set();
   for (const raw of rawModels) {
     if (!record(raw)) invalid('模型格式');
     const providerId = field(raw.providerId, 48, '模型服务标识').toLowerCase(), name = field(raw.name, 160, '模型 ID');
     if (!seen.has(providerId) || !MODEL_ID.test(name) || !name.isWellFormed()) invalid('模型 ID 或所属服务');
     const key = providerId + '\0' + name;
     if (modelSeen.has(key)) invalid('模型 ID 重复');
+    const modelRef = raw.id == null ? '' : field(raw.id, 2048, '模型引用');
+    if (modelRef && !OPAQUE_REF.test(modelRef) && !legacyParts(modelRef)) invalid('模型引用');
+    if (input.schema === SCHEMA && !OPAQUE_REF.test(modelRef)) invalid('模型引用');
+    if (modelRef && references.has(modelRef)) invalid('模型引用重复');
+    if (modelRef) references.add(modelRef);
     const modality = raw.modality ?? 'chat';
     if (!['chat', 'image', 'video'].includes(modality)) invalid('模型类型');
     if (raw.config != null && !record(raw.config)) invalid('模型参数');
     if (raw.ctxWindow != null && (!Number.isSafeInteger(raw.ctxWindow) || raw.ctxWindow < 0)) invalid('上下文窗口');
-    models.push({ providerId, name, label: raw.label === name ? name.slice(0, 80) :
+    models.push({ ...(modelRef ? { id: modelRef } : {}), providerId, name, label: raw.label === name ? name.slice(0, 80) :
       field(raw.label, 80, '模型名称', name.slice(0, 80)) || name.slice(0, 80), modality,
       ...(raw.config && typeof raw.config === 'object' && !Array.isArray(raw.config) ? { config: raw.config } : {}),
       ...(Number.isSafeInteger(raw.ctxWindow) && raw.ctxWindow > 0 ? { ctxWindow: raw.ctxWindow } : {}) });
@@ -95,8 +111,18 @@ function normalize(input) {
     const key = field(value, 400, 'API Key');
     if (key) keys[id] = key;
   }
+  const aliases = Object.create(null);
+  if (input.schema === SCHEMA && !record(input.aliases)) invalid('模型引用映射');
+  if (input.aliases != null) {
+    if (!record(input.aliases)) invalid('模型引用映射');
+    for (const [legacyRef, modelRef] of Object.entries(input.aliases)) {
+      const parts = legacyParts(legacyRef);
+      if (!parts || ref(parts.providerId, parts.name) !== legacyRef || !OPAQUE_REF.test(modelRef)) invalid('模型引用映射');
+      aliases[legacyRef] = modelRef;
+    }
+  }
   return { schema: SCHEMA, revision: Number.isSafeInteger(input?.revision) ? input.revision : 0,
-    providers, models, keys };
+    providers, models, keys, aliases };
 }
 function write(value) {
   secure();
@@ -109,6 +135,69 @@ function write(value) {
   } finally { fs.rmSync(temp, { force: true }); }
 }
 function ref(providerId, modelId) { return 'local:' + providerId + ':' + encodeURIComponent(modelId); }
+function legacyParts(value) {
+  if (typeof value !== 'string' || !value.startsWith('local:') || value.length > 2048) return null;
+  const split = value.indexOf(':', 6), providerId = split < 0 ? '' : value.slice(6, split);
+  let name;
+  try { name = split < 0 ? '' : decodeURIComponent(value.slice(split + 1)); } catch (_) { return null; }
+  return ID.test(providerId) && MODEL_ID.test(name) && name.isWellFormed() ? { providerId, name } : null;
+}
+function randomReference(used) {
+  let value;
+  do { value = 'local:model-' + crypto.randomBytes(16).toString('hex'); } while (used.has(value));
+  used.add(value);
+  return value;
+}
+function identify(value, current) {
+  const aliases = Object.assign(Object.create(null), current.aliases);
+  const used = new Set([...Object.values(aliases), ...current.models.map(row => row.id)]);
+  const selected = new Set();
+  const models = value.models.map(row => {
+    let existing;
+    if (row.id) {
+      const parts = legacyParts(row.id);
+      const id = parts ? aliases[ref(parts.providerId, parts.name)] : row.id;
+      existing = current.models.find(item => item.id === id);
+      if (!existing || existing.providerId !== row.providerId) invalid('模型引用');
+    } else existing = current.models.find(item => item.providerId === row.providerId && item.name === row.name);
+    const id = existing?.id || randomReference(used);
+    if (selected.has(id)) invalid('模型引用重复');
+    selected.add(id);
+    // Never retarget an old reference after deletion and recreation. The old
+    // alias remains an encrypted tombstone, so history cannot select a new key.
+    const legacy = ref(row.providerId, row.name);
+    if (!Object.hasOwn(aliases, legacy)) aliases[legacy] = id;
+    return { ...row, id };
+  });
+  return { ...value, models, aliases };
+}
+function canonicalIn(value, modelRef) {
+  const raw = text(modelRef, 2048);
+  if (OPAQUE_REF.test(raw)) return raw;
+  const parts = legacyParts(raw);
+  return parts ? value.aliases[ref(parts.providerId, parts.name)] || '' : '';
+}
+function canonicalReference(modelRef, { rememberMissing = false } = {}) {
+  const value = readRaw(), found = canonicalIn(value, modelRef);
+  if (found || !rememberMissing) return found;
+  const parts = legacyParts(text(modelRef, 2048));
+  if (!parts) return '';
+  if (value.revision === Number.MAX_SAFE_INTEGER) invalid('配置版本');
+  const canonical = randomReference(new Set([...Object.values(value.aliases), ...value.models.map(row => row.id)]));
+  value.aliases[ref(parts.providerId, parts.name)] = canonical;
+  value.revision++;
+  write(value);
+  return canonical;
+}
+// Host-only migration metadata. Never expose this mapping through renderer IPC.
+function referenceAliases() {
+  const value = readRaw();
+  return Object.entries(value.aliases).map(([legacyRef, modelRef]) => {
+    const { providerId, name } = legacyParts(legacyRef);
+    return { legacyRef, modelRef, runtimeId: modelRef, providerId, modelName: name,
+      active: value.models.some(row => row.id === modelRef) };
+  });
+}
 function publicCatalog(value = readRaw()) {
   const providers = value.providers.map(provider => ({ ...provider, personal: true,
     keySet: provider.authMode === 'none' || Boolean(value.keys[provider.id]),
@@ -123,14 +212,14 @@ function publicCatalog(value = readRaw()) {
     return provider && (provider.authMode === 'none' || value.keys[provider.id]);
   }).map(model => {
     const provider = value.providers.find(row => row.id === model.providerId);
-    return { id: ref(model.providerId, model.name), providerId: model.providerId,
-      name: ref(model.providerId, model.name), modelName: model.name, label: model.label,
+    return { id: model.id, providerId: model.providerId,
+      name: model.id, modelName: model.name, label: model.label,
       modality: model.modality, config: model.config || {}, ctxWindow: model.ctxWindow || 0,
       providerName: provider.name, keyFrom: 'local', own: true, localOnly: true };
   });
   return { providers, usable: usable.filter(row => row.modality === 'chat'),
     mediaUsable: { image: usable.filter(row => row.modality === 'image'), video: usable.filter(row => row.modality === 'video') },
-    myModels: value.models.map(model => ({ ...model, id: ref(model.providerId, model.name), localOnly: true })),
+    myModels: value.models.map(model => ({ ...model, localOnly: true })),
     revision: value.revision };
 }
 function get() { return publicCatalog(); }
@@ -153,30 +242,26 @@ function save(input = {}) {
   // Removing a provider intentionally removes its credentials and models. All
   // other invalid edits fail before the encrypted snapshot can be replaced.
   for (const id of Object.keys(mergedKeys)) if (!providerIds.has(id)) delete mergedKeys[id];
-  const next = normalize({
+  const next = identify(normalize({
     providers,
     models: Object.hasOwn(input, 'models') ? input.models : current.models.filter(model => providerIds.has(model.providerId)),
     keys: mergedKeys,
-  });
+  }), current);
   next.revision = current.revision + 1;
   write(next);
   return publicCatalog(next);
 }
 function resolve(modelRef) {
   const value = readRaw(), raw = text(modelRef, 2048);
-  let providerId = '', name = raw;
-  if (raw.startsWith('local:')) {
-    const split = raw.indexOf(':', 6);
-    providerId = split < 0 ? '' : raw.slice(6, split);
-    try { name = split < 0 ? '' : decodeURIComponent(raw.slice(split + 1)); }
-    catch (_) { return null; }
-    if (!ID.test(providerId) || !MODEL_ID.test(name) || !name.isWellFormed()) return null;
-  }
-  const model = value.models.find(row => row.name === name && (!providerId || row.providerId === providerId));
+  const canonical = canonicalIn(value, raw);
+  // Keep the existing main-process bare-name compatibility without converting
+  // managed names in the structured-reference migration API.
+  const model = raw.startsWith('local:') ? value.models.find(row => row.id === canonical)
+    : value.models.find(row => row.name === raw);
   if (!model) return null;
   const provider = value.providers.find(row => row.id === model.providerId);
   if (!provider || (provider.authMode !== 'none' && !value.keys[provider.id])) return null;
-  return { ...model, id: ref(model.providerId, model.name), modelRef: ref(model.providerId, model.name), baseUrl: provider.baseUrl,
+  return { ...model, modelRef: model.id, runtimeId: model.id, configRevision: value.revision, baseUrl: provider.baseUrl,
     key: provider.authMode === 'none' ? '' : value.keys[provider.id],
     provider: provider.id, providerName: provider.name, kind: provider.kind, localOnly: true,
     keyFrom: 'local' };
@@ -218,7 +303,7 @@ async function test(providerId, modelName, fetchImpl = global.fetch) {
         })));
         if (nextModels.length !== latest.models.length) {
           if (latest.revision === Number.MAX_SAFE_INTEGER) invalid('配置版本');
-          const next = normalize({ providers: latest.providers, models: nextModels, keys: latest.keys });
+          const next = identify(normalize({ providers: latest.providers, models: nextModels, keys: latest.keys }), latest);
           next.revision = latest.revision + 1;
           write(next);
         }
@@ -239,4 +324,4 @@ async function test(providerId, modelName, fetchImpl = global.fetch) {
     return response.ok ? { ok: true, detail: '连接通过，已使用「' + selected.name + '」测试' } : { ok: false, detail: 'HTTP ' + response.status };
   } catch (error) { return { ok: false, detail: '连接失败：' + String(error?.message || error).slice(0, 120) }; }
 }
-module.exports = { configure, get, save, resolve, test, publicCatalog, normalize, ref, _readRaw: readRaw };
+module.exports = { configure, get, save, resolve, test, publicCatalog, normalize, ref, canonicalReference, referenceAliases, _readRaw: readRaw };

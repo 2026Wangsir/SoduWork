@@ -13,7 +13,7 @@ test('local Pi sessions stay local through resume, expiration and managed model 
   const cwd = path.join(root, 'work'), agentDir = path.join(root, 'agent');
   fs.mkdirSync(cwd); fs.mkdirSync(agentDir);
   const requests = [], selections = [], renewals = [];
-  const localRef = 'local:fixture/shared-id';
+  const localRef = 'local:model-' + '2'.repeat(32);
   const server = http.createServer((req, res) => {
     let raw = ''; req.on('data', value => { raw += value; });
     req.on('end', () => {
@@ -39,7 +39,7 @@ test('local Pi sessions stay local through resume, expiration and managed model 
   recovery.create = options => { beforeRetry = options.beforeRetry; return original.recoveryCreate(options); };
   const makeModel = name => ({ id: 'shared-id', label: 'Fixture model', input: ['text'], contextWindow: 32000,
     baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1',
-    ...(name === localRef ? { localOnly: true, modelRef: localRef, key: '', proxyExpiresAt: 0 }
+    ...(name === localRef ? { id: localRef, wireModelId: 'shared-id', localOnly: true, modelRef: localRef, key: '', proxyExpiresAt: 0 }
       : { key: 'fixture-managed', mcpKey: 'fixture-mcp', quotaProvider: 'fixture-provider', proxyExpiresAt: Date.now() + 3600000 }) });
   config.prepare = async (_, _identity, name) => {
     selections.push(name);
@@ -70,7 +70,7 @@ test('local Pi sessions stay local through resume, expiration and managed model 
   const archive = sdk.SessionManager.create(cwd, path.join(root, 'sessions'));
   archive.appendCustomEntry('soduwork.model.selection', { name: localRef });
   archive.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'Earlier local result.' }],
-    api: 'openai-completions', provider: 'soduwork', model: 'shared-id', usageLocalOnly: true,
+    api: 'openai-completions', provider: 'soduwork', model: localRef, usageLocalOnly: true,
     usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() });
   const options = { app: { isPackaged: false, getPath: () => root }, identity: { hub: 'http://fixture.invalid', clientId: 'fixture' },

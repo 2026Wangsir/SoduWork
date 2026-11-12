@@ -43,6 +43,8 @@ function create(file, onError = () => {}, options = {}) {
         if (!Object.hasOwn(rows, key)) continue;
         quarantined[key] = rows[key]; delete rows[key]; dirty = true;
       }
+      try { if (options.protectQuarantine?.(quarantined)) dirty = true; }
+      catch (error) { failure(error); }
       for (const [key, row] of Object.entries(rows)) if (row.scope) {
         totals.set(row.scope, row.payload?.usage || {}); tails.set(row.scope, key);
       }

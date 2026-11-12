@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { piProvider } = require('../main/conversation/model-selection');
+const privacy = require('../main/pi-session/local-model-runtime-privacy.cjs');
 
 test('Pi sends no Authorization header for a local no-key model', { timeout: 20000 }, async t => {
   const requests = [];
@@ -28,13 +29,15 @@ test('Pi sends no Authorization header for a local no-key model', { timeout: 200
   const sdk = await import('../node_modules/@earendil-works/pi-coding-agent/dist/index.js');
   const runtime = await sdk.ModelRuntime.create({ modelsPath: null,
     authPath: path.join(root, 'auth.json'), modelsStorePath: path.join(root, 'models.db') });
-  runtime.registerProvider('soduwork', piProvider({ id: 'qwen3', label: 'Qwen 3', key: '', localOnly: true,
-    baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1' }));
-  const model = runtime.getModel('soduwork', 'qwen3');
-  model.headers = { Authorization: null };
+  const next = { id: 'local:model-' + '1'.repeat(32), wireModelId: 'qwen3', label: 'Qwen 3', key: '', localOnly: true,
+    baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1' };
+  runtime.registerProvider('soduwork', piProvider(next));
+  const model = privacy.configure(runtime, runtime.getModel('soduwork', next.id), next);
   const result = await runtime.stream(model, { systemPrompt: '', messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] }).result();
   assert.equal(result.stopReason, 'stop');
   assert.equal(result.content[0].text, 'ok');
+  assert.equal(result.model, next.id);
+  assert.equal(result.responseModel, undefined);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].authorization, undefined);
 });

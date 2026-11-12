@@ -17,6 +17,7 @@
     "test:e2e:user": "node e2e/user-journeys.mjs",
     "test:e2e:local": "node e2e/verify-local.cjs",
     "test:e2e:runtime-process": "node e2e/agent-runtime-process.cjs && node e2e/agent-runtime-storage.cjs",
+    "test:e2e:local-models": "node e2e/local-model-privacy.cjs && node e2e/local-model-admission.cjs",
     "test:e2e:runtime-stream": "node e2e/agent-runtime-stream-performance.cjs",
     "test:e2e:session-isolation": "node e2e/new-session-isolation.cjs && node e2e/workbench-session-races.cjs && node e2e/current-work-output-scope.cjs",
     "test:e2e:multi-runtime-plugin": "node e2e/multi-runtime-plugin.cjs",

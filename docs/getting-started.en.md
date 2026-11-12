@@ -72,6 +72,10 @@ If the model is missing, refresh the catalog or reopen the desktop model selecto
 
 Local services added in the desktop's **My models** panel are encrypted in that desktop profile. Their endpoints, keys, model references, and local usage are not uploaded to Hub. Select them in a local Pi conversation; cloud execution, handoff, scheduled tasks, and Hub model defaults require a Hub-managed model. Local image/video definitions remain stored but are not offered through the Hub media proxy.
 
+Signing in to the desktop is still required, and existing conversation and task permissions still apply. After sign-in, Hub model administration and model quotas do not control a local Pi model. The desktop connects directly to its provider. Ordinary conversation directory synchronization continues without model configuration, references, or local usage.
+
+Local choices and runtime transcripts use random model references. The mapping to the real model ID, label, endpoint, and credential stays in the encrypted local catalog; runtime files use placeholders. Existing structured local references migrate without changing message text or acknowledged Hub usage. Removing and re-adding a model does not silently reconnect an old conversation to the new model. This does not encrypt conversation text or files you create, and does not remove copies in external backups.
+
 If secure storage cannot be read, the client preserves the saved configuration and asks you to resolve the storage problem. Invalid edits are rejected without replacing the previous configuration. Switching from a local model to a managed model keeps each call's usage separate.
 
 ## Start again and stop
