@@ -78,7 +78,14 @@ function _fwpOption(value, label, selected) {
 
 function _fwpModelLabel(options, name) {
   const rows = (options?.modelOptions || []).filter(item => item?.name === name);
-  if (!rows.length || rows.some(item => !String(item.providerName || '').trim())) return name;
+  if (!rows.length) return name;
+  const local = rows.find(item => item.localOnly === true || item.source === 'local');
+  if (local) {
+    const label = String(local.label || local.modelName || name).trim() || name;
+    const provider = String(local.providerName || '').trim();
+    return [label, provider, '本机'].filter(Boolean).join(' · ');
+  }
+  if (rows.some(item => !String(item.providerName || '').trim())) return name;
   // Repeated model names can refer to different providers. Never guess which
   // provider an inherited or explicitly selected name will resolve to.
   if (rows.length > 1 && rows.some(item => !item.providerId)) return name;

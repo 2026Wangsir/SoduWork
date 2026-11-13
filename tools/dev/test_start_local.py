@@ -1,6 +1,7 @@
 """Fast contract checks for isolated startup; live verification is a separate script."""
 from __future__ import annotations
 
+from argparse import Namespace
 import io
 from contextlib import closing, nullcontext, redirect_stdout
 import os
@@ -272,6 +273,52 @@ class LocalStartupTests(unittest.TestCase):
                 start.assert_available("127.0.0.1", port)
             self.assertEqual(listener.getsockname()[1], port)
 
+    @unittest.skipUnless(socket.has_ipv6, "IPv6 is not available")
+    def test_ipv6_port_is_available_only_after_listener_closes(self):
+        with socket.socket(socket.AF_INET6) as listener:
+            try:
+                listener.bind(("::1", 0))
+            except OSError as exc:
+                self.skipTest(f"IPv6 loopback is not available: {exc}")
+            listener.listen()
+            port = listener.getsockname()[1]
+            with self.assertRaisesRegex(start.StartupError, "already in use"):
+                start.assert_available("::1", port)
+            self.assertEqual(listener.getsockname()[1], port)
+        start.assert_available("::1", port)
+
+    def test_runtime_environment_uses_bracketed_ipv6_urls(self):
+        config = {"adminUser": "admin", "authSecret": "x" * 48}
+        for host, expected in (("::1", "http://[::1]:18991"),
+                               ("2001:db8::1", "http://[2001:db8::1]:18991"),
+                               ("127.0.0.1", "http://127.0.0.1:18991"),
+                               ("localhost", "http://localhost:18991")):
+            with self.subTest(host=host):
+                env = start.runtime_environment(self.state, config, "fixture-only-password", host, 18991)
+                self.assertEqual(env["HUB_PUBLIC_URL"], expected)
+                self.assertEqual(env["CORS_ORIGINS"], expected + ",null")
+
+    def test_serve_uses_ipv6_url_for_readiness_and_browser(self):
+        config = {"adminUser": "admin", "authSecret": "x" * 48}
+        args = Namespace(host="::1", port=18991, desktop=False, no_browser=False, password_stdin=True)
+        with patch.object(start, "assert_available"), \
+                patch.object(start, "initialized", return_value=True), \
+                patch.object(start, "password_for_start", return_value="fixture-only-password"), \
+                patch.object(start, "prepare", return_value=(Path(sys.executable), self.state / "backend")), \
+                patch.object(start.subprocess, "Popen") as popen, \
+                patch.object(start, "wait_ready") as ready, \
+                patch.object(start, "open_management_page") as browser, \
+                patch.object(start, "wait_child"), patch.object(start, "stop_child"), \
+                redirect_stdout(io.StringIO()):
+            child = popen.return_value
+            child.returncode = 0
+            start.serve(self.state, config, args)
+        expected = "http://[::1]:18991"
+        ready.assert_called_once_with(child, expected, self.state / "startup.log", timeout=90)
+        browser.assert_called_once_with(expected)
+        self.assertEqual(popen.call_args.args[0][-2:], ["--host", "::1"])
+        self.assertEqual(popen.call_args.kwargs["env"]["HUB_PUBLIC_URL"], expected)
+
     @unittest.skipIf(os.name == "nt", "POSIX listener reuse; Windows uses exclusive bind")
     def test_closed_http_connection_allows_restart_but_live_reusable_listener_does_not(self):
         with socket.socket() as listener:
@@ -496,6 +543,19 @@ class LocalStartupTests(unittest.TestCase):
                 self.assertEqual(call.kwargs['cwd'], client)
                 self.assertEqual(call.kwargs['log'], log)
 
+    def test_desktop_install_includes_build_dependencies_in_production_environments(self):
+        client = self.cached_desktop()
+        for environment in ({'NODE_ENV': 'production'}, {'NPM_CONFIG_OMIT': 'dev'}):
+            with self.subTest(environment=environment), \
+                    patch.dict(os.environ, {'DISPLAY': ':fixture', **environment}), \
+                    patch.object(build, 'check_dependencies', return_value=('node', 'npm')), \
+                    patch.object(build, 'run') as run:
+                (self.state / 'desktop-dependencies.sha256').unlink(missing_ok=True)
+                self.assertEqual(build.prepare_desktop(self.state, self.state / 'startup.log'), client)
+                command = next(call.args[0] for call in run.call_args_list if call.args[0][:2] == ['npm', 'ci'])
+                self.assertIn('--include=dev', command)
+                self.assertIn('--ignore-scripts', command)
+
     def test_windows_shell_preparation_failure_stops_desktop_preparation(self):
         with patch.object(sys, 'platform', 'win32'):
             self.cached_desktop()
@@ -608,6 +668,8 @@ class LocalStartupTests(unittest.TestCase):
             install = next(command for command in commands if 'pip' in command)
             for manifest in ('requirements.txt', 'requirements-runner.txt'):
                 self.assertIn(str(source / 'hub-backend' / manifest), install)
+            frontend_install = next(command for command in commands if command[:2] == ['npm', 'ci'])
+            self.assertIn('--include=dev', frontend_install)
             for name in ("LICENSE", "third-party/manifest.json"):
                 self.assertEqual((self.state / "application" / name).read_bytes(), (source / name).read_bytes())
             generated = [self.state / 'application/client' / relative for relative in (

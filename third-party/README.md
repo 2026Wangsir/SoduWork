@@ -12,7 +12,7 @@ This directory retains verified license texts and source evidence. Project MIT t
 
 - Desktop beforePack checks license snapshots and dependency lock versions, collecting original notices for copied Pi/SSH packages. Electron's LICENSE and Chromium notices remain supplied by electron-builder.
 - When a package places its license in README, retain the complete text. Missing original material needs reviewed fixed-version evidence; an unknown omission fails the build.
-- Runner retains dependency metadata and wheel-provided licenses. Hub retains this directory and the project license. The first release bundles only project-owned skills declared in `tools/distribution/PUBLIC-SOURCE.json`; upstream skill bundles were removed.
+- Runner retains dependency metadata and wheel-provided licenses. Hub retains this directory and the project license. Bundled skills include project-owned guides and the reviewed upstream development skills declared in `tools/distribution/PUBLIC-SOURCE.json`. Each imported skill retains its original license, fixed-version provenance, and any adaptation notes; see [skill notices](../skills/THIRD-PARTY.md).
 - These checks do not constitute a complete SBOM, vulnerability scan, or legal certification.
 
 ## Python dependencies in the Hub image

@@ -17,6 +17,9 @@ const vm = require('node:vm');
 
 const read = (...parts) => fs.readFileSync(path.resolve(__dirname, '..', ...parts), 'utf8');
 const windowMenu = read('components', 'workspace', 'window-menu.js');
+const windowMenuCss = read('components', 'workspace', 'window-menu.css');
+const workspaceNavigationCss = read('components', 'workspace', 'workspace-navigation.css');
+const workspacePageLayoutCss = read('components', 'workspace', 'workspace-page-layout.css');
 const panels = read('components', 'panels', 'panels.js');
 
 function menuRuntime(nativeMenu) {
@@ -132,4 +135,13 @@ test('configured shortcuts own their commands while native menus expose the same
   assert.match(windowMenu, /api\(\)\.openWindowMenu\(name\)/, '原生菜单模式也能通过可配置快捷键打开菜单');
   assert.match(windowMenu, /soduwork-shortcuts-changed/);
   assert.match(windowMenu, /ShortcutSettings\?\.getBinding\?\.\(id\)/);
+});
+
+test('native macOS menus own the sidebar toggle and workspace frames keep the 5px edge', () => {
+  assert.match(windowMenuCss, /html\[data-window-native-menu\] \.wm-sidebar\{display:none\}/);
+  assert.match(workspaceNavigationCss, /--ws-frame-bottom:5px/);
+  assert.match(workspaceNavigationCss, /--ws-frame-right:5px/);
+  assert.doesNotMatch(workspaceNavigationCss, /\.ws-canvas\{[^}]*inset:[^}]* 10px /);
+  assert.match(workspacePageLayoutCss, /right:var\(--ws-frame-right\)!important/);
+  assert.doesNotMatch(workspacePageLayoutCss, /right:(?:10|6)px!important/);
 });

@@ -249,6 +249,1175 @@
       "version": "3.4.56",
       "path": "client/vendor/markdown/diff2html.min.js",
       "sha256": "a2110a09cee157bd5466da77be02107ac81a0baa2bc1f3fe81aac8183314598e"
+    },
+    {
+      "name": "Matt Pocock engineering skill: code-review",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/code-review/ADAPTATIONS.md",
+      "sha256": "036d79128ce8e0fb683534719e2a438fb46ab050ca84b36f2ef08276e623b8ff"
+    },
+    {
+      "name": "Matt Pocock engineering skill: code-review",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/code-review/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: code-review",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/code-review/SKILL.md",
+      "sha256": "54e850f1cf7efe081f22ae1633659c15a399b0eadc52c59f8a6e33d0b208cbf1"
+    },
+    {
+      "name": "Matt Pocock engineering skill: code-review",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/code-review/UPSTREAM.md",
+      "sha256": "dc9a970b7030a2149bd0a4ba6193ca9bdd42bf8104d123f7d9380ef48fc4afb2"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/ADAPTATIONS.md",
+      "sha256": "cf996628138441bcb10a6214f81b783ec6ea3d0a9a1e86f7249655b1b01322a6"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/DEEPENING.md",
+      "sha256": "f3dd099ce99289bd213914d8ee3e2429b78309c3957ca4583f7659551b1d53c1"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/DESIGN-IT-TWICE.md",
+      "sha256": "8e740bf98446dbd4dfdc132ac4346d9a7eedaf93de6a495889171cf7f99f16bd"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/SKILL.md",
+      "sha256": "d79ae85b3a2680e2e7db4a0c71440d74f6bb3f7242b7e8322780a7003f32d5aa"
+    },
+    {
+      "name": "Matt Pocock engineering skill: codebase-design",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/codebase-design/UPSTREAM.md",
+      "sha256": "dbae79e753516a84498044fceb3d647d0fe643f60beed88571b2cd19acaa4c7a"
+    },
+    {
+      "name": "Matt Pocock engineering skill: diagnosing-bugs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/diagnosing-bugs/ADAPTATIONS.md",
+      "sha256": "58090e45ec237e4f9b25f9379d872d34bf91171ac7be03c527b6e65155842848"
+    },
+    {
+      "name": "Matt Pocock engineering skill: diagnosing-bugs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/diagnosing-bugs/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: diagnosing-bugs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/diagnosing-bugs/SKILL.md",
+      "sha256": "8e34940977c7b1bab99ab2082019e41e994602fbf11314584cdce2c60760b4e8"
+    },
+    {
+      "name": "Matt Pocock engineering skill: diagnosing-bugs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/diagnosing-bugs/UPSTREAM.md",
+      "sha256": "eb27df6b0191479320b934f65acc80b05d558847345ae5b2b5ba71c63b0c5712"
+    },
+    {
+      "name": "Matt Pocock engineering skill: diagnosing-bugs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/diagnosing-bugs/scripts/hitl-loop.template.sh",
+      "sha256": "35103539fc36873eea36074769ad454f9379d6fc8b2dc0e26ce987fd3bfe5503"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/ADAPTATIONS.md",
+      "sha256": "cf996628138441bcb10a6214f81b783ec6ea3d0a9a1e86f7249655b1b01322a6"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/ADR-FORMAT.md",
+      "sha256": "944c92aa790e8fbdc9199640b170979abb8a34ba8d0fe18c2a01a63bce140ca0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/CONTEXT-FORMAT.md",
+      "sha256": "17ab16ce783e4d2801ee52fd9acdf550cbf44de65ae76797a93943bbedf22a13"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/SKILL.md",
+      "sha256": "da386b7e428052257dd4f32d4f7e49e9d7cc6fc469fe056be1ca35586b6f7b0a"
+    },
+    {
+      "name": "Matt Pocock engineering skill: domain-modeling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/domain-modeling/UPSTREAM.md",
+      "sha256": "7cfb1f0a57ca288b87aa3d50e5b03474849be028a76d81e3cc51fe6de7c8e045"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/ADAPTATIONS.md",
+      "sha256": "315c8657defdd6a71fad18a382210a581ba58e7969c306b2b2a5fca9473306d8"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/SKILL.md",
+      "sha256": "4cf62244707038a54c0ae62c77f3c5153f7017888cb67f2d4506a533ef5652da"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/UPSTREAM.md",
+      "sha256": "58bdfbcc51fa8f28b913c29788090f7dea8b1cf723571a03dc0a5ae77d166f55"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/references/domain-modeling/ADR-FORMAT.md",
+      "sha256": "944c92aa790e8fbdc9199640b170979abb8a34ba8d0fe18c2a01a63bce140ca0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/references/domain-modeling/CONTEXT-FORMAT.md",
+      "sha256": "17ab16ce783e4d2801ee52fd9acdf550cbf44de65ae76797a93943bbedf22a13"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/references/domain-modeling/GUIDE.md",
+      "sha256": "8e9bbfe149db299c1710f5e2c709d120387609c03df6a72aa55aacffa54b0edf"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grill-with-docs",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grill-with-docs/references/grilling/GUIDE.md",
+      "sha256": "b16a2a9479c7d38f819907036a90897ccab61a8051cd126fe5827d9a92a3588d"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grilling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grilling/ADAPTATIONS.md",
+      "sha256": "cf996628138441bcb10a6214f81b783ec6ea3d0a9a1e86f7249655b1b01322a6"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grilling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grilling/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grilling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grilling/SKILL.md",
+      "sha256": "f8eefee52e7659ceb4c46640dfc3e57be93e7e7c5db292eccb7d7ef1f19a4555"
+    },
+    {
+      "name": "Matt Pocock engineering skill: grilling",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/grilling/UPSTREAM.md",
+      "sha256": "88cb847acaf327a817100f07a3555ffba0e7697533243dac03d2af0874893c44"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/ADAPTATIONS.md",
+      "sha256": "1f970446e9fdfaf6487657508de9cfa6f0ea7ed7627a9f8e73a60f02c29ff086"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/HTML-REPORT.md",
+      "sha256": "581e8bb5a521e46bbda8ca7e19b15948bed882187108092ebb90c62513b77528"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/SKILL.md",
+      "sha256": "bb9616fd0a5735013847ee66878c17451d773f3a5f697980c31046c5f1f14db7"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/UPSTREAM.md",
+      "sha256": "8186aea1c3c8591255f74d318c6e1edba4f3541928888297a91131bcbd1a8437"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/codebase-design/DEEPENING.md",
+      "sha256": "47ea2e53d5a55708adb828aadbdbc763ebf7c97f89daf0b5ab326691ffefaea7"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/codebase-design/DESIGN-IT-TWICE.md",
+      "sha256": "1d5f9f31520756f5930a08ce63a4f4c5af621e6474c6ed84d2bb8edb54611cac"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/codebase-design/GUIDE.md",
+      "sha256": "4524aa9086ad6485733bf49c786b22694d3a0270727943388e683e9aa624aaa0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/domain-modeling/ADR-FORMAT.md",
+      "sha256": "944c92aa790e8fbdc9199640b170979abb8a34ba8d0fe18c2a01a63bce140ca0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/domain-modeling/CONTEXT-FORMAT.md",
+      "sha256": "17ab16ce783e4d2801ee52fd9acdf550cbf44de65ae76797a93943bbedf22a13"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/domain-modeling/GUIDE.md",
+      "sha256": "8e9bbfe149db299c1710f5e2c709d120387609c03df6a72aa55aacffa54b0edf"
+    },
+    {
+      "name": "Matt Pocock engineering skill: improve-codebase-architecture",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/improve-codebase-architecture/references/grilling/GUIDE.md",
+      "sha256": "b16a2a9479c7d38f819907036a90897ccab61a8051cd126fe5827d9a92a3588d"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/ADAPTATIONS.md",
+      "sha256": "cf996628138441bcb10a6214f81b783ec6ea3d0a9a1e86f7249655b1b01322a6"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/LOGIC.md",
+      "sha256": "f61c7d249e786a79ef289018901c348271e1798dd0b0bc5607b5c6f4d4a01ab9"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/SKILL.md",
+      "sha256": "80c1156621455c8de6fe008f73675bf491d45caaae703969484cc0919f8904d0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/UI.md",
+      "sha256": "723211e878acbc7b6ff09755263f3295cde724ba902ff0064da41eed51d45ad3"
+    },
+    {
+      "name": "Matt Pocock engineering skill: prototype",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/prototype/UPSTREAM.md",
+      "sha256": "289960a78f03212eb8d014c74e83e5ef6865613d99195c90e263d430a4dee9fb"
+    },
+    {
+      "name": "Matt Pocock engineering skill: resolving-merge-conflicts",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/resolving-merge-conflicts/ADAPTATIONS.md",
+      "sha256": "4c1f38cd1a1cec945c43d91c09c305eccc1a37ce62a1340c9e10f7d278b079af"
+    },
+    {
+      "name": "Matt Pocock engineering skill: resolving-merge-conflicts",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/resolving-merge-conflicts/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: resolving-merge-conflicts",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/resolving-merge-conflicts/SKILL.md",
+      "sha256": "02b6a9edc50915594d8b6caf3a2480c363cc0ed98d0d48dfecef0fe39c44c27a"
+    },
+    {
+      "name": "Matt Pocock engineering skill: resolving-merge-conflicts",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/resolving-merge-conflicts/UPSTREAM.md",
+      "sha256": "bb68d197c27a0de919268d07a7e675fbb79939f8ac4851ee895bf03dbb0a7ebf"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/ADAPTATIONS.md",
+      "sha256": "4e47ae78f2b19e3f9f54de4279da8707304e1a3fe82cc750af91169a31f61909"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/SKILL.md",
+      "sha256": "54e723dcf0bb3dafd8629da83f0181437e274d4d3589f5b2856da48a3a62eb12"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/UPSTREAM.md",
+      "sha256": "6c7ef06bd678fb6af6e6607350ebd68f6f8e18ff19ece0c35f539bd16a85f696"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/mocking.md",
+      "sha256": "3ceb807fdf4a47d6a93d4d9a891e5ba6d362a6247bd08adc451feebfc17361ef"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/references/codebase-design/DEEPENING.md",
+      "sha256": "47ea2e53d5a55708adb828aadbdbc763ebf7c97f89daf0b5ab326691ffefaea7"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/references/codebase-design/DESIGN-IT-TWICE.md",
+      "sha256": "1d5f9f31520756f5930a08ce63a4f4c5af621e6474c6ed84d2bb8edb54611cac"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/references/codebase-design/GUIDE.md",
+      "sha256": "4524aa9086ad6485733bf49c786b22694d3a0270727943388e683e9aa624aaa0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: tdd",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/tdd/tests.md",
+      "sha256": "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a"
+    },
+    {
+      "name": "Matt Pocock engineering skill: wizard",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/wizard/ADAPTATIONS.md",
+      "sha256": "58090e45ec237e4f9b25f9379d872d34bf91171ac7be03c527b6e65155842848"
+    },
+    {
+      "name": "Matt Pocock engineering skill: wizard",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/wizard/LICENSE",
+      "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
+    },
+    {
+      "name": "Matt Pocock engineering skill: wizard",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/wizard/SKILL.md",
+      "sha256": "7659ba3cc09c5b058f98a6796e3403b7bb06ba498d442077d431f328e526482e"
+    },
+    {
+      "name": "Matt Pocock engineering skill: wizard",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/wizard/UPSTREAM.md",
+      "sha256": "9c68e7615a0ffb4bee260eb5fd0e04e1fab236c2853738a509d9f14d1e9806f0"
+    },
+    {
+      "name": "Matt Pocock engineering skill: wizard",
+      "version": "0ab1b63a410a03d3627979a109c8695de27af954",
+      "source": "https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954",
+      "path": "skills/wizard/template.sh",
+      "sha256": "33cbe9dfb1d0e9185b60248a52aabed14bc64785a00cac695e302e739dd6c153"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/SKILL.md",
+      "sha256": "d445ee40a62a970b831c47e2298a5cbf30b19735f461b285e7ddd0783c123118"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/SODUWORK.md",
+      "sha256": "2405d711439d42b67d4ea0a41877c5df4578747f002b35f8755a24385b60ee6a"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/UPSTREAM.md",
+      "sha256": "8eba60cb03c340a41cc47a829faf1b471f20eb2a6de33c242169ab76771dc73f"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/scripts/frame-template.html",
+      "sha256": "6a8a4e58bd6a44b904e2e3c57de774481d909204597e1498de53f1b2fecc4c4e"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/scripts/helper.js",
+      "sha256": "43c6d69954a46ec34a2a262bcc62a9a7e83e839c739f199cb72646d397c686e3"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/scripts/server.cjs",
+      "sha256": "2d2961ea8d11f56c5f4c3a1a68d22709efa5d7601a2246d8c880774e7e9e8412"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/scripts/start-server.sh",
+      "sha256": "a4e5ae84275bcaacd2f84345afeabe59cf7b00ba080e123da7cc1fb226f12847"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/scripts/stop-server.sh",
+      "sha256": "0b5ccbbd57f62d3ed88993f7940b5ee0e5c0fc9b21c550c623da4f6292e47daf"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/spec-document-reviewer-prompt.md",
+      "sha256": "95a0a195de9d984be2fffa95bab16fc8c563bc296a9cfc5e9c29cb3ece0d7457"
+    },
+    {
+      "name": "Superpowers development skill: brainstorming",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/brainstorming/visual-companion.md",
+      "sha256": "77eb44a4ec3408bb3dafb872288ecd94beb8cf21da4f2bafa54fd08255d7808b"
+    },
+    {
+      "name": "Superpowers development skill: dispatching-parallel-agents",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/dispatching-parallel-agents/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: dispatching-parallel-agents",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/dispatching-parallel-agents/SKILL.md",
+      "sha256": "32d50fb7b9af6096ba7b9bf0e379c7915449a78bdb22fc1812974762f636ae81"
+    },
+    {
+      "name": "Superpowers development skill: dispatching-parallel-agents",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/dispatching-parallel-agents/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: dispatching-parallel-agents",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/dispatching-parallel-agents/UPSTREAM.md",
+      "sha256": "2e6299fe17be2c459ab2e68ad265488e2de26e2a2798004a47f1848a210cc0b5"
+    },
+    {
+      "name": "Superpowers development skill: executing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/executing-plans/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: executing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/executing-plans/SKILL.md",
+      "sha256": "bf175ac06143bf190c01a2b8bda98d0ceb7781da5aa3eb1a0308c908eff42989"
+    },
+    {
+      "name": "Superpowers development skill: executing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/executing-plans/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: executing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/executing-plans/UPSTREAM.md",
+      "sha256": "80d27d22da6f48ebfcbbc209e377663f833176933f2ae51833bfefa30a98a163"
+    },
+    {
+      "name": "Superpowers development skill: finishing-a-development-branch",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/finishing-a-development-branch/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: finishing-a-development-branch",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/finishing-a-development-branch/SKILL.md",
+      "sha256": "8e2acdacae0724310aad91cc6e04c051c074e05c4826013d2e2d373d8e37f4a9"
+    },
+    {
+      "name": "Superpowers development skill: finishing-a-development-branch",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/finishing-a-development-branch/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: finishing-a-development-branch",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/finishing-a-development-branch/UPSTREAM.md",
+      "sha256": "99a6a1c11090fa61802941e2460402cbd18176e1ea8272daffedc7d1f48e1ebf"
+    },
+    {
+      "name": "Superpowers development skill: receiving-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/receiving-code-review/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: receiving-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/receiving-code-review/SKILL.md",
+      "sha256": "d37943c90f09d6e281fc7fb5d0f821a192c6e47286c3d1eaed5179d78303fafa"
+    },
+    {
+      "name": "Superpowers development skill: receiving-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/receiving-code-review/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: receiving-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/receiving-code-review/UPSTREAM.md",
+      "sha256": "3f790dc61fb539552085c1f958781163394c5b85938139548bd01a92e9b489c4"
+    },
+    {
+      "name": "Superpowers development skill: requesting-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/requesting-code-review/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: requesting-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/requesting-code-review/SKILL.md",
+      "sha256": "c00a76869ca93b3f06808806e1abd21248041e406fa7935811d826bd9c762683"
+    },
+    {
+      "name": "Superpowers development skill: requesting-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/requesting-code-review/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: requesting-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/requesting-code-review/UPSTREAM.md",
+      "sha256": "ed8a2340bea47b11be4d86b18d7596062625a3f7d6b0b8a050e62d4f4ce59915"
+    },
+    {
+      "name": "Superpowers development skill: requesting-code-review",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/requesting-code-review/code-reviewer.md",
+      "sha256": "5eca5fcfd48a50e0a526ce5ffd64bf625d6b81bb46d11795274dae451fe6ffd4"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/SKILL.md",
+      "sha256": "8f1b1e0bd4387eb72139a9fb0034d2f6bc7cca0fb1dc24269783ff27a9409077"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/SODUWORK.md",
+      "sha256": "fd8b98dedb73d92e7be226a0ef7675216ed950967a7ab883a8a8a89d549aa566"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/UPSTREAM.md",
+      "sha256": "d57ff10f605ff7d0b68d46c675a69de14fd7cedc0e5df7ab84d033ed764c9d9f"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/code-reviewer.md",
+      "sha256": "5eca5fcfd48a50e0a526ce5ffd64bf625d6b81bb46d11795274dae451fe6ffd4"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/implementer-prompt.md",
+      "sha256": "81dd9d5a3fb0b09b96b5829f03b9796842f3199ef7591d1ba1c2db2a515f64d0"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/re-review-prompt.md",
+      "sha256": "db0d5849478bc79cbde97b9b2cf0e58b50be8b8ed18464b0252c2bf27b6440a6"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/scripts/review-package",
+      "sha256": "aff5b322c0f5fdf725cd76fc44760a949c7dec6a025e423dbc5caf7a3878b222"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/scripts/sdd-workspace",
+      "sha256": "95a09d9d3983ad1aafd093ca72b4587946dea885c6e302caa02a779a2f911c31"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/scripts/task-brief",
+      "sha256": "103c15e9ffc4b9ace726b24eb82ff2b83c717d1beaee18a9ff6764546c493213"
+    },
+    {
+      "name": "Superpowers development skill: subagent-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/subagent-driven-development/task-reviewer-prompt.md",
+      "sha256": "eea23e33ec570c3041f40e9569fa711d61b8029f9eecf908345138aa1c6e61ab"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/CREATION-LOG.md",
+      "sha256": "c24733a5b1821bd6bed1fc950261f0b9f4e90097e0bbb96459d8179713730789"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/SKILL.md",
+      "sha256": "d602250b8a238fa649456015cb8f9b90f9f06957db8fe06d050b21c553030721"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/UPSTREAM.md",
+      "sha256": "ef809b11f3577dea5faac303c6abda408e7950803b959ad65d779a887a847962"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/condition-based-waiting-example.ts",
+      "sha256": "40ae5ebe497fdf310200e43fe986552546d0a22837c0d39e855db1cfd33eb88e"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/condition-based-waiting.md",
+      "sha256": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/defense-in-depth.md",
+      "sha256": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/find-polluter.sh",
+      "sha256": "dd7b8f13c4cc2a24b33ff87b18da9248f3e1c80a085c3316224f69ff0fa5c43c"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/root-cause-tracing.md",
+      "sha256": "6b0622269e098ca1399e123e553fd385f0b6412d88ef0e9c4f5a8ea9cf1cec7b"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/test-academic.md",
+      "sha256": "fe2ba480d78ac0d686dc025f41c2a32a43d642bf533f91b0c6053a04d35d6486"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/test-pressure-1.md",
+      "sha256": "0b6a915db0054577819834c79be9eb614e97bddba10d73768e1fbe91cfed048a"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/test-pressure-2.md",
+      "sha256": "b2030aeffba07050e8ad573ddf87486457c4a016a786bb326235bebd856f2016"
+    },
+    {
+      "name": "Superpowers development skill: systematic-debugging",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/systematic-debugging/test-pressure-3.md",
+      "sha256": "96b50a52e2c7989c9cf20fb752c47c1e9a3a70dc362f8f7989f8f5b64dac7708"
+    },
+    {
+      "name": "Superpowers development skill: test-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/test-driven-development/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: test-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/test-driven-development/SKILL.md",
+      "sha256": "2c3eab808b70bfa2275c982e556de100cd6a2b247f102d327af6aff74bab6e3a"
+    },
+    {
+      "name": "Superpowers development skill: test-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/test-driven-development/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: test-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/test-driven-development/UPSTREAM.md",
+      "sha256": "8dd7e343b6be6ea0dd7a24bfe2c076732497a36e0b48625c7a12c0666940678e"
+    },
+    {
+      "name": "Superpowers development skill: test-driven-development",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/test-driven-development/writing-good-tests.md",
+      "sha256": "51471c853306ff92ca8bb41dcaea05f31c0e46b03651f8f3c99754b7172f4ae1"
+    },
+    {
+      "name": "Superpowers development skill: using-git-worktrees",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-git-worktrees/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: using-git-worktrees",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-git-worktrees/SKILL.md",
+      "sha256": "3efa31eafe25d80ad7cf5f0fdffbd533e60105b43ff992ff332d118745e40df0"
+    },
+    {
+      "name": "Superpowers development skill: using-git-worktrees",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-git-worktrees/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: using-git-worktrees",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-git-worktrees/UPSTREAM.md",
+      "sha256": "cd8b0073979a18c30d6c8d78fdd2f5f13ffda3531737563ab0d6e4c8e8401745"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/SKILL.md",
+      "sha256": "2225c3ad17064f422107d6d5769902c922a1b523cc2f160c437a58bd372ea08e"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/SODUWORK.md",
+      "sha256": "0e7b4927f044baa1a08ae6dbf31816f0f1d91a998403637456023b7026b2102e"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/UPSTREAM.md",
+      "sha256": "08aab1a8d4d7d4b773db1a3a45db064c7b30a91720521db338a5b6fbb744a652"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/references/antigravity-tools.md",
+      "sha256": "4880f6de3da4e32f9659ebe7a72b9e0ebfff04e028c2ed96173f86d0387a04c0"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/references/codex-tools.md",
+      "sha256": "1a38ad9b188c393052f58d95657a1c35ea6aafc8b5a27f198f3922912f70bbe7"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/references/gemini-tools.md",
+      "sha256": "62b9157bcb0ee3c6784e3d0da0798ddfa5872f9e0c34bea48f3079dabea71965"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/references/hermes-tools.md",
+      "sha256": "e2185c976a3c87503910e05e2aea58cc89bc8e569bb624b93df9958ac47a9190"
+    },
+    {
+      "name": "Superpowers development skill: using-superpowers",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/using-superpowers/references/pi-tools.md",
+      "sha256": "703dbc83d23ecab9c6f388460c38abc482e9dee2fe6772a8c7a255152ad3a4d5"
+    },
+    {
+      "name": "Superpowers development skill: verification-before-completion",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/verification-before-completion/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: verification-before-completion",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/verification-before-completion/SKILL.md",
+      "sha256": "cfe8207a332e4db59715af6a092e13694a2337ea0c5754226f073df839362d64"
+    },
+    {
+      "name": "Superpowers development skill: verification-before-completion",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/verification-before-completion/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: verification-before-completion",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/verification-before-completion/UPSTREAM.md",
+      "sha256": "ad1caeef163db42d12fce999c65895ff0fa65afff63a36f4df5b1de32eb98d0b"
+    },
+    {
+      "name": "Superpowers development skill: writing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-plans/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: writing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-plans/SKILL.md",
+      "sha256": "7d4938e726760fcdf2164416dff6eaf994803db65a95e1b832919ca9da8c3681"
+    },
+    {
+      "name": "Superpowers development skill: writing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-plans/SODUWORK.md",
+      "sha256": "a60fdbefd45b1f1695b36d0f53fa0ce1f246379bb313d6bb2b779c873bfd79f3"
+    },
+    {
+      "name": "Superpowers development skill: writing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-plans/UPSTREAM.md",
+      "sha256": "76db0329eb6651620ce2a5d78613327595d6dc7cbe1bb793c5ebc8c167923fe7"
+    },
+    {
+      "name": "Superpowers development skill: writing-plans",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-plans/plan-document-reviewer-prompt.md",
+      "sha256": "aa728b96aad603c8be28875a4305637f6c984aa81ffcadcb13e743202fa2a0c7"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/SKILL.md",
+      "sha256": "bd286bfe5949408e27ed0ce4811a6a54851fb5ef8e12b9df37cb8acca6058637"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/SODUWORK.md",
+      "sha256": "12a3b35ab99176fbb94b9ac68ebd6009be4507f00afce707ade24861d4dae7c6"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/UPSTREAM.md",
+      "sha256": "0d614c1675c00f12edb204dbca60b7e3bc6d06ac4dc56cae44160a181546bfc5"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/anthropic-best-practices.md",
+      "sha256": "6babca281e00a057e8ee258e6150107fcb338f778591712e2de4cf9439beec6e"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/examples/CLAUDE_MD_TESTING.md",
+      "sha256": "0b379a3415e185d3c434b3ad283d8aa132f3022c2a4f210f168865b5986bcef0"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/graphviz-conventions.dot",
+      "sha256": "e2890a593c91370e384b42f2f67b1a6232c9e69dddea7891a0c1c46d7b20b694"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/persuasion-principles.md",
+      "sha256": "a51bc9bf75189ea73a27b3fb504a2fdfdb966fb1f7f1cdf03203230a216ccc03"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/render-graphs.js",
+      "sha256": "dbc48f195ad84206399342c293ef7ee26e7769a90ac49026124ea608a5b485fe"
+    },
+    {
+      "name": "Superpowers development skill: writing-skills",
+      "version": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "source": "https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "path": "skills/writing-skills/testing-skills-with-subagents.md",
+      "sha256": "c711346852c911b24a84aa161e0cff06a4cd7f4e2fa9e9c0a266cead5afcbade"
+    },
+    {
+      "name": "Anthropic frontend design skill: frontend-design",
+      "version": "2235be7c60b551f5de82ade908fd3816455afcda",
+      "source": "https://github.com/anthropics/skills/tree/2235be7c60b551f5de82ade908fd3816455afcda",
+      "path": "skills/frontend-design/LICENSE",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    },
+    {
+      "name": "Anthropic frontend design skill: frontend-design",
+      "version": "2235be7c60b551f5de82ade908fd3816455afcda",
+      "source": "https://github.com/anthropics/skills/tree/2235be7c60b551f5de82ade908fd3816455afcda",
+      "path": "skills/frontend-design/LICENSE.txt",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    },
+    {
+      "name": "Anthropic frontend design skill: frontend-design",
+      "version": "2235be7c60b551f5de82ade908fd3816455afcda",
+      "source": "https://github.com/anthropics/skills/tree/2235be7c60b551f5de82ade908fd3816455afcda",
+      "path": "skills/frontend-design/SKILL.md",
+      "sha256": "1608ea77fbb6fc30d13a97d12cfa8ebf31358d40f0dd97beed24829d6b3f45dd"
+    },
+    {
+      "name": "Anthropic frontend design skill: frontend-design",
+      "version": "2235be7c60b551f5de82ade908fd3816455afcda",
+      "source": "https://github.com/anthropics/skills/tree/2235be7c60b551f5de82ade908fd3816455afcda",
+      "path": "skills/frontend-design/UPSTREAM.md",
+      "sha256": "6d8035ee5608aaaca5a16040707a3f22049b4f70509a40f7d0d9780a9634419a"
     }
   ],
   "locks": [
@@ -288,7 +1457,34 @@
       "evidence": "npm package LICENSE retained; verified locally 2026-10-17"
     }
   },
-  "skillNotices": [],
+  "skillNotices": [
+    "brainstorming",
+    "code-review",
+    "codebase-design",
+    "diagnosing-bugs",
+    "dispatching-parallel-agents",
+    "domain-modeling",
+    "executing-plans",
+    "finishing-a-development-branch",
+    "frontend-design",
+    "grill-with-docs",
+    "grilling",
+    "improve-codebase-architecture",
+    "prototype",
+    "receiving-code-review",
+    "requesting-code-review",
+    "resolving-merge-conflicts",
+    "subagent-driven-development",
+    "systematic-debugging",
+    "tdd",
+    "test-driven-development",
+    "using-git-worktrees",
+    "using-superpowers",
+    "verification-before-completion",
+    "wizard",
+    "writing-plans",
+    "writing-skills"
+  ],
   "runtimeNoticeOverrides": [
     {
       "name": "@earendil-works/pi-*",
@@ -332,7 +1528,34 @@
     }
   ],
   "runtimeNoticeReviews": [],
-  "skillLicenseHashes": {},
+  "skillLicenseHashes": {
+    "brainstorming": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "code-review": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "codebase-design": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "diagnosing-bugs": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "dispatching-parallel-agents": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "domain-modeling": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "executing-plans": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "finishing-a-development-branch": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "frontend-design": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    "grill-with-docs": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "grilling": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "improve-codebase-architecture": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "prototype": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "receiving-code-review": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "requesting-code-review": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "resolving-merge-conflicts": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "subagent-driven-development": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "systematic-debugging": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "tdd": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "test-driven-development": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "using-git-worktrees": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "using-superpowers": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "verification-before-completion": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "wizard": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+    "writing-plans": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "writing-skills": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+  },
   "binaryVendored": [],
   "pythonNoticeOverrides": [
     {

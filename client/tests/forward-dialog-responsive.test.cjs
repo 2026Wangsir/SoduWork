@@ -85,3 +85,18 @@ test('assignment labels identify an unambiguous provider without changing model 
   assert.equal(context._fwpModelLabel({...options,modelOptions:[row,{...row,providerId:'provider-b'}]},'model-a'),'model-a');
   assert.equal(context._fwpModelLabel({...options,modelOptions:[row,{...row,providerName:''}]},'model-a'),'model-a');
 });
+
+test('assignment labels keep local model references distinct from Hub models', () => {
+  const context = {window:{},esc:value=>String(value).replaceAll('<','&lt;')};
+  vm.runInNewContext(fs.readFileSync(path.join(root,'components/panels/panels-forward-plugin.js'),'utf8'),context);
+  const local = {name:'local:model-abc', modelName:'qwen-local', label:'Qwen Local',
+    providerId:'ollama', providerName:'本机 Ollama', localOnly:true, source:'local'};
+  const options = {defaultModel:'hub-model', modelOptions:[
+    {name:'hub-model', providerId:'hub-provider', providerName:'Example Hub'}, local,
+  ]};
+  assert.equal(context._fwpModelLabel(options, local.name), 'Qwen Local · 本机 Ollama · 本机');
+  assert.deepEqual(Array.from(context._fwpModelState(options, local.name).models),
+    ['hub-model', 'local:model-abc']);
+  assert.match(context._fwpModelOptions(context._fwpModelState(options, local.name), 'Default'),
+    /value="local:model-abc" selected>Qwen Local · 本机 Ollama · 本机/);
+});
