@@ -52,27 +52,25 @@ app.whenReady().then(async()=>{
     })()`);
     const personal = ['approval','attention','manual-submit','manual-work'];
     assert.deepEqual(await ids(),personal);
-    assert.match(await js("document.querySelector('#rqScopeHint').textContent"),/当前轮到你操作.*执行中或已提交验收的需求仍保留在“与我相关”/);
-    assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),false);
+    assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     await screenshot('personal-actions');
-    report.checks.push('Queued, streaming and local execution stay out of personal actions while actual decisions and manual follow-up remain');
+    report.checks.push('Queued, streaming and local execution stay out of personal actions while actual decisions and manual follow-up remain; no scope banner is rendered');
 
-    await click('#rqScopeHint [data-rq-scope="related"]');
+    await click('.rq-scopes [data-rq-scope="related"]');
     const related = [...personal,...['queued','starting','dispatching','running','working','streaming','local','session'].map(state=>'active-'+state)].sort();
     assert.deepEqual(await ids(),related);
-    assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),true);
     assert.equal(await js("document.querySelector('#rqScope').value"),'related');
     await screenshot('related-execution');
     await click('[data-rq-view="list"]');
     assert.deepEqual(await ids(),related);
     assert.equal(await js('JSON.stringify(tasks)===beforeScopeRows'),true);
     assert.deepEqual(await js("fixtureCalls.filter(row=>['patch','submit-review','review','assign'].includes(row[0]))"),[]);
-    report.checks.push('The visible destination link opens related work in board and list views without changing tasks or granting unrelated access');
+    report.checks.push('The related scope opens related work in board and list views without changing tasks or granting unrelated access');
 
     await click('.rq-scopes [data-rq-scope="actionable"]');
     await js("tasks.find(row=>row.id==='manual-work').workRouting={conversationTurn:{state:'queued'}};RequirementsBoard.render(true)");
     assert.deepEqual(await ids(),personal.filter(id=>id!=='manual-work'));
-    await click('#rqScopeHint [data-rq-scope="related"]');
+    await click('.rq-scopes [data-rq-scope="related"]');
     assert.ok((await ids()).includes('manual-work'));
     report.checks.push('A live start removes only the pending personal action and keeps the same task available in related work');
 
@@ -81,11 +79,11 @@ app.whenReady().then(async()=>{
     assert.deepEqual(await ids(),[]);
     assert.match(await js("document.querySelector('.rq-empty').textContent"),/暂时没有需要你处理的需求/);
     win.setSize(640,900);await delay(100);
-    assert.equal(await js("(()=>{const n=document.querySelector('#rqScopeHint button'),r=n.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()"),true);
+    assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     await screenshot('narrow-empty-personal-actions');
-    await click('#rqScopeHint [data-rq-scope="related"]');
+    await js("(()=>{const n=document.querySelector('#rqScope');n.value='related';n.dispatchEvent(new Event('change',{bubbles:true}));})()");
     assert.equal((await ids()).length,8);
-    report.checks.push('Even an empty personal queue retains a visible related-work destination on a narrow viewport');
+    report.checks.push('An empty personal queue remains usable on a narrow viewport without rendering a scope banner');
 
     await js("fixtureIdentity='fixture:bob:tasks';tasks=[];fixtureApprovals=[];dispatchEvent(new Event('soduwork-data-scope-changed'))");
     assert.deepEqual(await ids(),[]);

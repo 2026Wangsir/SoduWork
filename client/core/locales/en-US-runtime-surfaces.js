@@ -114,8 +114,6 @@
     '已加载最新需求，未保存的修改已保留。请核对后再保存。': 'The latest issue is loaded and your unsaved changes are preserved. Review them before saving.',
     '需求已开始执行，未保存内容已保留。': 'Execution has started. Your unsaved content has been preserved.',
     '已提交验收，等待验收人处理': 'Submitted for acceptance; waiting for the reviewer',
-    '“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。': '“Needs my attention” only shows issues that currently require your action. Issues in progress or submitted for acceptance remain under “Related to me”.',
-    '查看与我相关': 'View related issues',
     '执行已安排，可在“与我相关”查看进展': 'Execution is scheduled. Follow its progress under “Related to me”.',
     "试用已结束，联系管理员分配套餐后即可继续": "Your trial has ended. Contact an administrator to assign a plan before continuing.",
     "当前模型的额度已用完，可以选择其他可用模型或联系管理员调整额度": "This model's allowance is used up. Choose another available model or contact an administrator to adjust your allowance.",
