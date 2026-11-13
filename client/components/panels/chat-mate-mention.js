@@ -137,6 +137,69 @@
     let reason = '';
     let active = 0;
     let cardEpoch = 0, directoryEpoch = 0, loadPromise = null;
+    const view = host.ownerDocument?.defaultView || (typeof window !== 'undefined' ? window : null);
+    let positionFrame = null, sizeObserver = null, observingPosition = false;
+
+    function positionMenu() {
+      if (menu.hidden) return;
+      if (host.isConnected === false) return close();
+      const rect = host.getBoundingClientRect();
+      if (!rect.width) return close();
+      const viewport = view.visualViewport, margin = 8, gap = 8;
+      const left = (viewport?.offsetLeft || 0) + margin;
+      const top = (viewport?.offsetTop || 0) + margin;
+      const right = left + (viewport?.width || view.innerWidth) - margin * 2;
+      const bottom = top + (viewport?.height || view.innerHeight) - margin * 2;
+      const width = Math.max(0, Math.min(410, rect.width, right - left));
+      // Inline geometry also overrides the shared plugin picker's narrow-screen rule.
+      menu.style.boxSizing = 'border-box';
+      menu.style.width = width + 'px';
+      const above = Math.max(0, Math.min(rect.top, bottom) - top - gap);
+      const below = Math.max(0, bottom - Math.max(rect.bottom, top) - gap);
+      const desired = Math.min(330, menu.scrollHeight + 2);
+      const useAbove = above >= Math.min(desired, 80) || above >= below;
+      const available = useAbove ? above : below;
+      const height = Math.min(desired, available >= 80 ? available : Math.max(0, bottom - top));
+      const anchorTop = useAbove ? rect.top - gap - height : rect.bottom + gap;
+      menu.style.left = Math.max(left, Math.min(rect.left, right - width)) + 'px';
+      menu.style.top = Math.max(top, Math.min(anchorTop, bottom - height)) + 'px';
+      menu.style.bottom = 'auto';
+      menu.style.maxHeight = height + 'px';
+    }
+
+    function schedulePosition(event) {
+      if (event?.target?.nodeType && menu.contains(event.target)) return;
+      if (positionFrame !== null) return;
+      positionFrame = view.requestAnimationFrame(() => { positionFrame = null; positionMenu(); });
+    }
+
+    function watchPosition() {
+      positionMenu();
+      if (menu.hidden || observingPosition) return;
+      observingPosition = true;
+      view.addEventListener('resize', schedulePosition);
+      view.addEventListener('scroll', schedulePosition, true);
+      view.visualViewport?.addEventListener('resize', schedulePosition);
+      view.visualViewport?.addEventListener('scroll', schedulePosition);
+      if (typeof view.ResizeObserver === 'function') {
+        sizeObserver = new view.ResizeObserver(schedulePosition);
+        // A centered, capped-width composer can move without changing its own size.
+        for (let node = host; node; node = node.parentElement) sizeObserver.observe(node);
+        sizeObserver.observe(menu);
+      }
+    }
+
+    function stopPositioning() {
+      observingPosition = false;
+      view?.removeEventListener('resize', schedulePosition);
+      view?.removeEventListener('scroll', schedulePosition, true);
+      view?.visualViewport?.removeEventListener('resize', schedulePosition);
+      view?.visualViewport?.removeEventListener('scroll', schedulePosition);
+      sizeObserver?.disconnect();
+      sizeObserver = null;
+      if (positionFrame !== null) view.cancelAnimationFrame(positionFrame);
+      positionFrame = null;
+    }
 
     function say(message) { if (typeof o.say === 'function') o.say(message); }
 
@@ -147,6 +210,7 @@
     }
 
     function close() {
+      stopPositioning();
       menu.hidden = true;
       menu.replaceChildren();
       query = null;
@@ -159,7 +223,7 @@
     }
 
     function renderMenu() {
-      if (!query) return close();
+      if (!query || host.isConnected === false) return close();
       menu.replaceChildren();
       menu.hidden = false;
       if (loading && !mates.length) {
@@ -167,6 +231,7 @@
         state.className = 'nplugin-state';
         state.textContent = '正在读取同事清单…';
         menu.appendChild(state);
+        watchPosition();
         return;
       }
       if (!mates.length) {
@@ -174,6 +239,7 @@
         state.className = 'nplugin-state';
         state.textContent = reason || '当前企业还没有其他可联系的同事';
         menu.appendChild(state);
+        watchPosition();
         return;
       }
       const rows = matches();
@@ -182,6 +248,7 @@
         state.className = 'nplugin-state';
         state.textContent = '没有匹配的同事';
         menu.appendChild(state);
+        watchPosition();
         return;
       }
       active = Math.min(active, rows.length - 1);
@@ -214,6 +281,7 @@
         button.addEventListener('click', () => choose(mate));
         menu.appendChild(button);
       });
+      watchPosition();
     }
 
     function load(force) {
