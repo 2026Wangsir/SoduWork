@@ -8,25 +8,25 @@ const ACTION = 'soduwork-keychain:';
 const COPY = {
   'zh-CN': {
     title: '系统钥匙串需要修复',
-    detail: 'macOS 当前默认钥匙串不存在，无法安全保存或读取登录凭据。请在“钥匙串访问”中检查登录钥匙串和默认钥匙串设置，修复后退出并重新启动 SoduWork。',
+    detail: 'macOS 当前默认钥匙串不存在或无法安全访问，无法保存或读取登录凭据。请在“钥匙串访问”中检查登录钥匙串和默认钥匙串设置，修复后退出并重新启动 SoduWork。',
     preserved: 'SoduWork 已保留现有凭据与本地数据，不会自动重置或删除钥匙串。',
     open: '打开钥匙串访问', quit: '退出 SoduWork',
   },
   'en-US': {
     title: 'System Keychain needs attention',
-    detail: 'The default macOS Keychain is missing, so sign-in credentials cannot be stored or read securely. Check the login Keychain and default Keychain settings in Keychain Access, then quit and start SoduWork again.',
+    detail: 'The default macOS Keychain is missing or cannot be accessed, so sign-in credentials cannot be stored or read securely. Check the login Keychain and default Keychain settings in Keychain Access, then quit and start SoduWork again.',
     preserved: 'Your existing credentials and local data are preserved. SoduWork will not reset or delete your Keychain.',
     open: 'Open Keychain Access', quit: 'Quit SoduWork',
   },
   'ja-JP': {
     title: 'システムのキーチェーンを確認してください',
-    detail: 'macOS のデフォルトキーチェーンが見つからず、ログイン情報を安全に保存・読み込みできません。「キーチェーンアクセス」でログインキーチェーンとデフォルト設定を確認し、修復後に SoduWork を終了して再起動してください。',
+    detail: 'macOS のデフォルトキーチェーンが見つからないか、安全にアクセスできないため、ログイン情報を保存・読み込みできません。「キーチェーンアクセス」でログインキーチェーンとデフォルト設定を確認し、修復後に SoduWork を終了して再起動してください。',
     preserved: '既存の認証情報とローカルデータは保持されています。SoduWork がキーチェーンをリセット・削除することはありません。',
     open: 'キーチェーンアクセスを開く', quit: 'SoduWork を終了',
   },
   'ko-KR': {
     title: '시스템 키체인을 확인해 주세요',
-    detail: 'macOS 기본 키체인이 없어 로그인 정보를 안전하게 저장하거나 읽을 수 없습니다. 키체인 접근에서 로그인 키체인과 기본 키체인 설정을 확인하고 복구한 후 SoduWork를 종료하고 다시 실행하세요.',
+    detail: 'macOS 기본 키체인이 없거나 안전하게 액세스할 수 없어 로그인 정보를 저장하거나 읽을 수 없습니다. 키체인 접근에서 로그인 키체인과 기본 키체인 설정을 확인하고 복구한 후 SoduWork를 종료하고 다시 실행하세요.',
     preserved: '기존 인증 정보와 로컬 데이터는 보존됩니다. SoduWork는 키체인을 자동으로 재설정하거나 삭제하지 않습니다.',
     open: '키체인 접근 열기', quit: 'SoduWork 종료',
   },
