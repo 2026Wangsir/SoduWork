@@ -19,6 +19,40 @@ test('device and account history controls retain all four locale translations', 
     assert.deepEqual(keys.map(key => c.api.t('workspace.history.' + key)), values);
   }
 });
+test('settings placeholders and screenshot notices follow every supported locale', () => {
+  const c = client();
+  const phrases = [
+    'GitLab 登录名（GitHub 可留空）',
+    '截图已保存。',
+    '截图已复制，可在输入框粘贴。',
+    '截图已复制到剪贴板。',
+  ];
+  const expected = {
+    'zh-CN': phrases,
+    'en-US': [
+      'GitLab username (optional for GitHub)',
+      'Screenshot saved.',
+      'Screenshot copied. Paste it into the input.',
+      'Screenshot copied to the clipboard.',
+    ],
+    'ja-JP': [
+      'GitLab ログイン名（GitHub は空欄可）',
+      'スクリーンショットを保存しました。',
+      'スクリーンショットをコピーしました。入力欄に貼り付けられます。',
+      'スクリーンショットをクリップボードにコピーしました。',
+    ],
+    'ko-KR': [
+      'GitLab 로그인 이름(GitHub은 비워도 됨)',
+      '스크린샷을 저장했습니다.',
+      '스크린샷을 복사했습니다. 입력창에 붙여넣을 수 있습니다.',
+      '스크린샷을 클립보드에 복사했습니다.',
+    ],
+  };
+  for (const [locale, values] of Object.entries(expected)) {
+    c.api.setLocale(locale);
+    assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), values, locale);
+  }
+});
 test('company visibility copy distinguishes related people in all supported locales', () => {
   const c = client();
   const phrases = ['同公司可见', '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。',
