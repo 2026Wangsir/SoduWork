@@ -1,8 +1,22 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const brand = require('../components/panels/agent-brand');
+const brandAssetDir = path.join(__dirname, '../assets/agent-brands');
+const brandSources = JSON.parse(fs.readFileSync(path.join(brandAssetDir, 'sources.json'), 'utf8'));
+const attributes = fs.readFileSync(path.join(__dirname, '../../.gitattributes'), 'utf8');
+assert.match(attributes, /^client\/assets\/agent-brands\/\*\.svg text eol=lf$/m,
+  'brand artwork must retain LF bytes on Windows checkouts');
+
+for (const [id, relative] of Object.entries(brand.ICONS)) {
+  const file = relative.replace(/^assets\/agent-brands\//, '');
+  const absolute = path.join(brandAssetDir, file);
+  assert.ok(fs.existsSync(absolute), id + ' brand artwork is missing');
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'), brandSources[id].sha256,
+    id + ' brand artwork changed without updating its provenance record');
+}
 
 for (const raw of ['@openma/deepseek-harness-acp 0.4.40', '@openma/deepseek-harness-acp@0.4.40', 'v0.4.40', '0.4.40']) {
   const agent = { key: 'runner:local:dsh', version: raw };
@@ -28,15 +42,24 @@ assert.equal(brand.version({ key: 'pi', version: '0.84.4' }), '0.84.4');
 const codex = brand.html('codex', { className: 'test-slot' });
 assert.match(codex, /agent-brand-codex/);
 assert.match(codex, /aria-label="Codex"/);
-assert.match(codex, />CX<\/span>/);
+assert.match(codex, /<img src="assets\/agent-brands\/codex\.svg"/);
 assert.match(codex, /test-slot/);
 
 for (const [id, mark] of Object.entries(brand.MONOGRAMS)) {
   const html = brand.html(id);
-  assert.ok(html.includes('>' + mark + '</span>'));
+  if (brand.ICONS[id]) {
+    assert.ok(html.includes('<img src="' + brand.ICONS[id] + '"'));
+    assert.match(html, /alt="" aria-hidden="true" draggable="false"/);
+  } else assert.ok(html.includes('>' + mark + '</span>'));
   assert.ok(html.includes('aria-label="' + brand.LABELS[id] + '"'));
-  assert.doesNotMatch(html, /<img|https?:|assets\//);
 }
+
+assert.match(fs.readFileSync(path.join(__dirname, '../components/panels/agent-brand.css'), 'utf8'),
+  /\.agent-brand>img\s*\{[^}]*object-fit:contain/,
+  'official marks must stay contained inside the shared shell');
+assert.match(fs.readFileSync(path.join(__dirname, '../components/panels/agent-brand.css'), 'utf8'),
+  /data-composer-theme="dark"[^}]*background:#f7f8fb/,
+  'dark chatbar keeps black official marks readable without recoloring them');
 
 const agents = fs.readFileSync(path.join(__dirname,
   '../components/panels/panels-agents.js'), 'utf8');

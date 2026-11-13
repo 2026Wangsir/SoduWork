@@ -13,7 +13,7 @@ const document = {
   createElementNS: (namespace, tag) => new Element(tag, namespace),
 };
 
-test('DOM and HTML consumers use the same built-in runtime identity without an image registry', () => {
+test('DOM and HTML consumers use the same local runtime artwork or monogram fallback', () => {
   for (const [id, mark] of Object.entries(brand.MONOGRAMS)) {
     const icon = brand.element({ key: 'runner:local:' + id }, { document, className: 'runtime-brand', id: 'current-runtime' });
     assert.equal(icon.attributes['data-agent-brand'], id);
@@ -23,10 +23,18 @@ test('DOM and HTML consumers use the same built-in runtime identity without an i
     assert.equal(icon.attributes.id, 'current-runtime');
     assert.equal(icon.attributes.class, brand.className(id, 'runtime-brand'));
     assert.equal(icon.children.length, 1);
-    assert.equal(icon.children[0].attributes.class, 'agent-monogram');
-    assert.equal(icon.children[0].attributes['aria-hidden'], 'true');
-    assert.equal(icon.children[0].textContent, mark);
-    assert.ok(brand.html(id).includes('>' + mark + '</span>'));
+    if (brand.ICONS[id]) {
+      assert.equal(icon.children[0].tag, 'img');
+      assert.equal(icon.children[0].attributes.src, brand.ICONS[id]);
+      assert.equal(icon.children[0].attributes.alt, '');
+      assert.equal(icon.children[0].attributes['aria-hidden'], 'true');
+      assert.ok(brand.html(id).includes('<img src="' + brand.ICONS[id] + '"'));
+    } else {
+      assert.equal(icon.children[0].attributes.class, 'agent-monogram');
+      assert.equal(icon.children[0].attributes['aria-hidden'], 'true');
+      assert.equal(icon.children[0].textContent, mark);
+      assert.ok(brand.html(id).includes('>' + mark + '</span>'));
+    }
   }
 });
 

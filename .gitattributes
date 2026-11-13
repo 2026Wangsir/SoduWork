@@ -6,6 +6,8 @@
 ops/soduworkctl text eol=lf
 *.service text eol=lf
 *.timer text eol=lf
+# Keep pinned Agent brand bytes identical on Windows and Unix checkouts.
+client/assets/agent-brands/*.svg text eol=lf
 # Preserve the exact pinned upstream license, including its final blank line.
 third-party/licenses/gradle-2.10-LICENSE.txt whitespace=-blank-at-eof
 # Preserve whitespace in the verified, unmodified upstream license snapshots.
