@@ -47,7 +47,7 @@ try{
  check('手动确认后只提交一次现有保存接口',await page.run(()=>calls.created.length===1&&calls.created[0].title==='每周交付回顾'));
  await click('#schNew');await click('[data-sch-create="chat"]');
  await page.waitFor(()=>document.querySelector('#cpInput')&&document.querySelector('.nplugin-chip.is-action'),null,5000);
- check('对话创建进入同一原有对话框并选好自动化',await page.run(()=>document.querySelector('#composePanel').classList.contains('show')&&document.querySelector('.nplugin-chip.is-action').textContent.includes('创建自动化')&&calls.routes.at(-1).payload.newSession===true));
+ check('Chat creation opens the shared composer with only the automation plugin selected',await page.run(()=>document.querySelector('#composePanel').classList.contains('show')&&document.querySelector('.nplugin-chip.is-action').textContent.includes('创建自动化')&&document.querySelector('#cpInput').value===''&&!Object.hasOwn(calls.routes.at(-1).payload,'prefill')&&calls.routes.at(-1).payload.newSession===true));
  check('对话入口不发消息不自动启动，关闭原自动化页面',await page.run(()=>calls.sent.length===0&&calls.created.length===1&&!document.querySelector('#schPanel').classList.contains('show')));
  await shot('automation-chat-entry.png');
  await fill('#cpInput','每天18:00整理今日工作进展、风险和明日计划，生成工作简报。');await click('#cpGo');

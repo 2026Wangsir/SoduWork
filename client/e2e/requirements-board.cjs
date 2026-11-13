@@ -286,9 +286,9 @@ app.whenReady().then(async()=>{
   await click('#rqCreateMenu [data-rq-create-chat]');await wait(80);
   assert.equal(await js('chatCreates.length'),1);
   assert.equal(await js('chatCreates[0].pluginId'),'work.requirement.create');
-  assert.equal(await js('chatCreates[0].prefill'),'/需求 ');
+  assert.equal(await js('Object.hasOwn(chatCreates[0],"prefill")'),false);
   assert.equal(await js('document.querySelector("#historyBoard").classList.contains("show")'),false);
-  report.checks.push('requirement creation offers a compact chat entry matching automation, preserves the slash action and closes the board before navigation');
+  report.checks.push('requirement chat creation selects only the requirement plugin and closes the board before navigation');
   await js('window.openCreateEntry=null;void 0;');
   await js('openTaskCenter();'); await wait(80);
   await click('#hbAddMenuToggle'); await key('ArrowDown');

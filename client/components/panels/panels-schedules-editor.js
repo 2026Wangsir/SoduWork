@@ -545,7 +545,7 @@ function _schOpenCreateMenu(index) {
 
 async function _schCreateFromChat() {
   const payload = {
-    tab: 'chat', newSession: true, pluginId: 'work.automation.create', prefill: '/自动化 ',
+    tab: 'chat', newSession: true, pluginId: 'work.automation.create',
     contextPrompts: ['当前从自动化页面进入。请整理用户希望重复执行的工作、执行时间和成果要求，起一个简短明确的自动化名称；缺少的信息先询问，确认配置后才创建，不立即执行工作。'],
   };
   const route = typeof openCreateEntry === 'function' ? openCreateEntry :
