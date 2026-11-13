@@ -359,6 +359,7 @@ export const api = {
   modelCatalog: () => call('GET', '/admin/model-catalog'),
   checkModelCapabilities: (body) => call('POST', '/admin/model-capabilities/check', body, 140000),
   saveModelProvider: (pid, b) => call('PUT', '/admin/model-providers/' + encodeURIComponent(pid), b),
+  discoverModels: (pid) => call('POST', '/admin/model-providers/' + encodeURIComponent(pid) + '/discover', {}, 30000),
   deleteModelProvider: (pid, revision) => call('DELETE', '/admin/model-providers/' + encodeURIComponent(pid) + '?expectedRevision=' + encodeURIComponent(revision)),
   saveModelDef: (b) => call('PUT', '/admin/model-defs', b),
   deleteModelDef: (mid, revision) => call('DELETE', '/admin/model-defs/' + encodeURIComponent(mid) + '?expectedRevision=' + encodeURIComponent(revision)),
