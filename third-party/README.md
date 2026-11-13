@@ -30,7 +30,7 @@ The MIT-CMU license requires the copyright and permission notices to be retained
 
 ## Outstanding binary-release work
 
-1. **proxy-agent-negotiate 1.1.0:** the exact npm release and tagged source declare MIT but omit the original full license notice. Obtain the original material or verify a replacement before binary distribution. Evidence is retained in `licenses/proxy-agent-negotiate-upstream-evidence.txt`. Pi 1.4.0 no longer includes the old native clipboard package.
+1. **proxy-agent-negotiate 1.1.0:** the exact npm release and tagged source declare MIT; the release owner reviewed and accepted that declaration for binary distribution. Evidence is retained in `licenses/proxy-agent-negotiate-upstream-evidence.txt`. Pi 1.4.0 no longer includes the old native clipboard package.
 2. **Windows shell corresponding source:** the version-specific acquisition checklist is documented in [windows-shell-corresponding-source.md](windows-shell-corresponding-source.md), currently in Chinese. Physically archive and verify source, patches, and build material for the exact PortableGit/MSYS2/Bash/7-Zip artifacts distributed. A checklist or upstream URL is not evidence that a particular release has completed this work.
 3. **Platform inventories:** `native-artifacts.json` is a static source-tree inventory. Final Windows, macOS, and Linux packages require per-artifact records and notices from their own builds.
 4. **Icons and trademarks:** record asset provenance and distribution terms separately from product names and trademark use. Compatibility names do not imply endorsement.

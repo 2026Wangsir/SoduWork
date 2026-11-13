@@ -10,7 +10,7 @@ Workflow documentation, release procedures, issue forms and the pull request tem
 
 Ordinary checks use read-only permissions, do not persist checkout credentials, and pin actions to reviewed commit SHAs. Branch pushes and pull requests run without release or production credentials. Release branch pushes and tags do not duplicate checks. See [GitHub's secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 
-`workflows/release.yml` provides manual source, Client and Hub pipelines with shared quality checks, immutable candidates and a reviewer gate. Only the final publication job receives write permission. Client and Hub publication runs only after the distribution scope, third-party release evidence and Client upgrade baselines pass preflight. See [release setup and boundaries](RELEASE.md).
+`workflows/release.yml` builds Client and Hub together (or a diagnostic component subset) with shared quality checks and immutable candidates. Only the final draft upload job receives write permission. It creates a Draft Release for internal testing and never publishes it automatically. Client and Hub publication runs only after the distribution scope, third-party release evidence and Client upgrade baselines pass preflight. See [release setup and boundaries](RELEASE.md).
 
 Dependabot proposes updates for GitHub Actions, both npm lockfiles, and backend pip requirements. Review dependency changes, license evidence and secret exceptions together. Ordinary PRs use Git's file inventory and do not maintain a source manifest. Source exports generate their own manifests from committed archive bytes; archive integrity tests remain part of CI.
 

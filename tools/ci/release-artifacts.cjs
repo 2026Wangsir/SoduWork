@@ -6,6 +6,7 @@ const { createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '../..');
 const dist = path.join(root, 'client/dist');
 const version = require('../../client/package.json').version;
+const { firstRelease } = require('./soduwork-acceptance-baselines.json');
 const read = async file => JSON.parse((await fs.readFile(file, 'utf8')).replace(/^\uFEFF/, ''));
 const write = async (file, value) => {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -68,7 +69,13 @@ function validateAcceptance(record, receipt) {
   assert.equal(receipt.sourceCommit, record.sourceCommit);
   assert.equal(receipt.pipelineId, record.pipelineId);
   assert.deepEqual(receipt.artifacts, record.artifacts, 'Acceptance tested other bytes');
-  const required = record.platform === 'windows' ? ['fresh-repair', 'soduwork-upgrade', 'compatibility']
+  // Only the committed, version-scoped release contract can omit the Windows
+  // upgrade gate. Receipt contents or a runtime baseline override cannot opt out.
+  const firstWindowsRelease = record.platform === 'windows' && typeof record.version === 'string' &&
+    record.version !== '' && record.version === firstRelease?.version &&
+    firstRelease?.excludedProduct === 'SoduWork Global' &&
+    Array.isArray(firstRelease.keys) && firstRelease.keys.includes('windows-x64-exe');
+  const required = record.platform === 'windows' ? ['fresh-repair', ...(firstWindowsRelease ? [] : ['soduwork-upgrade']), 'compatibility']
     : record.platform === 'linux' ? ['ubuntu22-deb', 'ubuntu24-deb', 'rocky9-rpm', 'ubuntu22-tgz']
       : record.artifacts.map(item => item.arch + '-' + item.format);
   assert.deepEqual(receipt.checks.map(item => item.name).sort(), required.sort());

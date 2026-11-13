@@ -27,6 +27,16 @@ class BuildTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.ctx = {'component': 'hub', 'version': '1.2.3', 'tag': 'v1.2.3', 'commit': 'a' * 40, 'runId': '123'}
 
+    def test_packaged_runner_requires_the_actual_bundled_pi_layout(self):
+        import runpy
+        helper = runpy.run_path(str(build.ROOT / 'hub-backend/scripts/check_packaged_runner_task.py'))['delivered_pi']
+        with self.assertRaisesRegex(AssertionError, 'Delivered Pi CLI is missing'):
+            helper(self.root)
+        cli = self.root / 'resources/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js'
+        cli.parent.mkdir(parents=True)
+        cli.write_text('// synthetic CLI')
+        self.assertEqual(helper(self.root), cli)
+
     def test_download_rejects_a_replaced_dependency(self):
         with patch.object(build.urllib.request, 'urlopen', return_value=io.BytesIO(b'replaced')):
             with self.assertRaisesRegex(ValueError, 'digest differs'):
@@ -67,16 +77,19 @@ class BuildTests(unittest.TestCase):
     def exercise_hub(self, fault=None):
         calls = []
         inspections = 0
+        restarted = False
         def docker(*args, **kwargs):
-            nonlocal inspections
+            nonlocal inspections, restarted
             calls.append(args)
             if args[:2] == ('image', 'inspect'):
                 inspections += 1
                 return 'sha256:' + ('b' if fault == 'export' and inspections == 2 else 'a') * 64
             if args[0] == 'inspect':
                 return 'sha256:' + 'a' * 64
+            if args[0] == 'restart':
+                restarted = True
             if args[0] == 'port':
-                return '127.0.0.1:12345'
+                return '127.0.0.1:23456' if restarted else '127.0.0.1:12345'
             if args[0] == 'exec' and args[2:4] in [('pi', '--version'), ('codex', '--version')]:
                 if fault == args[2]:
                     raise subprocess.CalledProcessError(127, args)
@@ -87,6 +100,7 @@ class BuildTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args)
             return ''
         def response(url, **kwargs):
+            self.assertTrue(url.startswith('http://127.0.0.1:23456/' if restarted else 'http://127.0.0.1:12345/'))
             if url.endswith('/readyz'):
                 return Response(b'{"ready":true}', 'application/json')
             if url.endswith('/healthz'):

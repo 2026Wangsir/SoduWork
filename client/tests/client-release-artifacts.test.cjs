@@ -60,19 +60,19 @@ test('only a declared source snapshot without either internal CI file skips comp
   assert.match(internalCiSkip(f.root), /Public source snapshot/);
 });
 
-function fixture(t) {
+function fixture(t, version = '9.9.1') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-release-artifacts-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const scripts = path.join(root, 'tools/ci'), dist = path.join(root, 'client/dist');
   fs.mkdirSync(scripts, { recursive: true }); fs.mkdirSync(dist, { recursive: true });
-  for (const name of ['release-artifacts.cjs', 'publish-client.cjs', 'merge-macos.cjs'])
+  for (const name of ['release-artifacts.cjs', 'publish-client.cjs', 'merge-macos.cjs', 'soduwork-acceptance-baselines.json'])
     fs.copyFileSync(path.join(repo, 'tools/ci', name), path.join(scripts, name));
-  fs.writeFileSync(path.join(root, 'client/package.json'), JSON.stringify({ version: '9.9.1', productName: 'SoduWork' }));
+  fs.writeFileSync(path.join(root, 'client/package.json'), JSON.stringify({ version, productName: 'SoduWork' }));
   const bytes = Buffer.alloc(1024 * 1024 + 7, 12);
   const names = {
-    windows: ['SoduWork-9.9.1-Setup.exe'],
-    linux: ['deb', 'rpm', 'tar.gz'].map(ext => 'SoduWork-9.9.1-linux.' + ext),
-    macos: ['arm64', 'x64'].map(arch => `SoduWork-9.9.1-mac-${arch}.dmg`),
+    windows: [`SoduWork-${version}-Setup.exe`],
+    linux: ['deb', 'rpm', 'tar.gz'].map(ext => `SoduWork-${version}-linux.${ext}`),
+    macos: ['arm64', 'x64'].map(arch => `SoduWork-${version}-mac-${arch}.dmg`),
   };
   for (const name of Object.values(names).flat()) fs.writeFileSync(path.join(dist, name), bytes);
   function execute(args, success = true) {
@@ -97,7 +97,13 @@ function fixture(t) {
       '.acceptance("macos",[{name:' + JSON.stringify(arch + '-dmg') + ',ok:true}],[], ' + JSON.stringify(arch) +
       ').catch(e=>{console.error(e);process.exitCode=1})']);
   }
-  return { root, dist, names, bytes, run, shard, merge: success => execute([path.join(scripts, 'merge-macos.cjs')], success) };
+  function acceptance(platform, checks, success = true) {
+    return execute(['-e', 'require(' + JSON.stringify(path.join(scripts, 'release-artifacts.cjs')) + ')' +
+      '.acceptance(' + JSON.stringify(platform) + ',' + JSON.stringify(checks) + ')' +
+      '.catch(e=>{console.error(e);process.exitCode=1})'], success);
+  }
+  return { root, dist, names, bytes, run, shard, acceptance,
+    merge: success => execute([path.join(scripts, 'merge-macos.cjs')], success) };
 }
 
 for (const platform of ['windows', 'linux', 'macos']) {
@@ -208,16 +214,67 @@ test('release jobs receive scoped production credentials only for preparation an
   for (const platform of ['windows', 'linux', 'macos']) assert.equal(config['accept:' + platform].environment, undefined);
 });
 
-test('Windows acceptance requires a SoduWork upgrade before an update can be enabled', () => {
-  const contract = require('../../tools/ci/release-artifacts.cjs');
-  const record = { platform: 'windows', sourceCommit: 'a'.repeat(40), pipelineId: '42', artifacts: [] };
-  const receipt = { schema: 1, kind: 'soduwork-native-install-acceptance', ok: true, ...record,
-    checks: ['fresh-repair', 'compatibility'].map(name => ({ name, ok: true })) };
-  assert.throws(() => contract.validateAcceptance(record, receipt));
-  receipt.checks.push({ name: 'previous-brand-upgrade', ok: true });
-  assert.throws(() => contract.validateAcceptance(record, receipt));
-  receipt.checks.at(-1).name = 'soduwork-upgrade';
-  assert.equal(contract.validateAcceptance(record, receipt), receipt);
-  receipt.checks.at(-1).ok = false;
-  assert.throws(() => contract.validateAcceptance(record, receipt));
+test('first Windows release writes a real receipt after fresh repair and compatibility checks', t => {
+  const f = fixture(t, '1.13.15');
+  f.run('inventory', 'windows');
+  const checks = [{ name: 'fresh-repair', ok: true, oldVersion: '1.13.15' }, { name: 'compatibility', ok: true }];
+  const receiptFile = path.join(f.root, 'release-evidence/windows/acceptance.json');
+  for (const incomplete of [checks.slice(0, 1), checks.slice(1),
+    [checks[0], { ...checks[1], ok: false }],
+    [...checks, { name: 'previous-brand-upgrade', ok: true }]]) {
+    f.acceptance('windows', incomplete, false);
+    assert.equal(fs.existsSync(receiptFile), false);
+  }
+  f.acceptance('windows', checks);
+  const record = JSON.parse(fs.readFileSync(path.join(f.dist, 'windows-build.json')));
+  const receipt = JSON.parse(fs.readFileSync(receiptFile));
+  assert.equal(receipt.ok, true);
+  assert.deepEqual(receipt.artifacts, record.artifacts);
+  assert.deepEqual(receipt.checks, checks);
 });
+
+test('Windows first-release exception requires the committed platform and product contract', t => {
+  const f = fixture(t, '1.13.15');
+  f.run('inventory', 'windows');
+  const file = path.join(f.root, 'tools/ci/soduwork-acceptance-baselines.json');
+  const baselines = JSON.parse(fs.readFileSync(file));
+  for (const firstRelease of [undefined,
+    { ...baselines.firstRelease, keys: ['macos-x64-dmg'] },
+    { ...baselines.firstRelease, excludedProduct: 'SoduWork' },
+    { ...baselines.firstRelease, version: '1.13.14' }]) {
+    fs.writeFileSync(file, JSON.stringify({ ...baselines, firstRelease }));
+    f.acceptance('windows', ['fresh-repair', 'compatibility'].map(name => ({ name, ok: true })), false);
+  }
+  assert.equal(fs.existsSync(path.join(f.root, 'release-evidence/windows/acceptance.json')), false);
+});
+
+for (const platform of ['linux', 'macos']) {
+  test(`first ${platform} release receipt accepts reinstall evidence without claiming an upgrade`, t => {
+    const f = fixture(t, '1.13.15');
+    f.run('inventory', platform);
+    const names = platform === 'linux' ? ['ubuntu22-deb', 'ubuntu24-deb', 'rocky9-rpm', 'ubuntu22-tgz']
+      : ['arm64-dmg', 'x64-dmg'];
+    const checks = names.map(name => ({ name, ok: true, reinstalled: true, upgraded: false, oldVersion: '',
+      ...(platform === 'macos' ? { freshInstalled: true, restarted: true, uninstalled: true, userDataPreserved: true } : {}) }));
+    f.acceptance(platform, checks);
+    const receipt = JSON.parse(fs.readFileSync(path.join(f.root, 'release-evidence', platform, 'acceptance.json')));
+    assert.deepEqual(receipt.checks, checks);
+    assert.equal(receipt.ok, true);
+  });
+}
+
+for (const version of [undefined, '1.13.14', '1.13.16', '9.9.1']) {
+  test(`Windows acceptance ${version ?? 'without a version'} requires a SoduWork upgrade`, () => {
+    const contract = require('../../tools/ci/release-artifacts.cjs');
+    const record = { platform: 'windows', version, sourceCommit: 'a'.repeat(40), pipelineId: '42', artifacts: [] };
+    const receipt = { schema: 1, kind: 'soduwork-native-install-acceptance', ok: true, ...record,
+      checks: ['fresh-repair', 'compatibility'].map(name => ({ name, ok: true })) };
+    assert.throws(() => contract.validateAcceptance(record, receipt));
+    receipt.checks.push({ name: 'previous-brand-upgrade', ok: true });
+    assert.throws(() => contract.validateAcceptance(record, receipt));
+    receipt.checks.at(-1).name = 'soduwork-upgrade';
+    assert.equal(contract.validateAcceptance(record, receipt), receipt);
+    receipt.checks.at(-1).ok = false;
+    assert.throws(() => contract.validateAcceptance(record, receipt));
+  });
+}

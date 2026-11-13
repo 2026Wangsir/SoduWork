@@ -42,6 +42,7 @@ async function cachedBaseline(output, digest, directory, download) {
 async function run(file, args, options = {}) {
   const { log, timeout = 15 * 60 * 1000, ...rest } = options;
   const sink = log ? createWriteStream(log, { flags: 'a' }) : null;
+  let failed = false;
   try {
     return await new Promise((resolve, reject) => {
       const child = spawn(file, args, { windowsHide: true, ...rest });
@@ -56,12 +57,32 @@ async function run(file, args, options = {}) {
       child.stdout.on('data', bytes => { if (!log) stdout += bytes; if (sink) sink.write(bytes); else process.stdout.write(bytes); });
       child.stderr.on('data', bytes => { if (sink) sink.write(bytes); else process.stderr.write(bytes); });
       child.once('error', error => { clearTimeout(timer); reject(error); });
-      child.once('close', code => {
+      child.once('close', (code, signal) => {
         clearTimeout(timer);
-        code === 0 ? resolve(stdout.trim()) : reject(Error(`${path.basename(file)} exited ${code}; see ${log || 'job log'}`));
+        code === 0 ? resolve(stdout.trim()) : reject(Object.assign(Error(`${path.basename(file)} exited ${code}; see ${log || 'job log'}`), { exitCode: code, signal }));
       });
     });
-  } finally { if (sink) await new Promise(resolve => sink.end(resolve)); }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (sink) {
+      await new Promise(resolve => sink.end(resolve));
+      if (failed) {
+        // Preserve the child failure in the job log as well as its artifact.
+        // Read only a bounded tail, even for verbose installer output.
+        try {
+          const file = await fs.open(log, 'r');
+          try {
+            const { size } = await file.stat();
+            const buffer = Buffer.alloc(Math.min(size, 16384));
+            const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+            process.stderr.write(buffer.subarray(0, bytesRead));
+          } finally { await file.close(); }
+        } catch (error) { console.error('Cannot read acceptance diagnostics:', error.message); }
+      }
+    }
+  }
 }
 async function baseline(key, directory, { file = process.env.SODUWORK_ACCEPT_BASELINES_FILE, productName,
   candidateVersion = require('../../client/package.json').version,
@@ -69,6 +90,11 @@ async function baseline(key, directory, { file = process.env.SODUWORK_ACCEPT_BAS
     path.join(require('node:os').homedir(), '.cache/soduwork-ci/downloads') : null) } = {}) {
   assert.ok(file, 'Configure a baseline file with pinned old installers');
   const config = await contract.read(file);
+  const first = config.firstRelease;
+  if (productName === 'SoduWork' && first?.version === candidateVersion &&
+      first.excludedProduct === 'SoduWork Global' &&
+      ['windows-x64-exe', 'linux-x64-deb', 'linux-x64-rpm', 'linux-x64-tar.gz',
+        'macos-arm64-dmg', 'macos-x64-dmg'].includes(key) && first.keys?.includes(key)) return null;
   const item = config[key];
   assert.ok(item && /^\d+\.\d+\.\d+$/.test(item.version), 'Missing baseline: ' + key);
   assertUpgradeVersion(item.version, candidateVersion);

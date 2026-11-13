@@ -159,3 +159,36 @@ test('legacy exemptions reject altered bytes, wrong paths, other products and ca
     assert.deepEqual(f.calls, [], 'invalid exemption must fail before mounting or executing bundle tools');
   }
 });
+
+test('notary validation retries only transient exit 68 on the same installed app', async () => {
+  const { validateNotarization } = require('../../tools/ci/accept-macos.cjs');
+  const calls = [], sleeps = [];
+  await validateNotarization('/fixture/SoduWork.app', {
+    execute: async (...args) => {
+      calls.push(args);
+      if (calls.length < 3) throw Object.assign(Error('CloudKit network lost'), { exitCode: 68 });
+    },
+    sleep: async ms => sleeps.push(ms),
+  });
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(row => JSON.stringify(row) === JSON.stringify(['xcrun', ['stapler', 'validate', '/fixture/SoduWork.app']])));
+  assert.deepEqual(sleeps, [10000, 20000]);
+  for (const exitCode of [68, 65, undefined]) {
+    let count = 0;
+    const failure = Object.assign(Error('not validated'), { exitCode });
+    await assert.rejects(validateNotarization('/fixture/app', {
+      execute: async () => { count++; throw failure; }, sleep: async () => {},
+    }), error => error === failure);
+    assert.equal(count, exitCode === 68 ? 4 : 1);
+  }
+});
+
+test('acceptance subprocess errors retain the numeric exit status for retry decisions', async () => {
+  const { run } = require('../../tools/ci/acceptance-common.cjs');
+  await assert.rejects(run(process.execPath, ['-e', 'process.exit(68)']), error => {
+    assert.equal(error.exitCode, 68);
+    assert.equal(error.signal, null);
+    assert.match(error.message, /exited 68/);
+    return true;
+  });
+});

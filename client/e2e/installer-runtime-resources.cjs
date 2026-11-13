@@ -6,11 +6,11 @@ const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function main(){
   const candidateFile=path.resolve(process.argv[2]),work=path.dirname(candidateFile),candidate=JSON.parse(fs.readFileSync(candidateFile));
   const result=JSON.parse(fs.readFileSync(path.join(work,'payload-result.json'))),root=result.extracted;
-  const executable=require('../scripts/installed-distribution.cjs').installedDistribution(root).windowsExecutableName+'.exe';
+  const executable=require('../main/distribution.cjs').current().windowsExecutableName+'.exe';
   assert.equal(candidate.payloadVerified,true);assert.equal(path.dirname(root),require('node:os').tmpdir());assert.ok(path.basename(root).startsWith('soduwork-package-check-'));
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'.soduwork-payload.json')));
-  const legacy=require('./fixtures/installer-runtime-resource-paths.json');assert.equal(legacy.length,66);
-  const names=legacy.filter(name=>!name.startsWith('resources/runner/_internal/'));assert.equal(names.length,61);
+  const legacy=require('./fixtures/installer-runtime-resource-paths.json');assert.equal(legacy.length,64);
+  const names=legacy.filter(name=>!name.startsWith('resources/runner/_internal/'));assert.equal(names.length,60);
   assert.equal(fs.existsSync(path.join(root,'resources/runner/_internal')),false,'Python bootstrap is embedded in the executable');
   const original=new Map();
   for(const name of names){const item=manifest.files.find(x=>x.path===name);assert.ok(item,name);const bytes=fs.readFileSync(path.join(root,name));assert.equal(bytes.length,item.size,name);assert.equal(sha(bytes),item.sha256,name);original.set(name,bytes);}
@@ -31,6 +31,6 @@ function main(){
     assert.ok(compatible.staticTextDifferences.every(x=>x.sourceSha256===x.expectedSha256));
   }finally{for(const [name,bytes] of original){fs.writeFileSync(path.join(root,name),bytes);assert.equal(sha(fs.readFileSync(path.join(root,name))),sha(bytes));}}
   fs.writeFileSync(path.join(work,'runtime-resource-regression.json'),JSON.stringify({ok:true,version:candidate.version,installerSha256:candidate.sha256,extractionMethod:result.extractionMethod,filesVerified:manifest.files.length,customerPathsVerified:legacy.length,externalTextPathsVerified:names.length,embeddedRunnerResources:legacy.length-names.length,installationTextDifferences:compatible.staticTextDifferences.length,runnerHelpExit:runtime.status,runnerStarted:true,allRuntimeMutationsRejected:rejected.errorCount,restored:true,limitation:'Process-scoped corporate filesystem filter not available locally; customer environment still requires confirmation.'},null,2));
-  console.log('PASS: Runner bootstrap is embedded, delivered Runner boots, all 61 external text changes are rejected in strict mode and source-verified in installation mode.');
+  console.log('PASS: Runner bootstrap is embedded, delivered Runner boots, all 60 external text changes are rejected in strict mode and source-verified in installation mode.');
 }
 try{main();}catch(error){console.error(error);process.exitCode=1;}

@@ -15,7 +15,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
 SHARDS = {"source": ["source"], "hub": ["hub"],
-          "client": ["windows", "linux", "macos-arm64", "macos-x64", "android"]}
+          "client": ["windows", "linux", "macos-arm64", "macos-x64"],
+          "all": ["windows", "linux", "macos-arm64", "macos-x64", "hub"]}
 
 
 def read(file):
@@ -40,20 +41,22 @@ def context(env=None):
     repo = env.get("GITHUB_REPOSITORY", "")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo), "Invalid repository")
     require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "Release requires workflow_dispatch")
-    require(env.get("GITHUB_REF") == f"refs/heads/release/{component}-{version}", "Use the matching release branch")
+    require(env.get("GITHUB_REF") == f"refs/heads/release/{version}", "Use the matching unified release branch")
     require(env.get("GITHUB_REF_PROTECTED") == "true", "Release branch must be protected")
     require(env.get("PUBLIC_RELEASE_REPOSITORY") == repo, "Configure PUBLIC_RELEASE_REPOSITORY explicitly")
     sha, run = env.get("GITHUB_SHA", ""), env.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[a-f0-9]{40}", sha) and re.fullmatch(r"[1-9]\d*", run), "Missing GitHub identity")
     return dict(schema=1, component=component, version=version, repository=repo,
-                commit=sha, runId=run, tag=f"{component}-v{version}")
+                commit=sha, runId=run, tag=f"v{version}")
 
 
-def api(route, optional=False):
+def api(route, optional=False, *, payload=None):
     require(os.environ.get("GITHUB_API_URL") == "https://api.github.com", "Public GitHub API required")
     request = urllib.request.Request("https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + route,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
         headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
-                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                 **({"Content-Type": "application/json"} if payload is not None else {})})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
@@ -63,8 +66,17 @@ def api(route, optional=False):
         raise RuntimeError(f"GitHub API {route}: HTTP {error.code}") from None
 
 
+def first_release(ctx, key, baselines):
+    contract = baselines.get("firstRelease", {})
+    return (ctx["version"] == contract.get("version")
+            and key in ("windows-x64-exe", "linux-x64-deb", "linux-x64-rpm", "linux-x64-tar.gz",
+                        "macos-arm64-dmg", "macos-x64-dmg")
+            and key in contract.get("keys", [])
+            and contract.get("excludedProduct") == "SoduWork Global")
+
+
 def policy(ctx, root=ROOT):
-    if ctx["component"] == "client":
+    if ctx["component"] in ("client", "all"):
         versions = [read(root / "client/package.json")["version"], read(root / "client/version.json")["version"],
                     read(root / "client/package-lock.json")["version"],
                     read(root / "client/package-lock.json")["packages"][""]["version"]]
@@ -74,9 +86,11 @@ def policy(ctx, root=ROOT):
         review = read(root / "third-party/public-release.json")
         require(profile.get("sourceOnly") is False, "Binary publication blocked: source-only release scope")
         require(review.get("schema") == 1 and review.get("pending") == [], "Binary publication blocked: pending third-party review")
-    if ctx["component"] == "client":
+    if ctx["component"] in ("client", "all"):
         baselines = read(root / "tools/ci/soduwork-acceptance-baselines.json")
         for key in ["windows-x64-exe", "linux-x64-deb", "linux-x64-rpm", "linux-x64-tar.gz", "macos-arm64-dmg", "macos-x64-dmg"]:
+            if first_release(ctx, key, baselines):
+                continue
             item = baselines.get(key, {})
             require(item.get("productName") == "SoduWork" and re.fullmatch(VERSION, item.get("version", "")), "Missing public upgrade baseline: " + key)
             require(tuple(map(int, item["version"].split("."))) < tuple(map(int, ctx["version"].split("."))), "Baseline must be older")
@@ -93,7 +107,7 @@ def preflight(ctx):
     environment = api("/environments/public-release")
     require(any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
                 for rule in environment.get("protection_rules", [])), "Configure required reviewers on public-release")
-    require(api("/git/ref/heads/release/" + ctx["component"] + "-" + ctx["version"])["object"]["sha"] == ctx["commit"], "Release branch moved")
+    require(api("/git/ref/heads/release/" + ctx["version"])["object"]["sha"] == ctx["commit"], "Release branch moved")
 
 
 def fingerprint(file):
@@ -111,8 +125,7 @@ def expected(ctx, shard):
     stem = "SoduWork-" + ctx["version"]
     return {"source": [stem + "-source.zip"], "hub": [stem + "-hub-image.tar.gz"],
             "windows": [stem + "-Setup.exe"], "linux": [stem + "-linux." + ext for ext in ["deb", "rpm", "tar.gz"]],
-            "macos-arm64": [stem + "-mac-arm64.dmg"], "macos-x64": [stem + "-mac-x64.dmg"],
-            "android": [stem + "-android.apk"]}[shard]
+            "macos-arm64": [stem + "-mac-arm64.dmg"], "macos-x64": [stem + "-mac-x64.dmg"]}[shard]
 
 
 def seal(ctx, shard, folder, checks):
@@ -177,19 +190,49 @@ def gh(*args):
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
-def publish(ctx, folder):
+def find_release_by_tag(tag):
+    # The tag endpoint only finds published releases. Authenticated listing also
+    # includes drafts whose pending tag has not been created yet.
+    found, page = None, 1
+    while True:
+        releases = api(f"/releases?per_page=100&page={page}")
+        for item in releases:
+            if item.get("tag_name") == tag:
+                require(found is None, "Multiple Releases use the requested tag")
+                found = item
+        if len(releases) < 100:
+            return found
+        page += 1
+
+
+def draft(ctx, folder):
     manifest = verify(ctx, folder)
-    authorize(ctx)
-    existing = api("/releases/tags/" + ctx["tag"], optional=True)
+    preflight(ctx)
+    # A draft can precede the formal tag; an existing tag must match.
+    if api("/git/ref/tags/" + ctx["tag"], optional=True):
+        authorize(ctx)
+    existing = find_release_by_tag(ctx["tag"])
     marker = f"Candidate: {ctx['repository']} / run {ctx['runId']} / {ctx['commit']}"
     if existing:
+        require(existing.get("draft") is True, "Refusing to modify a public Release")
         require(marker in existing.get("body", ""), "Release belongs to another candidate; refusing overwrite")
     else:
-        gh("release", "create", ctx["tag"], "--repo", ctx["repository"], "--verify-tag", "--draft",
-           "--title", "SoduWork " + ctx["component"] + " " + ctx["version"],
-           "--notes", marker + "\n\nSee release-manifest.json for checksums and acceptance scope.")
+        # The list endpoint may not expose a newly created draft immediately.
+        # Keep the identity returned by creation instead of rediscovering it.
+        existing = api("/releases", payload={
+            "tag_name": ctx["tag"], "target_commitish": ctx["commit"], "draft": True,
+            "name": "SoduWork " + ("Client + Hub" if ctx["component"] == "all" else ctx["component"]) + " " + ctx["version"],
+            "body": marker + "\n\nDraft for internal testing only. See release-manifest.json for checksums and acceptance scope.",
+        })
+    require(isinstance(existing, dict) and type(existing.get("id")) is int and existing["id"] > 0,
+            "Draft Release response has no valid ID")
+    release_route = "/releases/" + str(existing["id"])
     # Never overwrite an asset: a retry downloads and compares assets already uploaded.
-    existing = api("/releases/tags/" + ctx["tag"])
+    existing = api(release_route)
+    require(existing.get("tag_name") == ctx["tag"], "Release tag changed")
+    require(existing.get("draft") is True, "Refusing to modify a public Release")
+    require(marker in existing.get("body", ""), "Release belongs to another candidate; refusing overwrite")
+    require(existing.get("target_commitish") == ctx["commit"], "Draft target must identify the accepted commit")
     actual_names = {a["name"] for a in existing["assets"]}
     desired = {a["name"] for a in manifest["assets"]} | {"release-manifest.json"}
     require(actual_names <= desired, "Unexpected assets on existing Release")
@@ -200,25 +243,14 @@ def publish(ctx, folder):
                 gh("release", "upload", ctx["tag"], str(folder / name), "--repo", ctx["repository"])
             gh("release", "download", ctx["tag"], "--repo", ctx["repository"], "--pattern", name, "--dir", scratch)
             require(fingerprint(Path(scratch) / name) == fingerprint(folder / name), "Uploaded asset differs: " + name)
-    if existing["draft"]:
-        gh("release", "edit", ctx["tag"], "--repo", ctx["repository"], "--draft=false", "--latest=false")
-    # Verify anonymous public availability, including the complete byte stream.
-    published = api("/releases/tags/" + ctx["tag"])
-    require(not published["draft"], "Release is still a draft")
-    require({a["name"] for a in published["assets"]} == desired, "Published assets differ")
-    with tempfile.TemporaryDirectory() as scratch:
-        for asset in published["assets"]:
-            with urllib.request.urlopen(asset["browser_download_url"], timeout=120) as response:
-                target = Path(scratch) / asset["name"]
-                with target.open("wb") as stream:
-                    import shutil
-                    shutil.copyfileobj(response, stream)
-            require(fingerprint(target) == fingerprint(folder / asset["name"]), "Public download mismatch")
+    saved = api(release_route)
+    require(saved["draft"] is True, "Release must remain a draft")
+    require({a["name"] for a in saved["assets"]} == desired, "Draft assets differ")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["preflight", "candidate", "verify", "publish"])
+    parser.add_argument("command", choices=["preflight", "candidate", "verify", "draft"])
     parser.add_argument("--folder", type=Path)
     args = parser.parse_args()
     ctx = context()

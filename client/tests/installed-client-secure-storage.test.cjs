@@ -77,6 +77,7 @@ test('Linux acceptance rejects plaintext and unknown backends even when encrypti
   const written = processProbe(f.profile, 'write', key, true, 'linux', 'gnome_libsecret');
   const read = processProbe(f.profile, 'read', key, true, 'linux', 'gnome_libsecret');
   assert.equal(written.backend, 'gnome_libsecret');
+  assert.equal(read.roundTrip, true);
   assert.equal(read.ciphertextSha256, written.ciphertextSha256);
 });
 

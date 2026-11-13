@@ -77,3 +77,22 @@ test('installer afterSign forwards bounded and captured keychain command options
   assert.deepEqual({ ...calls[0][2] }, capture);
   assert.deepEqual({ ...calls[1][2] }, { stdio: 'inherit' });
 });
+
+test('stapling retries network error 68 on the same bytes, bounded and fail closed', () => {
+  const { stapleArtifact } = require('../scripts/notarize-macos.cjs');
+  const calls = [], waits = [];
+  stapleArtifact('/fixture/app', (...args) => {
+    calls.push(args);
+    if (calls.length < 3) throw Object.assign(Error('network'), { status: 68 });
+  }, ms => waits.push(ms));
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(call => JSON.stringify(call) === JSON.stringify(calls[0])));
+  assert.deepEqual(waits, [10000, 20000]);
+  for (const status of [65, 68]) {
+    let attempts = 0;
+    assert.throws(() => stapleArtifact('/fixture/app', () => {
+      attempts++; throw Object.assign(Error('failure'), { status });
+    }, () => {}), /failure/);
+    assert.equal(attempts, status === 68 ? 4 : 1);
+  }
+});

@@ -86,6 +86,7 @@ smoke() {
     XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/home/acceptance/.runtime \
     XDG_CONFIG_HOME=/home/acceptance/.config XDG_DATA_HOME=/home/acceptance/.local/share \
     dbus-run-session -- bash -euc '
+      mkdir -p "$XDG_DATA_HOME/keyrings"
       control=$(mktemp -d "$XDG_RUNTIME_DIR/keyring.XXXXXX")
       gnome-keyring-daemon --daemonize --unlock --components=secrets --control-directory="$control" \
         < /home/acceptance/.keyring-password > /dev/null
@@ -110,16 +111,28 @@ elif [ "$kind" = rpm ]; then rpm -e soduwork
 else rm -rf -- "$app"; fi
 test ! -e "$app/soduwork"
 test "$(cat "$profile/acceptance-sentinel.txt")" = preserve-install-acceptance-data
-profile=/home/acceptance/soduwork-acceptance-profile-upgrade
-runuser -u acceptance -- mkdir "$profile"
-if [ "$kind" = deb ]; then dpkg -i "$old_package"; app=/opt/SoduWork
-elif [ "$kind" = rpm ]; then rpm -i "$old_package"; app=/opt/SoduWork
-else tar -xzf "$old_package" -C /opt/acceptance; app=/opt/acceptance/SoduWork-$old_version-linux; fi
-smoke old "$old_version" write
-if [ "$kind" = deb ]; then dpkg -i --force-confnew "$package"; app=/opt/SoduWork
-elif [ "$kind" = rpm ]; then rpm -U "$package"; app=/opt/SoduWork
-else tar -xzf "$package" -C /opt/acceptance; rm -rf -- "$app"; app=/opt/acceptance/$archive_root; fi
-smoke upgraded "$version" read
+upgraded=false
+reinstalled=true
+accepted_old_version=
+if [ "$old_package" != - ]; then
+  upgraded=true
+  reinstalled=false
+  accepted_old_version=$old_version
+  profile=/home/acceptance/soduwork-acceptance-profile-upgrade
+  runuser -u acceptance -- mkdir "$profile"
+  if [ "$kind" = deb ]; then dpkg -i "$old_package"; app=/opt/SoduWork
+  elif [ "$kind" = rpm ]; then rpm -i "$old_package"; app=/opt/SoduWork
+  else tar -xzf "$old_package" -C /opt/acceptance; app=/opt/acceptance/SoduWork-$old_version-linux; fi
+  smoke old "$old_version" write
+  if [ "$kind" = deb ]; then dpkg -i --force-confnew "$package"; app=/opt/SoduWork
+  elif [ "$kind" = rpm ]; then rpm -U "$package"; app=/opt/SoduWork
+  else tar -xzf "$package" -C /opt/acceptance; rm -rf -- "$app"; app=/opt/acceptance/$archive_root; fi
+else
+  if [ "$kind" = deb ]; then dpkg -i "$package"; app=/opt/SoduWork
+  elif [ "$kind" = rpm ]; then rpm -i "$package"; app=/opt/SoduWork
+  else tar -xzf "$package" -C /opt/acceptance; app=/opt/acceptance/$archive_root; fi
+fi
+smoke restored "$version" read
 if [ "$kind" = deb ]; then apt-get remove -y soduwork
 elif [ "$kind" = rpm ]; then rpm -e soduwork
 else rm -rf -- "$app"; fi
@@ -134,5 +147,5 @@ if [ "$kind" != tgz ]; then
   test -s /evidence/installed-credential-provider.txt
   dependency_verified=true
 fi
-printf '{"ok":true,"version":"%s","oldVersion":"%s","upgraded":true,"nodeShimExecutable":true,"credentialProviderDependencyVerified":%s,"upgradeDependencyResolutionVerified":false}\n' \
-  "$version" "$old_version" "$dependency_verified" > /evidence/result.json
+printf '{"ok":true,"version":"%s","oldVersion":"%s","upgraded":%s,"reinstalled":%s,"nodeShimExecutable":true,"credentialProviderDependencyVerified":%s,"upgradeDependencyResolutionVerified":false}\n' \
+  "$version" "$accepted_old_version" "$upgraded" "$reinstalled" "$dependency_verified" > /evidence/result.json

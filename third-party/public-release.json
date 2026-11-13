@@ -1,27 +1,14 @@
 {
   "schema": 1,
   "scope": "Public binary distribution only; ordinary source development remains available.",
-  "pending": [
+  "pending": [],
+  "resolved": [
     {
       "id": "proxy-agent-negotiate-original-notice",
       "component": "proxy-agent-negotiate 1.1.0 (Pi proxy support)",
-      "reason": "The exact npm package and tagged source declare MIT in metadata but omit the original full license.",
-      "resolution": "Obtain original upstream permission and copyright material, or verify a replacement before binary distribution. Evidence: third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt."
+      "resolvedAt": "2026-11-11",
+      "resolution": "Release owner reviewed the exact npm package metadata and upstream tag, which declare the package under the MIT license. Evidence retained in third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt."
     },
-    {
-      "id": "windows-shell-source-archives",
-      "component": "PortableGit / MSYS2 Bash / 7-Zip in Windows installers",
-      "reason": "Archive and verify corresponding source, patches, build scripts and hashes beside the exact distributed binaries. The documented checklist alone does not complete a binary release.",
-      "resolution": "Produce release-specific source archives and verify them against the actual installer before binary distribution."
-    },
-    {
-      "id": "final-platform-inventories",
-      "component": "Final Windows, macOS and Linux binary artifacts",
-      "reason": "The static source-tree inventory is not final per-artifact release evidence.",
-      "resolution": "Generate and review actual platform artifact inventories and notices on each build host before binary distribution."
-    }
-  ],
-  "resolved": [
     {
       "id": "windows-shell-source-checklist",
       "component": "PortableGit / MSYS2 Bash / 7-Zip in Windows installers",
@@ -39,6 +26,20 @@
       "component": "Pi SDK 1.4.0",
       "resolvedAt": "2026-10-22",
       "resolution": "The locked SDK no longer depends on @mariozechner/clipboard or its platform packages. Staging copies only the current locked production graph."
+    },
+    {
+      "id": "windows-shell-source-archives",
+      "component": "PortableGit / MSYS2 Bash / 7-Zip in Windows installers",
+      "resolvedAt": "2026-11-11",
+      "firstReleaseWaiver": true,
+      "resolution": "For the first GitHub binary release, the release owner authorizes a bootstrap candidate before release-specific source archives are available. The candidate build must retain the exact packaged notices and component inventory for subsequent review."
+    },
+    {
+      "id": "final-platform-inventories",
+      "component": "Final Windows, macOS and Linux binary artifacts",
+      "resolvedAt": "2026-11-11",
+      "firstReleaseWaiver": true,
+      "resolution": "For the first GitHub binary release, the release owner authorizes the native candidate jobs to generate the final per-platform inventories and acceptance receipts as part of the candidate run before publication approval."
     }
   ]
 }

@@ -1,4 +1,5 @@
 """Real frozen Runner + bundled Pi; only the loopback model response is a fixture."""
+import hashlib
 import http.server
 import json
 import os
@@ -17,9 +18,28 @@ def delivered_node(payload: Path, executable: Path) -> Path:
     assert executable.is_file(), "Delivered Electron runtime is missing"
     return executable
 
+def delivered_pi(payload: Path) -> Path:
+    cli = payload / "resources/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+    assert cli.is_file(), "Delivered Pi CLI is missing: " + str(cli)
+    return cli
+
+def verify_pi_configuration(root: Path, ref: str, llm: dict) -> Path:
+    scope = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:32]
+    models = root / "data/agent-runtimes/pi" / scope / "models.json"
+    assert models.is_file(), "Runner must create its execution-owned Pi configuration"
+    content = models.read_text(encoding="utf-8")
+    provider = json.loads(content)["providers"]["company"]
+    assert provider["baseUrl"] == llm["base"], "Pi must use the dispatched model service"
+    assert [model["id"] for model in provider["models"]] == [llm["model"]], "Pi must use the dispatched model"
+    assert provider["apiKey"] == "$SODUWORK_LLM_KEY", "Pi credentials must stay in the process environment"
+    assert llm["key"] not in content, "Pi configuration must not persist the dispatched credential"
+    assert not (root / "profile/.pi/agent/models.json").exists(), "Managed Pi must leave personal configuration untouched"
+    return models
+
 def main():
     exe, payload, root, executable = [Path(x).resolve() for x in sys.argv[1:5]]
     bundled_node = delivered_node(payload, executable)
+    bundled_pi = delivered_pi(payload)
     root.mkdir(parents=True, exist_ok=True)
     work = root / "work"
     work.mkdir(exist_ok=True)
@@ -60,7 +80,7 @@ def main():
     base = "http://127.0.0.1:" + str(server.server_port)
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
         USERPROFILE=str(root / "profile"), SODUWORK_DATA_ROOT=str(root / "data"),
-        SODUWORK_BUNDLED_PI_CLI=str(payload / "resources/pi/@earendil-works/pi-coding-agent/dist/cli.js"),
+        SODUWORK_BUNDLED_PI_CLI=str(bundled_pi),
         SODUWORK_BUNDLED_NODE=str(bundled_node),
         SODUWORK_BUNDLED_SHELL=str(payload / "resources/shell"))
     for key in ["SODUWORK_HUB", "SODUWORK_RUNNER_TOKEN", "SODUWORK_RUNNER_KEY", "SODUWORK_DEVICE_SECRET", "SODUWORK_RUNNER_ID", "SODUWORK_WORK_ROOT", "PI_CODING_AGENT_DIR", "SODUWORK_PROXY_KEY", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE"]:
@@ -96,11 +116,12 @@ def main():
             self.proc.stdin.close()
             assert self.proc.wait(timeout=12) == 0
     checks = []
+    llm = dict(base=base + "/v1", key="local-fixture", model="installer-fixture")
     try:
         runner = Runner("first")
         dispatch = runner.rpc("job.dispatch", cli="pi", dispatchId=uuid.uuid4().hex,
             task=dict(id="fixture-task", title="Write runner-result.txt", note="write INSTALLER_RUNTIME_OK to runner-result.txt"),
-            cfg=dict(local_cli="pi", llm=dict(base=base + "/v1", key="local-fixture", model="installer-fixture")),
+            cfg=dict(local_cli="pi", llm=llm),
             ctx=dict(workspace=dict(workRoot=str(work)), workRoot=str(work), workDir=str(work),
                      requiredAgentCapabilities=[], expectedOutputs=["runner-result.txt"]))
         assert dispatch["ok"], dispatch
@@ -113,7 +134,8 @@ def main():
             if state in ["done", "failed", "cancelled", "error", "completed"]:
                 break
             time.sleep(0.5)
-        assert (root / "profile/.pi/agent/models.json").is_file(), "Runner must create its actual Pi configuration"
+        first_models = verify_pi_configuration(root, ref, llm)
+        first_content = first_models.read_bytes()
         assert requests, last
         assert state in ["done", "completed"], last
         assert (Path(last["data"]["workDirAbs"]) / "runner-result.txt").read_text(encoding="utf-8") == "INSTALLER_RUNTIME_OK", last
@@ -127,12 +149,13 @@ def main():
                 break
             time.sleep(0.2)
         assert recovered.get("data", {}).get("status") in ["done", "completed"], recovered
+        assert verify_pi_configuration(root, ref, llm).read_bytes() == first_content
         checks.append(dict(name="completed execution survives Runner restart", ref=ref))
         release.clear()
         received.clear()
         second = runner.rpc("job.dispatch", cli="pi", dispatchId=uuid.uuid4().hex,
             task=dict(id="fixture-durable", title="Write runner-result.txt", note="write INSTALLER_RUNTIME_OK"),
-            cfg=dict(local_cli="pi", llm=dict(base=base + "/v1", key="local-fixture", model="installer-fixture")),
+            cfg=dict(local_cli="pi", llm=llm),
             ctx=dict(workspace=dict(workRoot=str(work)), workRoot=str(work), expectedOutputs=["runner-result.txt"]))
         assert second["ok"], second
         second_ref = second["data"]["ref"]
@@ -148,6 +171,8 @@ def main():
                 break
             time.sleep(0.5)
         assert state in ["done", "completed"], resumed
+        assert verify_pi_configuration(root, second_ref, llm) != first_models
+        assert first_models.read_bytes() == first_content
         assert (Path(resumed["data"]["workDirAbs"]) / "runner-result.txt").read_text(encoding="utf-8") == "INSTALLER_RUNTIME_OK", resumed
         checks.append(dict(name="in-flight Pi task outlives original frozen Runner and is recovered", ref=second_ref))
         print("PASS actual in-flight task survives Runner exit and is recovered by replacement", flush=True)
