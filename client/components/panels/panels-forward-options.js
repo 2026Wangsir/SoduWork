@@ -266,7 +266,9 @@ async function _fwdLoadLocalAgents(tid, task, box, seq) {
     if (current()) _fwdLocalFailures = result?.failures || [];
   } catch (_) { /* The Hub directory remains usable when local detection fails. */ }
   if (!current()) return;
-  _fwdMergeLocalModelChoices(await localModels);
+  const modelRows = await localModels;
+  if (!current()) return;
+  _fwdMergeLocalModelChoices(modelRows);
   _fwdLocalLoading = false;
   if (document.getElementById('fwdConfirm')?.dataset.idleLabel == null) paint();
   else _fwdLocalPaintPending = true;
@@ -314,7 +316,14 @@ async function _loadMateList(tid) {
 function _fwdChoose(tid, choice) {
   if (document.getElementById('fwdConfirm')?.dataset.idleLabel != null) return;
   const previous = _fwdSelection[_fwdTab];
-  if (_fwdTab === 'ai') _fwdRememberMethodChoice(choice);
+  if (_fwdTab === 'ai') {
+    // Only an explicit Agent change can discard an incompatible local choice.
+    // Directory refresh and delayed probes must preserve it until revalidated.
+    if (choice?.type === 'direct' && previous?.id !== choice.id && String(_fwdModel).startsWith('local:') &&
+        !_fwdLocalModelAllowed(_fwdSubstrateOf(choice.id))) _fwdModel = '';
+    if (choice?.type === 'direct') _fwdManualAgent = _fwdId(choice.id);
+    _fwdRememberMethodChoice(choice);
+  }
   _fwdSelection[_fwdTab] = choice ? Object.assign({}, choice, {
     id: _fwdId(choice.id),
   }) : null;
@@ -358,9 +367,11 @@ function _fwdChoiceIsCurrent(choice) {
 }
 
 function _fwdLocalModelAllowed(agent) {
-  if (agent?.remote === true || agent?.locationMode === 'remote') return false;
-  return agent?.localConversationAvailable === true || agent?.executionSource === 'conversation' ||
-    (agent?.local === true && agent?.remote !== true);
+  if (agent?.remote === true || agent?.locationMode === 'remote' || /^runner:/.test(String(agent?.key || agent?.id || ''))) return false;
+  const cli = String(agent?.cli || agent?.key || agent?.id || '').replace(/^local:/, '');
+  // Device-owned models are supported only by the probed native Pi transport.
+  // Other runtimes keep their managed or account model catalogs.
+  return cli === 'pi' && (agent?.localConversationAvailable === true || agent?.executionSource === 'conversation');
 }
 
 function _fwdCanPickModel(agent) {
@@ -403,7 +414,8 @@ function _fwdSyncConfirm(tid) {
     return;
   }
   let choice = _fwdSelection[_fwdTab];
-  if (choice?.type === 'direct' && _fwdLocalLoading && !_fwdChoiceIsCurrent(choice)) {
+  if (choice?.type === 'direct' && _fwdLocalLoading && (!_fwdChoiceIsCurrent(choice) ||
+      (String(_fwdModel).startsWith('local:') && !_fwdLocalModelAllowed(_fwdSubstrateOf(choice.id))))) {
     decision.innerHTML = '';
     button.disabled = true;
     return;
@@ -422,15 +434,15 @@ function _fwdSyncConfirm(tid) {
   const agent = choice.type === 'direct' ? _fwdSubstrateOf(choice.id) : null;
   const localAllowed = _fwdLocalModelAllowed(agent);
   const canPickModel = _fwdCanPickModel(agent);
-  if (!canPickModel) _fwdModel = '';
-  if (!localAllowed && String(_fwdModel).startsWith('local:')) _fwdModel = '';
+  if (!canPickModel && (choice.type !== 'direct' || !String(_fwdModel).startsWith('local:'))) _fwdModel = '';
   const modelOptions = localAllowed
     ? _fwdOptions?.modelOptions
     : (_fwdOptions?.modelOptions || []).filter(row => row?.localOnly !== true && !String(row?.name || '').startsWith('local:'));
-  const modelState = _fwpModelState({ ...(_fwdOptions || {}), modelOptions }, _fwdModel);
-  const modelHtml = canPickModel && (modelState.models.length || modelState.stale)
+  const catalog = canPickModel ? { ...(_fwdOptions || {}), modelOptions } : {models:[], modelOptions:[], defaultModel:''};
+  const modelState = _fwpModelState(catalog, _fwdModel);
+  const modelHtml = (canPickModel || modelState.stale) && (modelState.models.length || modelState.stale)
     ? '<label class="fwd-model"><span>本次模型</span><select id="fwdModel"' + (busy ? ' disabled' : '') + '>' +
-      _fwpModelOptions(modelState, _fwpDefaultModelLabel(_fwdOptions, agent)) +
+      _fwpModelOptions(modelState, _fwpDefaultModelLabel(_fwdOptions, agent), _fwpDefaultModelTitle(_fwdOptions, agent)) +
       '</select></label>' : '';
   let directoryHint = '';
   if (choice.type === 'direct' || choice.type === 'native') {

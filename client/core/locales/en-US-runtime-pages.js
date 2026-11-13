@@ -1,5 +1,9 @@
 (function (global) {
   const messages = {
+    "跟随底座默认 · {model}": "Use runtime default · {model}",
+    "跟随底座默认（目录默认：{model}）": "Use runtime default (catalog default: {model})",
+    "跟随默认模型（派发时解析）": "Use default model (resolved at dispatch)",
+    "底座默认不可用，请明确选择模型": "Runtime default unavailable; select a model",
     "滚动选择时间": "Scroll to choose a time",
     "请选择小时（00–23）": "Choose an hour (00–23)",
     "请选择分钟（00–59）": "Choose a minute (00–59)",

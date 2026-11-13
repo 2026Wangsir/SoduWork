@@ -63,7 +63,7 @@ if (typeof electron === 'string') {
   }
   async function open(mode = 'all', nativeOk = true) {
     await js(`(async()=>{RequirementAssignment.close();window.calls=[];window.toasts=[];window.tasks=[];
-      fixture.mode=${JSON.stringify(mode)};fixture.nativeOk=${nativeOk};fixture.models=null;fixture.pending={};fixture.localPending={};fixture.holdProbe=false;fixture.probeWait=null;
+      fixture.mode=${JSON.stringify(mode)};fixture.nativeOk=${nativeOk};fixture.models=null;fixture.pending={};fixture.localPending={};fixture.holdProbe=false;fixture.holdLocalProbe=false;fixture.probeWait=null;
       await RequirementAssignment.open('qa-task');})()`);
     await until(`Boolean(document.querySelector('#fwdPluginSelect')) && !_fwdLoading.ai`);
   }
@@ -140,14 +140,16 @@ if (typeof electron === 'string') {
             runnable:false,recommended:false,readiness:{blockers:['节点要求的 Codex Runner 不在线']}}],
           substrates:fixture.mode==='local-pending-multi'?[{key:'local:codex',name:'Codex',cli:'codex',available:true,onlineSeats:1,modelPick:true},
             {key:'local:qwen',name:'Qwen',cli:'qwen',available:true,onlineSeats:1,modelPick:true}]:
-            fixture.mode==='blocked'||(localMode&&!['local-dedupe','local-blocked'].includes(fixture.mode))?[]:[{key:'local:opencode',name:'OpenCode',cli:'opencode',available:false,onlineSeats:0},
+            fixture.mode==='blocked'||(localMode&&!['local-dedupe','local-blocked','local-pending-device-key'].includes(fixture.mode))?[]:[{key:'local:opencode',name:'OpenCode',cli:'opencode',available:false,onlineSeats:0},
             {key:'local:pi',name:'Pi',cli:'pi',available:fixture.mode!=='local-blocked',onlineSeats:1,
-            capabilitySets:[['files']],locationLabel:'本机 · 隔离 Runner',note:'测试替身',modelPick:true},
+            capabilitySets:[['files']],locationLabel:'本机 · 隔离 Runner',note:'测试替身',modelPick:true,
+            ...(fixture.mode==='local-pending-device-key'?{locations:[{mode:'local',label:'本机 · 隔离 Runner',
+              id:'runner:fixture-device:pi',assigneeId:'runner:fixture-device:pi',runnerId:'fixture-runner',clientId:'fixture-client'}]}:{})},
             ...(fixture.mode==='multi'?[{key:'local:codex',name:'Codex',cli:'codex',available:true,onlineSeats:1,modelPick:true,capabilitySets:[['browser']]}]:[])],
           models:fixture.models||['隔离模型'],recommendation:{strategy:'workflow',workflowBindingId:id,substrateKey:'local:pi',workflowRequired:false},
           availability:{agentReason:'本次未发现后台 Runner'}};
       };
-      window.SoduWorkAPI={getTask:async()=>clone(taskFixture),getTasksSnapshot:async()=>({online:true,items:[clone(taskFixture)]}),
+      window.SoduWorkAPI={clientId:'fixture-client',getTask:async()=>clone(taskFixture),getTasksSnapshot:async()=>({online:true,items:[clone(taskFixture)]}),
         listAttachments:async()=>[{name:'需求原文.txt',byAgent:false}],listTeammates:async()=>({mates:fixture.mode==='mates'?
           [{id:'fixture-colleague',name:'测试同事',org:'体验组',canReceive:true,deviceCount:2},
             {id:'fixture-offline',name:'尚未启用同事',org:'体验组',canReceive:false}]:[]}),taskStorageKey:()=> 'isolated-executor',
@@ -167,7 +169,7 @@ if (typeof electron === 'string') {
              {id:'codex-harness',displayName:'Codex Harness',transport:'runner',modelMode:'managed',capabilities:[]},
              {id:'dsh',displayName:'DeepSeek Harness',transport:'runner',modelMode:'managed',capabilities:[]}]:[])]:[]};},probe:async adapter=>{
         calls.push({kind:'probe',adapter});
-        if(fixture.mode.startsWith('local-pending'))return new Promise(resolve=>fixture.localPending[adapter]=resolve);
+        if(fixture.holdLocalProbe||fixture.mode.startsWith('local-pending'))return new Promise(resolve=>fixture.localPending[adapter]=resolve);
         if(fixture.mode==='local-diagnostics')return adapter==='pi'?{ok:true,state:'ready'}:adapter==='qwen'?
           {ok:false,state:'missing',reason:'未安装测试运行时'}:{ok:false,state:'unauthed',reason:'测试账号需要重新登录'};
         if(fixture.mode.startsWith('local-'))return {ok:fixture.mode==='local-many'||(fixture.mode!=='local-failed'&&adapter==='pi'),state:fixture.mode==='local-many'||adapter==='pi'?'ready':'unauthed',reason:'隔离探测不可用'};
@@ -529,7 +531,9 @@ if (typeof electron === 'string') {
       await js(fs.readFileSync(path.join(client, file), 'utf8') + '\nvoid 0;');
     }
     await js(`window.productionDispatchToAI=SoduWorkAPI.dispatchToAI;
-      Object.assign(SoduWorkAPI,choiceFixtureAPI,{dispatchToAI:productionDispatchToAI});void 0;`);
+      const {clientId,...fixtureAPI}=choiceFixtureAPI;
+      Object.defineProperty(SoduWorkAPI,'clientId',{get:()=>clientId});
+      Object.assign(SoduWorkAPI,fixtureAPI,{dispatchToAI:productionDispatchToAI});void 0;`);
     const bootSource = fs.readFileSync(path.join(client, 'desk-boot.js'), 'utf8');
     const humanError = bootSource.match(/window\._humanErr = function \(e, fallback\) \{[\s\S]*?\n  \};/);
     assert(humanError, 'The production workspace error formatter must be available');
@@ -540,6 +544,102 @@ if (typeof electron === 'string') {
       execution: 'NativeChat.enqueueTask deterministic receipt; no real task or model',
     };
     win.setContentSize(1280, 960);
+
+    await run('Current-device endpoint aliases collapse without changing model values or leaking Runner identity', async row => {
+      await open('local-pending-device-key');
+      await until(`Boolean(fixture.localPending.pi && fixture.localPending.codex)`);
+      assert.equal((await state()).agent, 'runner:fixture-device:pi');
+      await select('#fwdModel', '隔离模型');
+      await js(`fixture.localPending.pi({ok:true,state:'ready'});fixture.localPending.codex({ok:false,state:'missing'});void 0;`);
+      await until(`!_fwdLocalLoading`);
+      row.state=await state();
+      assert.equal(row.state.agents.filter(o=>o.value==='local:pi'||o.value==='runner:fixture-device:pi').length,1);
+      assert.equal(row.state.agent,'local:pi');
+      assert.equal(await js(`document.querySelector('#fwdModel').value`),'隔离模型');
+      await js(`_fwdOptions.modelOptions=[{name:'local:model-fixture',label:'Fixture local model',localOnly:true}];
+        _fwdOptions.defaultModels={pi:'隔离模型'};_fwdSyncConfirm('qa-task');void 0;`);
+      await choosePopup('fwdModel','local:model-fixture');
+      await js(`NativeChat.enqueueTask=async(...args)=>{calls.push({kind:'queue',args:clone(args)});return {ok:true,conversationId:'fixture-local-model'};};void 0;`);
+      await click('#fwdConfirm');await until(`calls.some(c=>c.kind==='queue')`);
+      row.receipt=await js(`calls.find(c=>c.kind==='queue').args[1]`);
+      assert.equal(row.receipt.agentId,'local:pi');assert.equal(row.receipt.model,'local:model-fixture');
+      assert.equal(row.receipt.executionContext.agent.id,'local:pi');
+      assert.equal(row.receipt.executionContext.runner.runnerId,'');
+      assert.equal(row.receipt.executionContext.runner.clientId,'');
+    });
+    await run('A manual Runner selection survives its later native probe and excludes local model references', async row => {
+      await open('local-pending-device-key');
+      await until(`Boolean(fixture.localPending.pi && fixture.localPending.codex)`);
+      await select('#fwdAgentSelect','runner:fixture-device:pi');
+      await select('#fwdModel','隔离模型');
+      await js(`fixture.localPending.pi({ok:true,state:'ready'});fixture.localPending.codex({ok:false,state:'missing'});void 0;`);
+      await until(`!_fwdLocalLoading`);
+      await js(`_fwdOptions.modelOptions=[{name:'local:model-fixture',label:'Fixture local model',localOnly:true}];_fwdSyncConfirm('qa-task');void 0;`);
+      row.state=await state();
+      assert.equal(row.state.agents.filter(o=>o.value==='local:pi'||o.value==='runner:fixture-device:pi').length,1);
+      assert.equal(row.state.agent,'runner:fixture-device:pi');
+      assert.equal(await js(`[...document.querySelector('#fwdModel').options].some(o=>o.value==='local:model-fixture')`),false);
+      await click('#fwdConfirm');await until(`calls.some(c=>c.kind==='queue')`);
+      row.receipt=await js(`calls.find(c=>c.kind==='queue').args[1]`);
+      assert.equal(row.receipt.agentId,'runner:fixture-device:pi');assert.equal(row.receipt.model,'隔离模型');
+      assert.equal(row.receipt.executionContext.runner.runnerId,'fixture-runner');
+    });
+
+    await run('Switching from native Pi to another runtime removes the local model without changing managed choices', async row => {
+      await open('local-many');await until(`!_fwdLocalLoading`);
+      await js(`_fwdOptions.modelOptions=[{name:'local:model-fixture',label:'Fixture local model',localOnly:true}];_fwdSyncConfirm('qa-task');void 0;`);
+      await choosePopup('fwdAgentSelect','local:pi');await choosePopup('fwdModel','local:model-fixture');
+      await choosePopup('fwdAgentSelect','local:qwen');
+      assert.equal(await js(`_fwdModel`),'');
+      assert.equal(await js(`[...document.querySelector('#fwdModel').options].some(o=>o.value==='local:model-fixture')`),false);
+      await choosePopup('fwdModel','隔离模型');
+      await click('#fwdConfirm');await until(`calls.some(c=>c.kind==='queue')`);
+      row.receipt=await js(`calls.find(c=>c.kind==='queue').args[1]`);
+      assert.equal(row.receipt.agentId,'local:qwen');assert.equal(row.receipt.model,'隔离模型');
+    });
+
+    await run('Rechecking a legacy local Agent preserves its local model through probe failure and recovery', async row => {
+      await js(`soduWorkAPI.localModels={get:async()=>({usable:[{name:'local:model-fixture',label:'Fixture local model',localOnly:true}]})};void 0;`);
+      try {
+        await open('local-dedupe');await until(`!_fwdLocalLoading`);
+        await choosePopup('fwdModel','local:model-fixture');
+        await js('fixture.holdLocalProbe=true;void 0;');await click('[data-fwd-recheck]');
+        await until(`Boolean(fixture.localPending.pi&&fixture.localPending.codex)`);
+        row.pending=await js(`({model:_fwdModel,disabled:document.querySelector('#fwdConfirm').disabled})`);
+        assert.equal(row.pending.model,'local:model-fixture');assert.equal(row.pending.disabled,true);
+        await js(`fixture.localPending.pi({ok:false,state:'unauthed'});fixture.localPending.codex({ok:false,state:'missing'});void 0;`);
+        await until(`!_fwdLocalLoading`);
+        row.failed=await js(`({model:_fwdModel,value:document.querySelector('#fwdModel').value,disabled:document.querySelector('#fwdConfirm').disabled})`);
+        assert.equal(row.failed.model,'local:model-fixture');assert.equal(row.failed.value,'__unselected__');
+        assert.equal(row.failed.disabled,true);
+        assert.equal(await js(`calls.filter(c=>c.kind==='queue').length`),0);
+        await js('fixture.holdLocalProbe=false;void 0;');await click('[data-fwd-recheck]');
+        await until(`!_fwdLocalLoading && document.querySelector('#fwdModel')?.value==='local:model-fixture'`);
+        assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),false);
+        await choosePopup('fwdModel','');assert.equal(await js('_fwdModel'),'');
+      } finally {await js('delete soduWorkAPI.localModels;void 0;');}
+    });
+    await run('Workflow selection excludes local models and preserves the remembered native choice', async row => {
+      await open('local-dedupe');await until(`!_fwdLocalLoading`);
+      await js(`_fwdOptions.modelOptions=[{name:'local:model-fixture',label:'Fixture local model',localOnly:true}];_fwdSyncConfirm('qa-task');void 0;`);
+      await choosePopup('fwdModel','local:model-fixture');
+      await choosePopup('fwdPluginSelect','flow-office');
+      assert.equal(await js('_fwdModel'),'');
+      assert.equal(await js(`Boolean(document.querySelector('#fwdModel'))`),false);
+      assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),false);
+      row.workflowModels=await js(`[...document.querySelector('[data-fwp-model]').options].map(o=>o.value)`);
+      assert.equal(row.workflowModels.includes('local:model-fixture'),false);
+      assert.equal(row.workflowModels.includes('隔离模型'),true);
+      await choosePopup('fwdPluginSelect','');
+      assert.equal(await js(`document.querySelector('#fwdModel').value`),'local:model-fixture');
+      await choosePopup('fwdPluginSelect','flow-office');
+      await js(`_fwdWorkflowChoices.get('flow-office').model='local:model-fixture';
+        _fwdRenderAIPickers('qa-task',document.querySelector('#fwdList'));_fwdSyncConfirm('qa-task');void 0;`);
+      assert.equal(await js(`document.querySelector('[data-fwp-model]').value`),'__unselected__');
+      assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),true);
+      await select('[data-fwp-model]','隔离模型');
+      assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),false);
+    });
     await run('五个就绪运行时均可从主题菜单选择并经正式 API 进入对应会话队列',async row=>{
       row.runtimeReceipts=[];
       for(const adapter of ['pi','qwen','codex','codex-harness','dsh']) {
@@ -737,6 +837,37 @@ if (typeof electron === 'string') {
         row.agentReachable=await js(`(()=>{const e=document.querySelector('.fwd-select-trigger[data-select-id="fwdAgentSelect"]'),r=e.getBoundingClientRect();
           return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()`);
         assert.equal(row.agentReachable,true);row.agentScreenshot=await screenshot(theme+'-'+width+'-agent-visible');
+      });
+    }
+
+    for (const file of JSON.parse(fs.readFileSync(path.join(client,'core/locales/manifest.json'),'utf8')))
+      await js(fs.readFileSync(path.join(client,'core/locales',file),'utf8'));
+    for (const file of ['core/i18n-dom.js','core/i18n.js']) await js(fs.readFileSync(path.join(client,file),'utf8'));
+    for (const [locale,label] of [['zh-CN','跟随底座默认'],['en-US','Use runtime default'],
+      ['ja-JP','基盤のデフォルトに従う'],['ko-KR','기반 기본값 따르기']]) {
+      await run('Default strategy and concrete model remain distinct in '+locale, async row => {
+        await js(`SoduWorkI18n.setLocale('zh-CN',{persist:false,broadcast:false});void 0;`);
+        await open();
+        await js(`_fwdOptions.models=['fixture-model'];_fwdOptions.defaultModel='fixture-model';
+          _fwdOptions.defaultModels={pi:'fixture-model'};
+          _fwdOptions.modelOptions=[{name:'fixture-model',providerId:'fixture-provider',providerName:'Fixture provider'}];
+          _fwdSyncConfirm('qa-task');
+          SoduWorkI18n.setLocale(${JSON.stringify(locale)},{persist:false,broadcast:false});void 0;`);
+        await until(`document.querySelector('.fwd-select-trigger[data-select-id="fwdModel"]').title.includes(${JSON.stringify(label)})`);
+        await openPicker('fwdModel');
+        row.menu=await js(`({rows:[...document.querySelectorAll('.fwd-select-popup [role="option"]')].map(o=>({value:o.dataset.value,text:o.textContent.replace('✓','').trim(),title:o.title})),
+          trigger:document.querySelector('.fwd-select-trigger[data-select-id="fwdModel"]').title})`);
+        assert.equal(row.menu.rows.length,2);
+        assert.equal(row.menu.rows[0].value,'');assert.equal(row.menu.rows[0].text,label);
+        assert.equal(row.menu.rows[0].title,label+' · fixture-model · Fixture provider');
+        assert.equal(row.menu.rows[1].value,'fixture-model');
+        assert.equal(row.menu.rows[1].text,'fixture-model · Fixture provider');
+        assert.equal(row.menu.trigger,row.menu.rows[0].title);
+        await js('ForwardSelect.closeAll();void 0;');
+        await choosePopup('fwdModel','fixture-model');
+        assert.equal(await js('_fwdModel'),'fixture-model');
+        await choosePopup('fwdModel','');
+        assert.equal(await js('_fwdModel'),'');
       });
     }
     report.errors = await js('errors.slice()');

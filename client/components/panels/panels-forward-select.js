@@ -31,7 +31,7 @@
     const chosen = select.options[select.selectedIndex];
     const label = labelOf(select), text = chosen?.textContent || select.dataset.placeholder || '请选择';
     setText(value, text);
-    setAttr(trigger, 'title', text);
+    setAttr(trigger, 'title', chosen?.title || text);
     setAttr(trigger, 'aria-label', label + '：' + text);
     setAttr(trigger, 'aria-describedby', select.getAttribute('aria-describedby'));
     const disabled = select.disabled || select.matches(':disabled');
@@ -111,6 +111,7 @@
       const node = document.createElement('div'), disabled = optionDisabled(option);
       node.className = 'fwd-select-option'; node.id = opened.id + '-option-' + index;
       node.dataset.value = option.value; node.setAttribute('role', 'option');
+      if (option.title) node.title = option.title;
       node.setAttribute('aria-selected', String(index === record.select.selectedIndex));
       node.setAttribute('aria-disabled', String(Boolean(disabled)));
       const text = document.createElement('span'); text.textContent = option.textContent; node.appendChild(text);
@@ -250,7 +251,7 @@
     if (!roots.has(root)) {
       const observer = new MutationObserver(() => enhance(root));
       observer.observe(root, {subtree: true, childList: true, characterData: true, attributes: true,
-        attributeFilter: ['disabled', 'hidden', 'selected', 'label', 'aria-label', 'aria-labelledby', 'aria-describedby', 'style']});
+        attributeFilter: ['disabled', 'hidden', 'selected', 'label', 'title', 'aria-label', 'aria-labelledby', 'aria-describedby', 'style']});
       roots.set(root, observer);
     }
   }

@@ -309,7 +309,7 @@ test('local model choices render for a local Agent and disappear for a remote Ru
     {name: 'local:model-abc', modelName: 'qwen-local', label: 'Qwen Local',
       providerName: '本机 Ollama', localOnly: true, modality: 'chat'},
   ]})}};
-  h.ctx.options.substrates = [agent('chosen', {name: 'Pi', modelPick: true, local: true, remote: false})];
+  h.ctx.options.substrates = [agent('chosen', {name: 'Pi', cli: 'pi', executionSource: 'conversation', modelPick: true, local: true, remote: false})];
   h.ctx._fwdMergeLocalModelChoices(await h.ctx._fwdLocalModelChoices());
   h.run("_fwdModel = ''");
   h.ctx._fwdSyncConfirm('task');
@@ -319,4 +319,228 @@ test('local model choices render for a local Agent and disappear for a remote Ru
   h.ctx.options.substrates = [agent('chosen', {name: 'Remote Pi', modelPick: true, remote: true})];
   h.ctx._fwdSyncConfirm('task');
   assert.doesNotMatch(h.nodes.get('fwdDecision').innerHTML, /value="local:model-abc"/);
+});
+
+
+function currentDeviceFixture({clientId = 'fixture-client', mode = 'local', available = true, cli = 'pi', selection = {}, task = {id: 'task'}, local = true} = {}) {
+  const endpoint = 'runner:fixture-device:' + cli;
+  const h = fixture({selection, substrates: [agent('local:' + cli, {cli, name: 'Fixture Agent', available,
+    locations: [{id: endpoint, assigneeId: endpoint, mode, label: 'Local · Fixture computer',
+      runnerId: 'fixture-runner', clientId, machineKey: 'fixture-machine'}]})],
+    recommendation: {substrateKey: endpoint}, models: ['chosen-model']}, {tasks: [task]});
+  for (const file of ['components/panels/task-execution-context.js', 'components/panels/task-execution-client.js',
+    'components/requirements/requirement-session-choice.js']) {
+    const source = path.join(__dirname, '..', file);
+    vm.runInContext(fs.readFileSync(source, 'utf8'), h.ctx, {filename: source});
+  }
+  h.ctx.TaskExecutionClient = h.ctx.window.TaskExecutionClient;
+  h.ctx.window.SoduWorkAPI = {clientId: 'fixture-client'};
+  h.ctx.window.NativeChat = {enqueueTask() {throw Error('Discovery must not execute a task');}};
+  h.ctx.window.soduWorkAPI = {conversationSession: {runtimes() {}, probe() {}}};
+  h.run("_fwdTaskId = 'task'");
+  h.discover = () => h.run("_fwdLocalAgents = [{key:'local:pi', cli:'pi', name:'Pi', available:true, local:true, remote:false, locationMode:'local', executionSource:'conversation', modelPick:true}]");
+  if (local) h.discover();
+  h.endpoint = endpoint;
+  return h;
+}
+
+test('a verified current-device Runner and native probe appear once for the same Agent', () => {
+  const h = currentDeviceFixture();
+  const rows = h.ctx._fwdDirectAgents();
+  assert.equal(rows.filter(row => row.cli === 'pi').length, 1,
+    'the location-specific Hub ID must not create a second row for the same local Agent');
+  const chosen = rows[0];
+  assert.equal(chosen.key, 'local:pi');
+  assert.equal(chosen.locationLabel, 'Local · Fixture computer', 'retain the verified device display label');
+  const context = h.ctx.TaskExecutionClient.context({substrates: rows}, {agentId: chosen.key, model: 'local:model-abc'});
+  assert.equal(context.runner.runnerId, '', 'a native conversation must not inherit Hub transport identity');
+  assert.equal(context.runner.clientId, '');
+  assert.equal(context.agent.id, 'local:pi', 're-expanding locations must not restore the hidden Runner ID');
+  assert.equal(context.model, 'local:model-abc');
+  const spec = require('../main/pi-session/controlled-task-turn').executionSpec({id: 'task'},
+    {agentId: chosen.key, executionContext: context, model: context.model});
+  assert.equal(spec.mode, 'native', 'a device-owned model stays in the native execution path');
+});
+
+test('late current-device discovery maps only the automatic choice and preserves its model override', () => {
+  const h = currentDeviceFixture({local: false});
+  h.ctx._fwdRestoreAIChoice();
+  assert.equal(h.run('_fwdSelection.ai.id'), h.endpoint);
+  h.run("_fwdModel = 'chosen-model'");
+  h.discover();
+  h.ctx._fwdRestoreAIChoice();
+  assert.equal(h.run('_fwdSelection.ai.id'), 'local:pi');
+  assert.equal(h.run('_fwdModel'), 'chosen-model');
+});
+
+test('late current-device discovery retains a manual Runner choice and its controlled execution path', () => {
+  const h = currentDeviceFixture({local: false});
+  h.ctx._fwdChoose('task', {type: 'direct', id: h.endpoint, cli: 'pi', name: 'Fixture Agent', available: true});
+  h.run("_fwdModel = 'chosen-model'");
+  h.discover();
+  h.ctx._fwdRestoreAIChoice();
+  const rows = h.ctx._fwdDirectAgents();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, h.endpoint);
+  assert.equal(h.run('_fwdSelection.ai.id'), h.endpoint);
+  assert.equal(h.run('_fwdModel'), 'chosen-model');
+  assert.equal(h.ctx._fwdLocalModelAllowed(rows[0]), false,
+    'a controlled Runner must not advertise device-owned model execution');
+  const context = h.ctx.TaskExecutionClient.context({substrates: rows}, {agentId: h.endpoint, model: 'chosen-model'});
+  const spec = require('../main/pi-session/controlled-task-turn').executionSpec({id: 'task'},
+    {agentId: h.endpoint, executionContext: context});
+  assert.equal(spec.mode, 'dispatch');
+});
+
+test('current-device discovery cannot override an explicitly unavailable Hub Agent', () => {
+  const h = currentDeviceFixture({available: false});
+  const rows = h.ctx._fwdDirectAgents();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, h.endpoint);
+  assert.equal(rows[0].available, false);
+  h.ctx._fwdRestoreAIChoice();
+  assert.equal(h.run('_fwdSelection.ai'), null);
+});
+
+test('Agent matching never combines another device, an unknown owner, a remote target or a different CLI', () => {
+  for (const options of [
+    {clientId: 'another-client'}, {clientId: ''}, {mode: 'remote'}, {cli: 'codex'},
+  ]) {
+    const h = currentDeviceFixture(options);
+    const rows = h.ctx._fwdDirectAgents();
+    assert.equal(rows.length, 2, JSON.stringify(options));
+    assert.ok(rows.some(row => row.key === h.endpoint));
+    assert.ok(rows.some(row => row.key === 'local:pi'));
+  }
+});
+
+test('the native duplicate never replaces a repository, workflow or saved Runner requirement', () => {
+  for (const options of [
+    {selection: {repoId: 'repo'}}, {task: {id: 'task', workflowBindingId: 'flow'}},
+    {task: {id: 'task', agentId: 'runner:fixture-device:pi'}},
+  ]) {
+    const h = currentDeviceFixture(options);
+    const rows = h.ctx._fwdDirectAgents();
+    assert.equal(rows.find(row => row.key === h.endpoint)?.key, h.endpoint, JSON.stringify(options));
+    assert.equal(rows.find(row => row.key === h.endpoint)?.executionSource, undefined);
+    assert.equal(rows.length, 1, 'stale local probes cannot bypass a newly constrained task');
+  }
+});
+
+
+test('only a verified native Pi advertises device-owned models while other Agent catalogs remain usable', () => {
+  const h = directModelFixture();
+  h.ctx._fwdMergeLocalModelChoices([{name: 'local:model-fixture', label: 'Fixture local model', localOnly: true}]);
+  for (const cli of ['qwen', 'codex-harness', 'opencode', 'dsh', 'harness2', 'custom-runtime', '']) {
+    h.ctx.options.substrates = [agent('local:' + cli, {name: 'Pi', cli, executionSource: 'conversation', modelPick: true})];
+    h.run("_fwdSelection.ai = {type:'direct',id:'previous-pi',available:true};_fwdModel = 'local:model-fixture'");
+    h.ctx._fwdChoose('task', {type:'direct',id:'local:'+cli,available:true});
+    assert.equal(h.run('_fwdModel'), '', 'switching runtime must not retain a local override: ' + cli);
+    assert.doesNotMatch(h.nodes.get('fwdDecision').innerHTML, /value="local:model-fixture"/);
+    assert.match(h.nodes.get('fwdDecision').innerHTML, /value="chosen-model"/,
+      'managed choices remain usable: ' + cli);
+    assert.equal(h.button.disabled, false);
+  }
+  assert.equal(h.ctx._fwdLocalModelAllowed({key: 'local:pi', local: true}), false,
+    'a local label without successful discovery does not prove conversation readiness');
+  assert.equal(h.ctx._fwdLocalModelAllowed({key: 'local:pi', executionSource: 'conversation'}), true);
+});
+
+
+test('a remembered direct model survives local discovery while a workflow is selected', () => {
+  const h = currentDeviceFixture({local: false});
+  h.ctx.options.workflows = [flow('fixture-method')];
+  h.ctx._fwdRestoreAIChoice();
+  assert.equal(h.run('_fwdSelection.ai.id'), h.endpoint);
+  h.run("_fwdModel = 'chosen-model'");
+  h.ctx._fwdChoose('task', {type: 'workflow', id: 'fixture-method', name: 'Fixture method', available: true});
+  h.discover();h.ctx._fwdRestoreAIChoice();
+  assert.equal(h.run('_fwdSelection.ai.id'), 'fixture-method');
+  h.ctx._fwdChooseNoPlugin('task');
+  assert.equal(h.run('_fwdSelection.ai.id'), 'local:pi');
+  assert.equal(h.run('_fwdModel'), 'chosen-model');
+});
+
+
+test('legacy local model selection survives pending, failed and recovered runtime discovery', () => {
+  for (const modelPick of [true, false]) {
+    const h = directModelFixture();
+    const local = {name:'local:model-fixture',localOnly:true};
+    h.ctx.options.substrates = [agent('local:pi', {cli:'pi',local:true,modelPick,localConversationAvailable:true,localModelPick:true})];
+    h.ctx.options.modelOptions = [local];
+    h.run("_fwdSelection.ai.id='local:pi';_fwdModel='local:model-fixture'");
+    h.ctx._fwdSyncConfirm('task');assert.equal(h.run('_fwdModel'),local.name);
+    h.ctx.options.substrates = [agent('local:pi', {cli:'pi',local:true,modelPick})];
+    h.ctx.options.modelOptions = [];
+    h.run('_fwdLocalLoading=true;_fwdLocalAgents=[]');
+    h.ctx._fwdSyncConfirm('task');
+    assert.equal(h.run('_fwdModel'),local.name);
+    assert.equal(h.button.disabled,true);
+    h.run('_fwdLocalLoading=false');h.ctx._fwdSyncConfirm('task');
+    assert.equal(h.run('_fwdModel'),local.name);
+    assert.equal(h.nodes.get('fwdModel').value,'__unselected__');
+    assert.equal(h.button.disabled,true,'failed discovery cannot dispatch with a different default');
+    h.ctx.options.substrates[0].localConversationAvailable=true;
+    h.ctx.options.substrates[0].localModelPick=true;
+    h.ctx.options.modelOptions=[local];
+    h.ctx._fwdSyncConfirm('task');
+    assert.equal(h.run('_fwdModel'),local.name);
+    assert.equal(h.nodes.get('fwdModel').value,local.name);
+    assert.equal(h.button.disabled,false);
+  }
+});
+
+
+test('a delayed local catalog cannot overwrite a newer task, loading state or closed assignment', async () => {
+  for (const closed of [false,true]) {
+    const h = fixture({modelOptions:[]}), box = {}, painted=[];
+    h.nodes.set('fwdList',box);h.run('_fwdLoadSeq=1;_fwdTab="ai";_fwdLocalLoading=true');
+    let release;
+    h.ctx.window.soduWorkAPI={localModels:{get:()=>new Promise(resolve=>{release=resolve;})}};
+    h.ctx.window.RequirementSessionChoice={localAgents:async()=>({failures:[]})};
+    h.ctx._fwdRestoreAIChoice=()=>{};h.ctx._fwdSyncConfirm=()=>{};
+    h.ctx._fwdRenderAIPickers=tid=>painted.push(tid);
+    const request=h.ctx._fwdLoadLocalAgents('old-task',{},box,1);
+    await new Promise(resolve=>setImmediate(resolve));
+    h.run('_fwdLoadSeq=2;_fwdLocalLoading=true');
+    h.update({modelOptions:[{name:'new-scope-hub-model'}]});
+    if (closed) h.nodes.delete('fwdList');
+    release({usable:[{name:'local:old-scope-model',localOnly:true}]});
+    await request;
+    assert.deepEqual(h.ctx.options.modelOptions,[{name:'new-scope-hub-model'}]);
+    assert.deepEqual(painted,[]);
+    assert.equal(h.run('_fwdLocalLoading'),true,'the superseded response does not settle the new request');
+  }
+});
+
+test('switching to a workflow keeps its confirmation usable and restores the remembered direct local model', () => {
+  const h = directModelFixture();
+  h.update({substrates:[agent('chosen', {cli:'pi',modelPick:true,executionSource:'conversation'})],
+    models:['hub-model'],modelOptions:[{name:'local:model-fixture',localOnly:true}],workflows:[flow('method')]});
+  h.run("_fwdModel='local:model-fixture'");h.ctx._fwdSyncConfirm('task');
+  h.ctx._fwdChoose('task',{type:'workflow',id:'method',name:'Method',available:true});
+  assert.equal(h.run('_fwdModel'),'');
+  assert.equal(h.button.disabled,false);
+  assert.doesNotMatch(h.nodes.get('fwdDecision').innerHTML,/id="fwdModel"/);
+  h.ctx._fwdChooseNoPlugin('task');
+  assert.equal(h.run('_fwdModel'),'local:model-fixture');
+  assert.equal(h.nodes.get('fwdModel').value,'local:model-fixture');
+  assert.equal(h.button.disabled,false);
+});
+
+test('workflow model selection excludes device-owned references while preserving stale choices and managed models', () => {
+  const h = fixture({substrates:[agent('local:pi',{cli:'pi',modelPick:true})],
+    defaultModel:'local:default',models:['local:legacy','managed-model'],modelOptions:[
+      {name:'local:model-fixture',localOnly:true},{name:'flagged-local',localOnly:true},{name:'managed-model'}]});
+  const plugin=flow('method');
+  const direct=h.ctx._fwpModelState(h.ctx.options,'local:model-fixture');
+  assert.equal(direct.stale,false);
+  const html=h.ctx._fwpCard(plugin,h.ctx.options,false,{kind:'local:pi',model:'local:model-fixture'});
+  assert.match(html,/value="__unselected__" disabled selected/);
+  assert.match(html,/value="managed-model"/);
+  const modelSelect=html.match(/<select data-fwp-model>[\s\S]*?<\/select>/)[0];
+  assert.doesNotMatch(modelSelect,/value="(?:local:|flagged-local)/);
+  const state=h.ctx._fwdAgentPickerState(plugin);
+  state.state.model='local:model-fixture';
+  assert.equal(h.ctx._fwdAgentPickerState(plugin).modelStale,true);
 });
