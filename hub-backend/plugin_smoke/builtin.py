@@ -56,7 +56,7 @@ async def builtin(chk, session):
         am.PluginVersion.plugin_id == software.id
     ).order_by(am.PluginVersion.created_at))).scalars().all()) if software else []
     software_version = next((item for item in software_versions
-                             if item.version == "1.7.6"), None)
+                             if item.version == "1.7.7"), None)
     chk("已有内置插件会发现新版本且不改写已批准旧版本",
         len(software_versions) == 2 and existing_version.trust_state == "approved"
         and existing_version.enabled, [x.version for x in software_versions])

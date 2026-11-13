@@ -79,6 +79,7 @@ RELEASE_SMOKES = tuple(sorted((
     "test_runner_agent_bootstrap.py",
     "test_runner_linux_entry.py",
     "test_plugin_smoke_groups.py",
+    "test_plugin_builtin_versions.py",
     "test_plugin_access.py",
     "test_plugin_lifecycle_notifications.py",
     "smoke/smoke_agent_model.py",

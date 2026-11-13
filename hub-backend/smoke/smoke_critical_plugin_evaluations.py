@@ -31,13 +31,13 @@ def load(filename: str) -> dict:
 
 EXPECTED = {
     "software-delivery.json": {
-        "version": "1.7.6",
+        "version": "1.7.7",
         "cases": {"complete-product-change", "missing-delivery-input"},
         "outputs": {"analyze.requirements", "analyze.preflight"},
         "release": True,
     },
     "project-validation-release.json": {
-        "version": "1.5.6",
+        "version": "1.5.7",
         "cases": {"reproducible-regression", "unreproducible-report"},
         "outputs": {"scope.requirements", "scope.preflight"},
         "release": True,
