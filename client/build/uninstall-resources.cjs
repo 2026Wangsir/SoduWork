@@ -24,7 +24,28 @@ async function inspectTree(directory) {
     if (stat.isDirectory()) await inspectTree(file);
   }
 }
-async function cleanResources(requestedRoot, executable = process.execPath, ioRoot = requestedRoot) {
+async function cleanUserData(appData, productName) {
+  assert.ok(typeof appData === 'string' && path.isAbsolute(appData), 'Application data root must be absolute');
+  assert.ok(process.env.APPDATA && path.isAbsolute(process.env.APPDATA), 'Current account application data is unavailable');
+  assert.equal(path.resolve(appData).toLowerCase(), path.resolve(process.env.APPDATA).toLowerCase(),
+    'Cleanup is limited to the current account application data');
+  assert.ok(typeof productName === 'string' && productName.length > 0 && productName.length <= 100 &&
+    !/[\\/:*?"<>|\x00-\x1f]/.test(productName) && !/[. ]$/.test(productName) && productName !== '.',
+  'Application data name must be one directory component');
+  const root = path.resolve(appData), target = path.join(root, productName);
+  assert.notEqual(path.dirname(root), root, 'Application data cannot be a filesystem root');
+  for (let current = root; ; current = path.dirname(current)) {
+    await realDirectory(current);
+    if (path.dirname(current) === current) break;
+  }
+  const stat = await fs.lstat(target).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (!stat) return { target, removed: false };
+  await realDirectory(target);
+  await inspectTree(target);
+  await fs.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+  return { target, removed: true };
+}
+async function cleanResources(requestedRoot, executable = process.execPath, ioRoot = requestedRoot, userData) {
   assert.ok(path.isAbsolute(requestedRoot), 'Uninstall root must be absolute');
   const requested = path.resolve(requestedRoot);
   assert.notEqual(path.dirname(requested), requested, 'Cannot uninstall a filesystem root');
@@ -85,6 +106,9 @@ async function cleanResources(requestedRoot, executable = process.execPath, ioRo
     }
   }
   await inspectTree(root);
+  // The optional target comes only from the confirmed native wizard. The
+  // current-account check never follows a custom SODUWORK_USER_DATA location.
+  const removedUserData = userData ? await cleanUserData(userData.appData, userData.productName) : null;
   // Keep the verified native short alias for I/O. Expanding it back to the
   // canonical spelling can hit path limits in Windows filesystem filters even
   // though the same long Unicode resource is accessible through its alias.
@@ -95,8 +119,9 @@ async function cleanResources(requestedRoot, executable = process.execPath, ioRo
     await realDirectory(resources);
     await fs.rm(resources, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
   }
-  return { root: canonicalRoot, ioRoot: root, removedResources: targets };
+  return { root: canonicalRoot, ioRoot: root, removedResources: targets, removedUserData };
 }
-module.exports = { cleanResources };
-if (require.main === module) cleanResources(process.argv[2], process.execPath, process.argv[3] || process.argv[2]).then(result => console.log(JSON.stringify(result)))
+module.exports = { cleanResources, cleanUserData };
+if (require.main === module) cleanResources(process.argv[2], process.execPath, process.argv[3] || process.argv[2],
+  process.argv[4] ? { appData: process.argv[4], productName: process.argv[5] } : undefined).then(result => console.log(JSON.stringify(result)))
   .catch(error => { console.error(error.message); process.exitCode = 2; });

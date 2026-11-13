@@ -34,6 +34,26 @@ test('removes deep Unicode runtime resources while retaining executable and prof
   assert.equal(await fs.readFile(f.executable, 'utf8'), 'fixture');
   assert.equal(await fs.readFile(path.join(f.outside, 'sentinel'), 'utf8'), 'keep');
 });
+
+test('confirmed profile cleanup validates all boundaries before deleting installation resources', async t => {
+  const f = await fixture(t), appData = path.join(f.parent, 'Roaming'), productName = 'SoduWork isolated test';
+  const profile = path.join(appData, productName), linked = path.join(profile, 'external');
+  await fs.mkdir(profile, { recursive: true }); await fs.writeFile(path.join(profile, 'sentinel'), 'local data');
+  const previous = process.env.APPDATA; process.env.APPDATA = appData;
+  t.after(() => { if (previous === undefined) delete process.env.APPDATA; else process.env.APPDATA = previous; });
+  await assert.rejects(cleanResources(f.root, f.executable, f.root, { appData: f.outside, productName }), /current account/);
+  await fs.symlink(f.outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(cleanResources(f.root, f.executable, f.root, { appData, productName }), /contains a link/);
+  assert.equal(await fs.readFile(f.resource, 'utf8'), 'fixture');
+  assert.equal(await fs.readFile(path.join(profile, 'sentinel'), 'utf8'), 'local data');
+  await fs.unlink(linked);
+  const result = await cleanResources(f.root, f.executable, f.root, { appData, productName });
+  assert.deepEqual(result.removedUserData, { target: profile, removed: true });
+  await assert.rejects(fs.access(profile), { code: 'ENOENT' });
+  await assert.rejects(fs.access(f.resource), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(f.executable, 'utf8'), 'fixture');
+  assert.equal(await fs.readFile(path.join(f.outside, 'sentinel'), 'utf8'), 'keep');
+});
 test('foreign runtime and traversal pointers are rejected before removal', async t => {
   const f = await fixture(t);
   await assert.rejects(cleanResources(f.root, process.execPath), /active Electron/);
