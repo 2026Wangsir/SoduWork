@@ -48,6 +48,22 @@ test('HTML and Office documents download once to a contained Unicode path before
   assert.equal(h.state.fetched.length,4);
 });
 
+test('long attachment names preserve their file type for system and Markdown previews', async t=>{
+  const h=harness(t);
+  const stem='a'.repeat(180);
+  h.state.type='application/octet-stream';
+  assert.equal((await h.open(stem+'.docx')).external,true);
+  const target=h.state.opened.at(-1);
+  assert.equal(path.extname(target),'.docx');
+  assert.equal(path.basename(target).length,180);
+  assert.deepEqual(fs.readFileSync(target),h.state.data);
+
+  h.state.data=Buffer.from('# Long filename');
+  assert.equal((await h.open(stem+'.md')).native,true);
+  const html=Buffer.from(h.state.windows.at(-1).url.split(',')[1],'base64').toString();
+  assert.match(html,/<h1>Long filename<\/h1>/);
+});
+
 test('Markdown renders as a safe native preview while CSV, JSON and plain text stay literal', async t=>{
   const h=harness(t);
   for(const [filename,type] of [['报告.md','text/markdown'],['说明.txt','text/plain'],['数据.csv','text/csv'],['资料.json','application/json']]){

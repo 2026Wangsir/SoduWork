@@ -87,7 +87,13 @@ function renderMarkdownPreview(filename, data) {
 
 function safeFilename(raw, fallback) {
   let name = path.basename(String(raw || '')).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
-  name = name.replace(/[. ]+$/g, '').slice(0, 180);
+  name = name.replace(/[. ]+$/g, '');
+  if (name.length > 180) {
+    // Preview routing and system associations depend on the final extension.
+    const extension = path.extname(name);
+    name = extension.length < 180
+      ? name.slice(0, 180 - extension.length) + extension : name.slice(0, 180);
+  }
   if (!name || WINDOWS_RESERVED.test(name)) name = String(fallback || 'attachment');
   return name;
 }

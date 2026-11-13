@@ -49,6 +49,18 @@ test('download filenames cannot escape their selected destination', () => {
   assert.equal(attachmentFiles.safeFilename('result. ', 'safe.txt'), 'result');
 });
 
+test('filename truncation keeps the final extension and the existing length limit', () => {
+  for (const extension of ['.docx', '.md', '.gz', '.PNG']) {
+    const result = attachmentFiles.safeFilename('a'.repeat(180) + extension, 'safe.txt');
+    assert.equal(result.length, 180);
+    assert.ok(result.endsWith(extension));
+  }
+  const boundary = 'a'.repeat(175) + '.docx';
+  assert.equal(attachmentFiles.safeFilename(boundary, 'safe.txt'), boundary);
+  assert.equal(attachmentFiles.safeFilename('a'.repeat(200), 'safe.txt'), 'a'.repeat(180));
+  assert.equal(attachmentFiles.safeFilename('a.' + 'b'.repeat(200), 'safe.txt').length, 180);
+});
+
 test('renderer exposes narrow native preview and explicit download commands', () => {
   const main = read('main.js');
   const preload = read('preload.js');
