@@ -1266,6 +1266,34 @@ async def del_model_provider(
     return {"ok": True}
 
 
+@router.post("/model-providers/{pid}/discover")
+async def discover_model_provider(
+    pid: str,
+    user: User = Depends(require_perm("integration.manage")),
+    session: AsyncSession = Depends(get_session),
+):
+    """Ask the saved provider which model identifiers it serves. Read-only: names
+    come back for review; importing them stays an explicit model-defs write.
+    """
+    from ..models import ModelDef, ModelProvider
+    from ..services import model_catalog, model_discovery
+    p = await session.get(ModelProvider, pid)
+    if p is None:
+        raise HTTPException(status_code=404, detail="这个模型服务不存在")
+    if not p.enabled or not p.base_url or not p.api_key:
+        return {"ok": False, "models": [], "known": [],
+                "detail": "服务需要先启用，并填写地址与密钥后才能读取模型列表"}
+    result = await model_discovery.discover(p.base_url, p.api_key, p.kind)
+    existing = (await session.execute(
+        select(ModelDef.name).where(ModelDef.provider_id == pid))).scalars().all()
+    known = set(existing)
+    result["known"] = sorted(known)
+    result["models"] = [name for name in result["models"] if name not in known]
+    await audit.log(session, user, "model.discover", "setting", pid, p.name,
+                    {"ok": result["ok"], "count": len(result["models"])})
+    return result
+
+
 @router.put("/model-defs")
 async def put_model_def(
     body: dict = Body(default_factory=dict),

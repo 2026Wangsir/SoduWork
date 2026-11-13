@@ -121,6 +121,8 @@ async def register(body: Registration,
         session.add(user)
         await legal_publications.register_receipts(session, user.id, client.id, body.consents, body.consentLocales)
         await session.flush()
+        from ..services import quota_plans
+        await quota_plans.register_trial(session, user.id)
         return await complete_login(session, client, user, body, created=True)
     except IntegrityError as exc:
         await session.rollback()

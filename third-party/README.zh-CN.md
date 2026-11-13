@@ -10,7 +10,7 @@
 
 - 客户端 beforePack 检查许可快照和锁定版本，收集实际复制的 Pi/SSH 依赖声明；Electron LICENSE 和 Chromium notices 由 electron-builder 保留。
 - 许可位于 README 的组件保留全文；缺失原文需要经过审查的固定版本证据，未知缺失项阻断构建。
-- Runner 保留 Python 依赖元数据和 wheel 内许可；Hub 保留本目录与项目 LICENSE。首版技能仅包含 `tools/distribution/PUBLIC-SOURCE.json` 声明的本项目自有指南，已移除第三方技能套件。
+- Runner 保留 Python 依赖元数据和 wheel 内许可；Hub 保留本目录与项目 LICENSE。随附技能包含 `tools/distribution/PUBLIC-SOURCE.json` 声明的项目自有指南和已核对来源的上游开发技能。每个引入的技能保留原始许可、固定版本来源和适配记录，见[技能许可说明](../skills/THIRD-PARTY.zh-CN.md)。
 - 这些检查不是完整 SBOM、漏洞扫描或法律许可认证。
 
 ## Hub 镜像中的 Python 依赖

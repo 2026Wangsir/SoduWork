@@ -277,3 +277,46 @@ test('modelPick false still clears stale direct and workflow model overrides', (
   assert.equal(state.state.model, '');
   assert.equal(state.modelStale, false);
 });
+
+test('local model catalog is optional, source-labeled and kept beside Hub choices', async () => {
+  const h = fixture({modelOptions: [{name: 'hub-model', providerId: 'hub-provider', providerName: 'Example Hub'}]});
+  h.ctx.window.soduWorkAPI = {localModels: {get: async () => ({usable: [
+    {name: 'local:model-abc', modelName: 'qwen-local', label: 'Qwen Local',
+      providerId: 'ollama', providerName: '本机 Ollama', localOnly: true, modality: 'chat'},
+    {name: 'local:image-abc', localOnly: true, modality: 'image'},
+  ]})}};
+  const rows = await h.ctx._fwdLocalModelChoices();
+  assert.deepEqual(rows.map(row => [row.name, row.source, row.localOnly]),
+    [['local:model-abc', 'local', true]]);
+  h.ctx._fwdMergeLocalModelChoices(rows);
+  assert.deepEqual(h.ctx.options.modelOptions.map(row => row.name), ['hub-model', 'local:model-abc']);
+  h.run("_fwdLocalAgents = [{key:'local:pi', name:'Pi', executionSource:'conversation', modelPick:true}]");
+  h.ctx.options.substrates = [agent('local:pi', {name: 'Hub Pi', remote: false})];
+  const merged = h.ctx._fwdDirectAgents()[0];
+  assert.equal(merged.remote, false, 'Hub routing metadata remains intact');
+  assert.equal(merged.localConversationAvailable, true);
+  assert.equal(h.ctx._fwdLocalModelAllowed(merged), true);
+  assert.equal(h.ctx._fwdCanPickModel({...merged, modelPick: false}), true,
+    'a managed local probe restores model selection for a stale Hub row');
+  assert.equal(h.ctx._fwdLocalModelAllowed({...merged, remote: true}), false,
+    'a remote Runner never receives a device-owned model reference');
+  assert.equal(h.ctx._fwdCanPickModel({...merged, modelPick: false, remote: true}), false);
+});
+
+test('local model choices render for a local Agent and disappear for a remote Runner', async () => {
+  const h = directModelFixture();
+  h.ctx.window.soduWorkAPI = {localModels: {get: async () => ({usable: [
+    {name: 'local:model-abc', modelName: 'qwen-local', label: 'Qwen Local',
+      providerName: '本机 Ollama', localOnly: true, modality: 'chat'},
+  ]})}};
+  h.ctx.options.substrates = [agent('chosen', {name: 'Pi', modelPick: true, local: true, remote: false})];
+  h.ctx._fwdMergeLocalModelChoices(await h.ctx._fwdLocalModelChoices());
+  h.run("_fwdModel = ''");
+  h.ctx._fwdSyncConfirm('task');
+  assert.match(h.nodes.get('fwdDecision').innerHTML, /value="local:model-abc"/);
+  assert.match(h.nodes.get('fwdDecision').innerHTML, /Qwen Local/);
+
+  h.ctx.options.substrates = [agent('chosen', {name: 'Remote Pi', modelPick: true, remote: true})];
+  h.ctx._fwdSyncConfirm('task');
+  assert.doesNotMatch(h.nodes.get('fwdDecision').innerHTML, /value="local:model-abc"/);
+});

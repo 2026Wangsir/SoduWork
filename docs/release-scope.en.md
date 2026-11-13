@@ -4,11 +4,11 @@
 
 Project copyright is attributed to **MDiRi**. See the root [LICENSE](../LICENSE).
 
-The public source includes the desktop client, Hub, management UI, Runner source, multi-platform source launchers, and generic Docker self-hosting. It retains project-owned office, task, MCP, and capability-authoring guides, generic workflows, isolation checks, and migration tests.
+The public source includes the desktop client, Hub, management UI, Runner source, multi-platform source launchers, and generic Docker self-hosting. It retains project-owned office, task, MCP, and capability-authoring guides, generic workflows, isolation checks, and migration tests. The [bundled skill catalog](../skills/README.md) also includes selected, fixed-version Matt Pocock engineering skills, Superpowers development skills, and Anthropic frontend design, with original licenses and documented adaptations.
 
 Excluded from this distribution:
 
-- Third-party skill bundles and their display metadata, and upstream platform-plugin reference snapshots.
+- Unreviewed third-party skill bundles, host-specific skill display metadata, and upstream platform-plugin reference snapshots. Only the skills explicitly listed in the public source profile are included.
 - Mobile applications, internal product and architecture records, original brand design files, and validation process material.
 - Non-public business plugins, applications, and their dedicated adapters, integration scripts, prompts, and assets.
 - Business-content synchronization and demo-data seeding tools.
