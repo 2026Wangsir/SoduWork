@@ -100,6 +100,25 @@ test('legacy local modelNames are mirrors rather than extra organization-owned r
   assert.equal(rows(f.detail()), 0);
 });
 
+test('a no-key local service can discover its first model without a manual model ID', async () => {
+  const provider = { id: 'legacy-local', name: 'Legacy local', baseUrl: 'http://127.0.0.1:8686/v1',
+    authMode: 'none', localOnly: false, modelNames: [] };
+  const catalog = { providers: [provider], myModels: [], usable: [], mediaUsable: {} };
+  const f = fixture(catalog);
+  const calls = [];
+  let pickerRefreshes = 0;
+  f.context.ComposeModelPicker = { refresh: async () => { pickerRefreshes++; } };
+  f.context.SoduWorkAPI = {
+    testMyModel: async id => { calls.push(id); return { ok: true, models: ['qwen3'], detail: '连接通过，已读取模型列表' }; },
+    myModels: async () => ({ providers: [provider], myModels: [{ providerId: provider.id, name: 'qwen3', label: 'qwen3', localOnly: true }], usable: [], mediaUsable: {} }),
+  };
+  await f.evaluate('_mdDoTest({ getAttribute: () => "legacy-local" })');
+  assert.deepEqual(calls, ['legacy-local']);
+  assert.equal(f.evaluate('_mdTest["legacy-local"].state'), 'ok');
+  assert.equal(f.evaluate('_mdMyModels[0].name'), 'qwen3');
+  assert.equal(pickerRefreshes, 1);
+});
+
 test('an incomplete local catalog fails loading instead of promoting mirrored definitions', async () => {
   const f = fixture(), incomplete = localCatalog();
   delete incomplete.myModels;
