@@ -1,0 +1,38 @@
+; Native NSIS language selection also applies to product-specific messages.
+; Keep these LCIDs aligned with package.json installerLanguages. English is the
+; first installer language, so unsupported system languages fall back to it.
+!ifdef BUILD_UNINSTALLER
+LangString soduworkQuitBeforeUninstall 1033 "Quit SoduWork from the tray before uninstalling. Work in progress will not be forcibly stopped."
+LangString soduworkQuitBeforeUninstall 2052 "请先从托盘退出 SoduWork，再卸载。正在进行的工作不会被强制中断。"
+LangString soduworkQuitBeforeUninstall 1041 "アンインストールする前に、トレイから SoduWork を終了してください。実行中の作業は強制終了されません。"
+LangString soduworkQuitBeforeUninstall 1042 "제거하기 전에 트레이에서 SoduWork를 종료하세요. 진행 중인 작업은 강제로 중단되지 않습니다."
+!else
+LangString soduworkUpdateBusy 1033 "Another SoduWork update is in progress. Please wait for it to finish."
+LangString soduworkUpdateBusy 2052 "另一个 SoduWork 更新正在进行，请等待它完成。"
+LangString soduworkUpdateBusy 1041 "別の SoduWork 更新が進行中です。完了するまでお待ちください。"
+LangString soduworkUpdateBusy 1042 "다른 SoduWork 업데이트가 진행 중입니다. 완료될 때까지 기다려 주세요."
+LangString soduworkLauncherUpdateFailed 1033 "The SoduWork launcher could not be updated. Retry the installation; the previous version and your work data have been preserved."
+LangString soduworkLauncherUpdateFailed 2052 "SoduWork 的启动文件暂时无法更新。请重试安装；旧版本和工作数据仍然保留。"
+LangString soduworkLauncherUpdateFailed 1041 "SoduWork の起動ファイルを更新できませんでした。再インストールしてください。以前のバージョンと作業データは保持されています。"
+LangString soduworkLauncherUpdateFailed 1042 "SoduWork 실행 파일을 업데이트할 수 없습니다. 설치를 다시 시도하세요. 이전 버전과 작업 데이터는 보존되어 있습니다."
+LangString soduworkExtractionFailed 1033 "Installation files could not be written completely. Check the destination permissions and free disk space, then try again."
+LangString soduworkExtractionFailed 2052 "安装文件写入未完成。请检查目标目录权限和磁盘空间后重试。"
+LangString soduworkExtractionFailed 1041 "インストールファイルの書き込みが完了しませんでした。保存先の権限とディスクの空き容量を確認し、再試行してください。"
+LangString soduworkExtractionFailed 1042 "설치 파일 쓰기가 완료되지 않았습니다. 대상 폴더의 권한과 디스크 여유 공간을 확인한 후 다시 시도하세요."
+LangString soduworkPayloadIncomplete 1033 "Installation files are incomplete. The installation did not finish. Please run the installer again."
+LangString soduworkPayloadIncomplete 2052 "安装文件未准备完整，本次安装未完成。请重试安装。"
+LangString soduworkPayloadIncomplete 1041 "インストールファイルが不足しているため、インストールは完了していません。インストーラーを再実行してください。"
+LangString soduworkPayloadIncomplete 1042 "설치 파일이 불완전하여 설치가 완료되지 않았습니다. 설치 프로그램을 다시 실행하세요."
+LangString soduworkVerificationFailed 1033 "Installation file verification failed. The installation did not finish.$\r$\nRun the installer again. If it still fails, send these installation logs to technical support:"
+LangString soduworkVerificationFailed 2052 "安装文件校验未通过，本次安装未完成。$\r$\n请稍后重新运行安装包；若仍失败，请将以下安装日志交给技术支持："
+LangString soduworkVerificationFailed 1041 "インストールファイルの検証に失敗しました。インストールは完了していません。$\r$\nインストーラーを再実行してください。再び失敗する場合は、次のインストールログをサポートに送信してください："
+LangString soduworkVerificationFailed 1042 "설치 파일 검증에 실패하여 설치가 완료되지 않았습니다.$\r$\n설치 프로그램을 다시 실행하세요. 계속 실패하면 다음 설치 로그를 기술 지원팀에 보내 주세요:"
+LangString soduworkIndependentDirectory 1033 "This folder belongs to another SoduWork client. Choose a separate installation folder for this environment."
+LangString soduworkIndependentDirectory 2052 "此目录属于另一个 SoduWork 客户端，请选择此环境的独立安装目录。"
+LangString soduworkIndependentDirectory 1041 "このフォルダーは別の SoduWork クライアントで使用されています。この環境専用のインストール先を選択してください。"
+LangString soduworkIndependentDirectory 1042 "이 폴더는 다른 SoduWork 클라이언트에서 사용 중입니다. 이 환경의 별도 설치 폴더를 선택하세요."
+LangString soduworkOpenFile 1033 "Open with ${PRODUCT_NAME}"
+LangString soduworkOpenFile 2052 "用 ${PRODUCT_NAME} 打开"
+LangString soduworkOpenFile 1041 "${PRODUCT_NAME} で開く"
+LangString soduworkOpenFile 1042 "${PRODUCT_NAME}(으)로 열기"
+!endif

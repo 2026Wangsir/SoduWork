@@ -32,7 +32,7 @@
     ${If} ${FileExists} "$INSTDIR\SoduWork.exe"
     ${OrIf} ${FileExists} "$INSTDIR\SoduWork CN.exe"
     ${OrIf} ${FileExists} "$INSTDIR\SoduWork Global.exe"
-    MessageBox MB_OK|MB_ICONEXCLAMATION "此目录属于另一个 SoduWork 客户端，请选择此环境的独立安装目录。" /SD IDOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(soduworkIndependentDirectory)" /SD IDOK
     SetErrorLevel 2
     Quit
     ${EndIf}

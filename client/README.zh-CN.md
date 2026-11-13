@@ -48,6 +48,8 @@ Windows 执行服务在工具初始化前加入原生 Job Object。专用 Window
 
 ## Windows 打包
 
+Windows 交互式安装器提供英语、简体中文、日语和韩语，默认匹配 Windows 界面语言，不支持的语言回退为英语；用户可在安装前手动选择。静默更新不显示语言选择框。安装器语言不会覆盖桌面端已保存的界面语言。macOS 和 Linux 保持各自平台的安装界面。
+
 1. 在后端虚拟环境安装 `../hub-backend/requirements-runner-build.txt`。
 2. 执行 `npm run build` 或 `npm run build-portable`。
 3. 发布前按当前发布门禁验证最终安装包、升级与回滚。

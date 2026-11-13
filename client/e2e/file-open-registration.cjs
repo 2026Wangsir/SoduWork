@@ -17,6 +17,8 @@ Name "SoduWork isolated file registration test"
 OutFile "${exe}"
 !include "LogicLib.nsh"
 !define SHELL_CONTEXT HKCU
+!define PRODUCT_NAME "SoduWork"
+!include "${path.resolve(__dirname,'../build/installer-language.nsh')}"
 !define APP_EXECUTABLE_FILENAME "SoduWork.exe"
 !define SODUWORK_FILE_VERB "${key}\Verb"
 !define SODUWORK_OPEN_APP "${key}\Application"
