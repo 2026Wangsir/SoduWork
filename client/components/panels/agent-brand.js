@@ -5,14 +5,26 @@
 
   const MONOGRAMS = Object.freeze({
     pi: 'PI',
-    'codex-harness': 'CX',
+    'codex-harness': '',
     opencode: 'OC',
     claude: 'CL',
-    codex: 'CX',
+    codex: '',
     qwen: 'QW',
     kimi: 'KM',
     dsh: 'DS',
     harness2: 'H2',
+  });
+  // Brand artwork is local and pinned by client/assets/agent-brands/sources.json.
+  const ICONS = Object.freeze({
+    pi: 'assets/agent-brands/pi.svg',
+    'codex-harness': 'assets/agent-brands/codex.svg',
+    opencode: 'assets/agent-brands/opencode.svg',
+    claude: 'assets/agent-brands/claude.svg',
+    codex: 'assets/agent-brands/codex.svg',
+    qwen: 'assets/agent-brands/qwen.svg',
+    kimi: 'assets/agent-brands/kimi.svg',
+    dsh: 'assets/agent-brands/deepseek.svg',
+    harness2: 'assets/agent-brands/google.svg',
   });
   const CUSTOM_PATHS = Object.freeze([
     'M7.4 5.8 12 3l4.6 2.8v5.5c0 3.7-1.9 6.6-4.6 8.7-2.7-2.1-4.6-5-4.6-8.7V5.8Z',
@@ -72,6 +84,8 @@
 
   function glyph(value) {
     const id = canonical(value);
+    const source = ICONS[id];
+    if (source) return '<img src="' + _attr(source) + '" alt="" aria-hidden="true" draggable="false">';
     const mark = MONOGRAMS[id];
     if (mark) return '<span class="agent-monogram" aria-hidden="true">' + mark + '</span>';
     return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
@@ -97,7 +111,12 @@
       root.setAttribute(name, text);
     }
     if (opts.id) root.setAttribute('id', opts.id);
-    if (MONOGRAMS[id]) {
+    if (ICONS[id]) {
+      const image = document.createElement('img');
+      image.setAttribute('src', ICONS[id]); image.setAttribute('alt', '');
+      image.setAttribute('aria-hidden', 'true'); image.setAttribute('draggable', 'false');
+      image.setAttribute('decoding', 'async'); root.append(image);
+    } else if (MONOGRAMS[id]) {
       const mark = document.createElement('span');
       mark.setAttribute('class', 'agent-monogram'); mark.setAttribute('aria-hidden', 'true');
       mark.textContent = MONOGRAMS[id]; root.append(mark);
@@ -209,7 +228,7 @@
     const match = raw.match(/^(?:@openma\/deepseek-harness-acp(?:\s+|@)|deepseek-harness-acp\s+|dsh\s+)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/i);
     return match ? match[1] : raw;
   }
-  const api = Object.freeze({ MONOGRAMS, LABELS, canonical, className, glyph, html, element, sourceKey, transcript, version });
+  const api = Object.freeze({ ICONS, MONOGRAMS, LABELS, canonical, className, glyph, html, element, sourceKey, transcript, version });
   global.AgentBrand = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

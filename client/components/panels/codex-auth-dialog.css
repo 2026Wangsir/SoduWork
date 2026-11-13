@@ -4,7 +4,7 @@ dialog.codex-auth-dialog::backdrop{background:rgba(25,30,40,.32);backdrop-filter
 .codex-auth-dialog .codex-auth-card{padding:24px}
 .codex-auth-dialog .codex-auth-head{display:flex;align-items:center;gap:12px}
 .codex-auth-dialog .codex-auth-brand{display:grid;place-items:center;width:42px;height:42px;flex:none;border:1px solid var(--line);border-radius:12px;background:var(--bg-0)}
-.codex-auth-dialog .codex-auth-brand img{width:25px;height:25px}
+.codex-auth-dialog .codex-auth-brand img{width:25px;height:25px;object-fit:contain}
 .codex-auth-dialog .codex-auth-heading{flex:1;min-width:0}
 .codex-auth-dialog h2{margin:0;font-size:18px;line-height:1.4;font-weight:650}
 .codex-auth-dialog .codex-auth-machine{margin:2px 0 0;color:var(--ink-3);font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

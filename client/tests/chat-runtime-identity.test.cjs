@@ -76,8 +76,12 @@ function fixture(t, status = 'done', restored) {
       assert.equal(root.querySelector('#nchatRuntimeName').textContent, window.AgentBrand.LABELS[id]);
       assert.equal(root.querySelector('#nchatRuntimeIcon').innerHTML,
         window.AgentBrand.html(id, { className: 'runtime-brand' }));
-      assert.ok(root.querySelector('#nchatRuntimeIcon').innerHTML.includes('class="agent-monogram"'));
-      assert.ok(root.querySelector('#nchatRuntimeIcon').innerHTML.includes('>' + window.AgentBrand.MONOGRAMS[id] + '</span>'));
+      if (window.AgentBrand.ICONS[id]) {
+        assert.ok(root.querySelector('#nchatRuntimeIcon').innerHTML.includes('<img src="' + window.AgentBrand.ICONS[id] + '"'));
+      } else {
+        assert.ok(root.querySelector('#nchatRuntimeIcon').innerHTML.includes('class="agent-monogram"'));
+        assert.ok(root.querySelector('#nchatRuntimeIcon').innerHTML.includes('>' + window.AgentBrand.MONOGRAMS[id] + '</span>'));
+      }
     },
   };
 }

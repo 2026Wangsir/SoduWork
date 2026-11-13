@@ -1,12 +1,27 @@
 /* One visual identity contract for runtime picker, Agent management and AI team. */
 .agent-brand {
   --agent-brand-size:36px;
+  --agent-brand-accent: var(--line-2);
   width:var(--agent-brand-size);height:var(--agent-brand-size);box-sizing:border-box;
   display:grid;place-items:center;flex:0 0 var(--agent-brand-size);overflow:hidden;
-  border:1px solid color-mix(in srgb,var(--line-2) 82%,transparent);border-radius:11px;
-  background:color-mix(in srgb,var(--bg-0) 94%,var(--bg-1));
+  border:1px solid color-mix(in srgb,var(--agent-brand-accent) 24%,var(--line-2));border-radius:11px;
+  background:var(--bg-0);
   box-shadow:0 1px 2px rgba(20,30,48,.035),inset 0 1px 0 rgba(255,255,255,.72);
   color:var(--ink-3);
+}
+.agent-brand>img {display:block;width:64%;height:64%;object-fit:contain;pointer-events:none;user-select:none;}
+.agent-brand-pi {--agent-brand-accent:#6b7280;}
+.agent-brand-opencode {--agent-brand-accent:#111827;}
+.agent-brand-claude {--agent-brand-accent:#d97757;}
+.agent-brand-qwen {--agent-brand-accent:#6950ef;}
+.agent-brand-kimi {--agent-brand-accent:#111827;}
+.agent-brand-dsh {--agent-brand-accent:#5786fe;}
+.agent-brand-harness2 {--agent-brand-accent:#4285f4;}
+.agent-brand-codex,.agent-brand-codex-harness {--agent-brand-accent:#6f52b5;}
+.agent-brand-codex>img,.agent-brand-codex-harness>img {width:76%;height:76%;}
+html[data-desk-panel="chatbar"][data-composer-theme="dark"] .agent-brand {
+  /* The bundled marks are intentionally unchanged; keep a light inner surface for dark mode. */
+  background:#f7f8fb !important;border-color:rgba(255,255,255,.18) !important;color:#242936;
 }
 .agent-brand>.agent-monogram {display:block;font-family:var(--font-ui, sans-serif);
   font-size:clamp(12px,calc(var(--agent-brand-size) * .36),16px);font-weight:650;line-height:1;
@@ -34,3 +49,6 @@
   box-shadow:0 1px 2px rgba(15,23,42,.12);
 }
 .nchat-agent-source .agent-brand>img{width:19px;height:19px;object-fit:contain;opacity:1;max-width:none}
+html[data-desk-panel="chatbar"][data-composer-theme="dark"] .nchat-agent-source .agent-brand {
+  background:#f7f8fb !important;border-color:rgba(255,255,255,.18) !important;color:#242936;
+}

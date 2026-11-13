@@ -1,77 +1,123 @@
 {
   "$meta": {
-    "schema": 1,
-    "registeredAt": "2026-10-20",
-    "provenanceStatus": "unverified",
-    "pattern": "对齐同仓库 client/assets/connector-brands/sources.json 的登记模式",
-    "policy": "本目录图标用于产品界面中展示用户已连接的第三方 Agent/模型品牌。品牌标识（logo/商标）的版权归各权利人；界面展示不表示官方合作或背书。",
-    "outstandingWork": "既有 7 项来源未完成核证；新增 Google 标识已记录素材地址，许可与品牌使用范围仍待核证。公开发布（含开源快照、官网物料、对外交付包）之前，必须逐项完成：1) 确认素材来源与许可；2) 核对权利人品牌使用规范；3) 无法核证的替换为自行绘制图形或取得权利人授权。在此之前，本目录不得进入任何公开分发范围。",
-    "reviewEvidence": "2026-10-20 合规审计（ScanCode 素材扫描 + 人工检查）确认本目录此前无任何来源记录，本文件为补登记：只记录可观察到的事实与待办，不虚构来源或许可。"
-  },
-  "kimi": {
-    "file": "kimi.png",
-    "product": "Kimi Code",
-    "source": "https://raw.githubusercontent.com/MoonshotAI/kimi-code/fc3b521b8b68468268bb4cfe7f45008ce08b2b99/apps/vscode/webview-ui/public/kimi-logo.png",
-    "retrievedAt": "2026-11-02",
-    "license": "MIT; see kimi-LICENSE.txt",
-    "rightsNote": "Unmodified official repository asset, used to identify the connected runtime. Trademarks belong to Moonshot AI; no endorsement is implied."
-  },
-  "harness2": {
-    "file": "harness2.svg",
-    "product": "Google（Google Research Harness² 入口）",
-    "artworkOrigin": "source-recorded-rights-unverified",
-    "source": "https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg",
-    "retrievedAt": "2026-10-20",
-    "observed": "SVG 注释记录素材地址和获取日期，保留 Google G 的原始路径与四色。",
-    "rightsNote": "来源记录不等于取得商标或美术作品授权；公开分发前须核对 Google 品牌规范及素材使用许可，不表示 Google 官方合作或背书。"
-  },
-  "chatgpt": {
-    "file": "chatgpt.svg",
-    "product": "OpenAI ChatGPT",
-    "artworkOrigin": "unverified",
-    "observed": "24×24 viewBox，内嵌 <style> 类（.chatgpt-mark，#202123），非 simple-icons 集合风格（无来源登记可比对）。",
-    "rightsNote": "来源未登记。疑似取自官方品牌资料，未经核证不得作为依据。公开分发前须核对 OpenAI 品牌规范（openai.com/brand）并确认许可，或替换为自行绘制图形。"
-  },
-  "claude": {
-    "file": "claude.png",
-    "product": "Anthropic Claude",
-    "artworkOrigin": "unverified",
-    "observed": "位图（PNG），来源、分辨率与取材时间未登记。",
-    "rightsNote": "来源未登记。公开分发前须核对 Anthropic 品牌规范并确认许可，或替换为自行绘制图形。"
-  },
-  "deepseek": {
-    "file": "deepseek.svg",
-    "product": "DeepSeek",
-    "artworkOrigin": "unverified",
-    "observed": "50×50 viewBox，带 xlink 与转换工具痕迹，疑似由官网/公开素材转换生成，待核证。",
-    "rightsNote": "来源未登记。公开分发前须核对 DeepSeek 品牌规范并确认许可，或替换为自行绘制图形。"
-  },
-  "openai": {
-    "file": "openai.svg",
-    "product": "（文件名与内容不符，存疑）",
-    "artworkOrigin": "unverified",
-    "observed": "文件名为 openai.svg，但内容为蓝色圆形图标（#0080F7 实心圆底 + 内部图形），与 OpenAI 官方标志（黑色花形结环）不符，疑为其他产品图标误命名。",
-    "rightsNote": "存在疑似错标：文件名指向 OpenAI 而图形特征与之不符。须人工确认真实品牌后改名或替换；在此之前不得在任何对外物料中使用本文件。"
-  },
-  "opencode": {
-    "file": "opencode.svg",
-    "product": "opencode（开源 Agent 项目）",
-    "artworkOrigin": "unverified",
-    "observed": "512×512 嵌套 SVG，疑似项目官方仓库导出，其 logo 许可以上游仓库声明为准，未核证。",
-    "rightsNote": "来源未登记。公开分发前须核对上游仓库许可证对 logo 的适用范围（代码 MIT 不必然覆盖美术资产），或替换。"
+    "schema": 2,
+    "registeredAt": "2026-11-13",
+    "provenanceStatus": "source-recorded-rights-review-pending",
+    "policy": "Brand path geometry is kept unchanged inside a SoduWork-owned container. Recorded brand colors are applied in the local SVG asset; container styling may distinguish the runtime, but must not crop, redraw, or add elements to a third-party mark.",
+    "collectionLicenseFile": "LICENSE.simple-icons.md",
+    "collectionLicenseSource": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+    "simpleIconsDisclaimer": "https://github.com/simple-icons/simple-icons/blob/develop/DISCLAIMER.md",
+    "fallbacks": "Unknown runtimes retain the generic shield. Codex and Codex Harness use the local reference-based knot mark recorded below; it is not presented as an official OpenAI asset.",
+    "reviewEvidence": "Sources were checked against the recorded official source or brand-guideline URL before inclusion. SHA-256 values pin the exact local files."
   },
   "pi": {
     "file": "pi.svg",
-    "product": "pi（@earendil-works/pi-coding-agent，本产品 MIT 依赖）",
-    "artworkOrigin": "unverified",
-    "observed": "800×800，内嵌 <style>，疑似 pi 项目标识；使用范围应与该依赖的引进边界一致。",
-    "rightsNote": "来源未登记。pi 以 MIT 引进（见 third-party/manifest.json），但 logo 美术作品是否随许可授予使用权未核证；公开分发前须确认。"
+    "product": "Pi",
+    "source": "https://pi.dev/favicon.svg",
+    "guidelines": "https://pi.dev",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. The Pi name and mark remain trademarks of their respective owner; no endorsement is implied.",
+    "sha256": "d38eb6b9daebe9708fcc60ae17d51eedb9f1e65661c95cad5c2e1e273b77bf21",
+    "displayColor": "#000000",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
+  },
+  "opencode": {
+    "file": "opencode.svg",
+    "product": "OpenCode",
+    "source": "https://github.com/anomalyco/opencode/blob/1251a870cb384543c150c4a72fb101b55eec971b/packages/identity/mark.svg",
+    "guidelines": "https://github.com/anomalyco/opencode",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. OpenCode branding remains owned by its project; no endorsement is implied.",
+    "sha256": "c65afefdb1eb67be19a50f715d0a7a2c19558dbf0cbdc974feb367e055cd5f58",
+    "displayColor": "#000000",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
+  },
+  "claude": {
+    "file": "claude.svg",
+    "product": "Claude",
+    "source": "https://claude.ai",
+    "guidelines": "https://www.anthropic.com/legal/trademarks",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. Claude and Anthropic branding remain owned by Anthropic; no endorsement is implied.",
+    "sha256": "5119ef950a0d648b3fd62865791e73f07f32e18ddab84e4f21160f8c641c0f5f",
+    "displayColor": "#D97757",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
+  },
+  "dsh": {
+    "file": "deepseek.svg",
+    "product": "DeepSeek",
+    "source": "https://www.deepseek.com",
+    "guidelines": "https://www.deepseek.com",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. DeepSeek branding remains owned by its owner; no endorsement is implied.",
+    "sha256": "b0b2c0dfb3acb314c57df573fd87605e567da1b7fa8b95cba9984f187463a5a3",
+    "displayColor": "#5786FE",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
   },
   "qwen": {
-    "file": "qwen.png",
-    "product": "Qwen（通义千问）",
-    "artworkOrigin": "unverified",
-    "observed": "位图（PNG），来源、分辨率与取材时间未登记。",
-    "rightsNote": "来源未登记。公开分发前须核对阿里云 Qwen 品牌规范并确认许可，或替换为自行绘制图形。"
+    "file": "qwen.svg",
+    "product": "Qwen",
+    "source": "https://qwen.ai",
+    "guidelines": "https://qwen.ai",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. Qwen branding remains owned by its owner; no endorsement is implied.",
+    "sha256": "189f77fb476f0a399e22ec968b05f6d24ceb9cad258c5cb3355b114f443757d2",
+    "displayColor": "#6950EF",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
+  },
+  "kimi": {
+    "file": "kimi.svg",
+    "product": "Kimi",
+    "source": "https://moonshotai.github.io/Branding-Guide",
+    "guidelines": "https://moonshotai.github.io/Branding-Guide",
+    "collection": "simple-icons@16.37.0",
+    "collectionLicense": "CC0-1.0",
+    "artworkOrigin": "simple-icons-official-source",
+    "rightsNote": "The artwork is distributed through Simple Icons under CC0. Kimi and Moonshot AI branding remain owned by their owner; no endorsement is implied.",
+    "sha256": "e050b0cd0c29cdd91c049d1fe77d0296ee80b316f781d50a0323e2eb1b7c09a1",
+    "displayColor": "#000000",
+    "colorNote": "Simple Icons brand color applied to the unchanged path geometry."
+  },
+  "harness2": {
+    "file": "google.svg",
+    "product": "Google Research Harness²",
+    "source": "https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg",
+    "guidelines": "https://about.google/brand-resource-center/brand-elements/",
+    "collection": "official-google-product-logo",
+    "artworkOrigin": "official-source",
+    "rightsNote": "The Google G is kept unchanged and identifies the Google Research Harness² integration; this is not a Google product endorsement.",
+    "sha256": "ed9087d76cdc6d1c53698f6068f79872e77e87c8d012c0cfdad13b05b6ccb37c"
+  },
+  "codex": {
+    "file": "codex.svg",
+    "product": "Codex / Codex Harness",
+    "source": "user-provided-reference",
+    "collection": "SoduWork local artwork",
+    "artworkOrigin": "soduwork-designed-reference",
+    "displayColor": "#202123",
+    "colorNote": "Reference-based black knot mark designed for SoduWork; it is not presented as an OpenAI logo or endorsement.",
+    "rightsNote": "This local mark is used to distinguish Codex entries in SoduWork. It is intentionally separate from any third-party brand asset.",
+    "sha256": "bf9112e027c16a552f3d4473beaf296a08fd9458b0c31d0a241b1c1c047a43ef"
+  },
+  "codex-harness": {
+    "file": "codex.svg",
+    "product": "Codex Harness",
+    "source": "user-provided-reference",
+    "collection": "SoduWork local artwork",
+    "artworkOrigin": "soduwork-designed-reference",
+    "displayColor": "#202123",
+    "colorNote": "Reference-based black knot mark designed for SoduWork; it is not presented as an OpenAI logo or endorsement.",
+    "rightsNote": "This local mark is used to distinguish Codex entries in SoduWork. It is intentionally separate from any third-party brand asset.",
+    "sha256": "bf9112e027c16a552f3d4473beaf296a08fd9458b0c31d0a241b1c1c047a43ef"
   }
 }
