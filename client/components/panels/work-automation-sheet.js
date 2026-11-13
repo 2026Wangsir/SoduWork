@@ -285,7 +285,10 @@
     const managed = agent && agent.modelPick === false && agent.nativeModelPick !== true;
     const options = agent?.nativeModelPick ? agent.modelOptions : state.modelOptions;
     const disabled = Boolean(managed || ((!Array.isArray(options) || !options.length) && !current));
-    const hint = managed ? tx('当前底座自行管理模型') : tx('模型与执行底座独立保存，每次自动化运行使用这里的选择');
+    const localOnly = String(agent?.id || '').startsWith('local:') && !(Array.isArray(options) && options.length);
+    const hint = managed ? tx('当前底座自行管理模型') : localOnly
+      ? tx('本机模型仅支持本机对话；后台自动化需要 Hub 托管模型')
+      : tx('模型与执行底座独立保存，每次自动化运行使用这里的选择');
     return '<label class="waz-field"><span>' + esc(tx('模型')) + ' <small>' + esc(tx('可独立选择')) + '</small></span>' +
       '<select name="modelName" aria-describedby="wazModelHint"' + (disabled ? ' disabled' : '') + '>' +
       modelRows(current, agentId) + '</select><small id="wazModelHint" class="waz-field-hint">' + esc(hint) + '</small></label>';
