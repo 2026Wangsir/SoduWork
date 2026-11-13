@@ -62,6 +62,7 @@
     return [...modifiers.filter(mod => mods.includes(mod)), ...bases].join('+');
   }
   function comboFromKeyEvent(event) {
+    if (event?.getModifierState?.('AltGraph')) return '';
     const key = String(event?.key || '');
     if (!key || ['Control', 'Alt', 'Shift', 'Meta', 'OS', 'CapsLock'].includes(key)) return '';
     const mods = [];
