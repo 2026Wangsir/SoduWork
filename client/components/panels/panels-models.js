@@ -168,6 +168,7 @@ function _mdState(p) {
   if (p.keySet) return 'org';
   return p.baseUrl ? 'open' : 'noaddr';
 }
+function _mdUsesLocalDiscovery(p) { return p?.localOnly === true || p?.authMode === 'none'; }
 const _MD_ST = {
   local: { t: '本地可用', o: 0 },
   mine: { t: '个人额度', o: 0 },
@@ -481,7 +482,7 @@ async function _mdDoTest(el) {
   if (!p || !String(p.baseUrl || '').trim()) {
     _mdTest[pid] = { state: 'bad', detail: '请先填写 API 地址' }; _mdRender(); return;
   }
-  if (!p.localOnly && !(_mdMyModels || []).some((m) => m.providerId === pid) &&
+  if (!_mdUsesLocalDiscovery(p) && !(_mdMyModels || []).some((m) => m.providerId === pid) &&
       !(p.modelDefs || p.modelNames || []).length) {
     _mdTest[pid] = { state: 'bad', detail: '请先添加一个模型 ID' }; _mdRender(); return;
   }
@@ -503,12 +504,13 @@ async function _mdDoTest(el) {
     const r = await SoduWorkAPI.testMyModel(testPid);
     _mdTest[testPid] = { state: r && r.ok ? 'ok' : 'bad',
                      detail: (r && r.detail) || '没测出结果' };
-    if (r?.ok && p.localOnly && Array.isArray(r.models)) {
+    if (r?.ok && _mdUsesLocalDiscovery(p) && Array.isArray(r.models)) {
       // The main-process probe persists discovered IDs atomically. Reload the
       // merged catalog instead of saving again with a stale local revision.
       const latest = await SoduWorkAPI.myModels();
       if (latest && Array.isArray(latest.providers) && Array.isArray(latest.myModels)) {
         _mdData = latest; _mdMyModels = latest.myModels.slice(); _mdReconcileChecks(latest);
+        if (globalThis.ComposeModelPicker?.refresh) await ComposeModelPicker.refresh(true);
       }
     }
   } catch (e) {
