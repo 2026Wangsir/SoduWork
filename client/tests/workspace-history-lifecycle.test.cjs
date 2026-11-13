@@ -44,8 +44,8 @@ function persistentSidebar(f) {
   } };
   const reopen = () => window.WorkspaceSidebarState.create({ storage, key: scope });
   let store = reopen();
-  f.ctx.sidebarProjects = { forget: id => store.forget(id), forgetMany: ids => { store.forgetMany(ids); return true; },
-    forgetArchived: ids => { store.forgetMany(ids, { preserveArchivedProjects: true }); return true; } };
+  f.ctx.sidebarProjects = { forget: id => store.forget(id), forgetMany: ids => store.forgetMany(ids),
+    forgetArchived: ids => store.forgetMany(ids, { preserveArchivedProjects: true }) };
   return { get store() { return store; }, reopen, values, writes: () => writes,
     block: value => { blocked = value; }, switchAccount(next) { scope = next; store = reopen(); f.switchAccount(next); } };
 }
