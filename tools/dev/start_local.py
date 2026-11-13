@@ -180,7 +180,8 @@ def password_for_start(state: Path, config: dict, stdin: bool) -> str:
 
 
 def assert_available(host: str, port: int) -> None:
-    with socket.socket() as probe:
+    address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(address_family) as probe:
         if os.name == "nt":
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         else:
@@ -209,7 +210,8 @@ def runtime_environment(state: Path, config: dict, password: str, host: str, por
     for subdir in (home, home / "AppData/Roaming", home / "AppData/Local",
                    home / 'Documents', home / 'Downloads', home / 'Desktop', state / "runtime"):
         subdir.mkdir(parents=True, exist_ok=True)
-    base = f"http://{host}:{port}"
+    url_host = f"[{host}]" if ":" in host else host
+    base = f"http://{url_host}:{port}"
     env.update({
         "HOME": str(home), "USERPROFILE": str(home),
         "APPDATA": str(home / "AppData/Roaming"), "LOCALAPPDATA": str(home / "AppData/Local"),
@@ -269,7 +271,7 @@ def serve(state: Path, config: dict, args) -> None:
     python, backend = prepare(state, log)
     client = prepare_desktop(state, log) if args.desktop else None
     env = runtime_environment(state, config, password, args.host, args.port)
-    base = f"http://{args.host}:{args.port}"
+    base = env["HUB_PUBLIC_URL"]
     print("正在启动服务并准备数据库 / Starting SoduWork and applying database migrations...", flush=True)
     desktop = None
     desktop_output = None
