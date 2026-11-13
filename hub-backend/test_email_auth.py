@@ -37,7 +37,8 @@ app = FastAPI()
 for router in (client_auth.router, client_email_auth.router, clients.router):
     app.include_router(router)
 TABLES = [models.User.__table__, models.Client.__table__, models.OrgUnit.__table__, models.Role.__table__,
-          models.AppSetting.__table__, models.AIUsageEvent.__table__, models.AuditLog.__table__,
+          models.AppSetting.__table__, models.AIUsageEvent.__table__, models.AIUsageDaily.__table__,
+          models.AuditLog.__table__,
           EmailChallenge.__table__, EmailRateLimit.__table__, UserConsent.__table__, MailOutbox.__table__]
 
 
@@ -98,8 +99,12 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["user"]["emailVerified"])
         self.assertEqual(result["user"]["orgId"], "configured")
         self.assertEqual(result["user"]["roleId"], "normal-role")
+        self.assertTrue(result["quota"]["enabled"])
+        self.assertEqual(result["quota"]["planId"], "trial")
+        self.assertEqual(result["quota"]["limit"], 100_000)
         me = await self.http.get("/api/v1/client-auth/me", headers={"Authorization": "Device " + result["session"]})
         self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["quota"]["planId"], "trial")
         async with SessionLocal() as session:
             user = await email_auth.verified_user(session, proof["email"])
             self.assertTrue(user.is_active)
