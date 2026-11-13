@@ -22,9 +22,17 @@ office, presentation, task, application, and connector skills remain available.
 
 ## Loading and deployment
 
-- Update the Hub source/image and restart it to load this catalog. The existing
-  administrator skill policy still determines availability; this change does
-  not change saved organization preferences or grant tool permissions.
+- Update the Hub source/image and restart it to load this catalog. All bundled
+  skills are available to the organization by default. The first policy upgrade
+  also reopens existing bundled skills; later administrator opt-outs survive
+  restarts, while newly added bundled skills default to available.
+- Browser Use, Computer Use, and Office retain their existing baseline
+  availability. Personal switches remain independent of organization defaults.
+- Skill instructions remain in files. The database stores the versioned access
+  policy, not a copy of every skill. Organization defaults do not replace saved
+  personal selections or grant additional tool permissions. Imported company
+  packages and skills from external directories still require explicit approval;
+  an imported package does not inherit a same-named built-in's default access.
 - Source desktops read this checkout's skills. Packaged desktops and Runners
   must be rebuilt and updated to receive the new resources. Updating only the
   Hub does not upgrade an already installed desktop's bundled files.
@@ -40,6 +48,7 @@ With the backend test dependencies installed, run from the repository root:
 
 ```sh
 python3 -m unittest discover -s hub-backend -p test_bundled_development_skills.py
+python3 -m unittest discover -s hub-backend -p test_skill_policy_defaults.py
 node tools/check-public-source.cjs
 node tools/check-third-party.cjs
 ```

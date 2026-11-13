@@ -224,7 +224,8 @@ async def save_my_mcp_servers(body: dict = Body(default_factory=dict),
     warning = ""
     if any(item.get("enabled") for item in saved) or client.mcp_enabled:
         from ..services import skills
-        cfg = await skills.load_cfg(session)
+        with skill_details.errors():
+            cfg = await skills.load_cfg(session)
         if "mcp-tools" in set(cfg.get("allowed") or []):
             from ..services import skill_preferences
             skill_preferences.enable(client, "mcp-tools")
@@ -243,7 +244,8 @@ async def save_my_mcp_server(body: dict = Body(default_factory=dict),
     saved = await mcp_personal_write.save_one(session, client, body)
     warning = ""
     if saved.get("enabled"):
-        cfg = await skills.load_cfg(session)
+        with skill_details.errors():
+            cfg = await skills.load_cfg(session)
         if "mcp-tools" in set(cfg.get("allowed") or []):
             skill_preferences.enable(client, "mcp-tools")
         else:
@@ -332,8 +334,13 @@ async def save_admin_capability_policy(
     session: AsyncSession = Depends(get_session),
 ):
     from ..services import audit, skills
+    if "cfg" in body and not isinstance(body["cfg"], dict):
+        raise HTTPException(400, detail="企业能力开放策略必须是对象")
     raw = body.get("cfg") if isinstance(body.get("cfg"), dict) else body
-    cfg = await skills.save_cfg(session, raw)
+    try:
+        cfg = await skills.save_cfg(session, raw)
+    except skills.PolicyChanged as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     await session.commit()
     await audit.log(
         session, user, "capability.policy.update", "setting", skills.SETTING_KEY,
@@ -355,7 +362,8 @@ async def admin_preflight_skill(
     previous = next((item for item in skill_packages.active()
                      if item.get("scope") == "company" and
                      item.get("name") == parsed["name"]), None)
-    cfg = await skills.load_cfg(session)
+    with skill_details.errors():
+        cfg = await skills.load_cfg(session)
     same_version = bool(previous and
                         previous.get("packageChecksum") == parsed["checksum"])
     return {
@@ -381,22 +389,25 @@ async def admin_import_skill(
                      item.get("name") == parsed["name"]), None)
     same_version = bool(previous and
                         previous.get("packageChecksum") == parsed["checksum"])
-    cfg = await skills.load_cfg(session)
+    with skill_details.errors():
+        cfg = await skills.load_cfg(session)
     was_allowed = parsed["name"] in set(cfg.get("allowed") or [])
     if was_allowed and not same_version:
-        cfg = await skills.save_cfg(session, {
-            **cfg, "allowed": [name for name in cfg.get("allowed") or []
-                                if name != parsed["name"]],
-        })
+        with skill_details.errors():
+            cfg = await skills.save_cfg(session, {
+                **cfg, "allowed": [name for name in cfg.get("allowed") or []
+                                    if name != parsed["name"]],
+            })
         # Close the authorization window before switching the filesystem index.
         await session.commit()
     try:
         await asyncio.to_thread(skill_packages.install, parsed, "company", "")
     except Exception:
         if was_allowed and not same_version:
-            cfg = await skills.save_cfg(session, {
-                **cfg, "allowed": [*(cfg.get("allowed") or []), parsed["name"]],
-            })
+            with skill_details.errors():
+                cfg = await skills.save_cfg(session, {
+                    **cfg, "allowed": [*(cfg.get("allowed") or []), parsed["name"]],
+                })
             await session.commit()
         raise
     await audit.log(
