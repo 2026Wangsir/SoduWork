@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "key": "soduwork-fast-change",
   "name": "【SoduWork 专用】快速改动",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "category": "dev",
   "description": "SoduWork 日间轻量研发：Codex 一次完成 Bug 或小需求的实现、自测、自审与推送，只形成待发布固定提交，不合并、不打包、不部署。",
   "author": "SoduWork",

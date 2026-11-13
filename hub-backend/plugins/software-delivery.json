@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "key": "software-delivery",
   "name": "需求到生产 · 标准研发交付",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "category": "dev",
   "description": "从需求澄清、可执行性预检与基线确认，到隔离分支实现、固定提交真实自测、AI 独立审查与自动合并；最后按项目绑定的企业环境链发布，核对部署版本和健康检查证据后完成交付。",
   "author": "SoduWork",
