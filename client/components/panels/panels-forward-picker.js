@@ -186,7 +186,16 @@ function _fwdDirectAgents() {
     ? TaskExecutionClient.targets(_fwdOptions || {})
     : (_fwdOptions?.substrates || [])).slice();
   for (const agent of _fwdLocalAgents) {
-    if (!rows.some(row => _fwdSameId(row.key, agent.key))) rows.push(agent);
+    const existing = rows.find(row => _fwdSameId(row.key, agent.key));
+    if (!existing) rows.push(agent);
+    else if (agent.executionSource === 'conversation') {
+      // The Hub can already advertise the same CLI as a Runner. Keep the local
+      // conversation probe attached to that row so its device-owned models are
+      // available without replacing the Hub's routing metadata.
+      existing.localConversationAvailable = true;
+      existing.localModelPick = agent.modelPick !== false;
+      existing.localConversationName = agent.name || existing.name || existing.cli || 'Agent';
+    }
   }
   return rows;
 }

@@ -66,6 +66,32 @@ test('ordinary enabled automation receipts with empty provenance remain ordinary
   assert.doesNotMatch(html, /草稿|尚未启用|来源需求/);
 });
 
+test('automation option loading preserves managed and native model choices', async () => {
+  const f = fixture();
+  f.api.taskExecutionOptions = async () => ({
+    substrates: [
+      { key: 'local:pi', name: 'Pi', modelPick: true },
+      { key: 'local:codex', name: 'Codex', nativeModelPick: true },
+    ],
+    modelOptions: [{ name: 'configured-model', label: 'Configured model' }],
+    defaultModel: 'configured-model', repos: [],
+  });
+  f.context.soduWorkAPI = {
+    conversationSession: {
+      runtimeModels: async () => ({ models: [{ id: 'codex-account-model', label: 'Codex account model' }] }),
+    },
+  };
+
+  const loaded = await f.context.WorkAutomationCardState.loadOptions({ text: 'daily report' });
+  assert.deepEqual(loaded.modelOptions, [{ name: 'configured-model', label: 'Configured model' }]);
+  assert.equal(loaded.defaultModel, 'configured-model');
+  assert.equal(loaded.agents[0].modelPick, true);
+  assert.equal(loaded.agents[0].nativeModelPick, false);
+  assert.equal(loaded.agents[1].nativeModelPick, true);
+  assert.deepEqual(loaded.agents[1].modelOptions, [{ id: 'codex-account-model', label: 'Codex account model' }]);
+  assert.match(read('work-automation-sheet'), /本机模型仅支持本机对话；后台自动化需要 Hub 托管模型/);
+});
+
 test('requirement entry is an independent disabled draft and cancel creates nothing', async () => {
   const f = fixture();
   const source = {id: 'requirement-one', title: '<Original requirement>', requirementVersion: 3};

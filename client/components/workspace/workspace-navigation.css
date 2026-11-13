@@ -4,7 +4,8 @@ html[data-desk-panel="workspace"]{
   --ws-main-bg:color-mix(in srgb,var(--bg-0) 88%,var(--bg-1));
   --ws-side:color-mix(in srgb,var(--bg-1) 88%,var(--bg-2));
   --ws-frame-top:2px;
-  --ws-frame-bottom:15px;
+  --ws-frame-bottom:5px;
+  --ws-frame-right:5px;
   --ws-frame-radius:10px;
   --ws-panel-top:calc(var(--window-menu-height,0px) + var(--ws-frame-top));
 }
@@ -326,14 +327,14 @@ html.ws-resizing .ws-resizer::before{background:color-mix(in srgb,var(--ink-4) 4
 html.ws-resizing,html.ws-resizing *{cursor:col-resize!important;user-select:none!important}
 .workspace-shell.ws-resizing{user-select:none}
 .workspace-shell.ws-resizing *{cursor:col-resize !important}
-.ws-canvas{position:absolute;inset:var(--ws-frame-top) 10px var(--ws-frame-bottom) 0;border:1px solid color-mix(in srgb,var(--line) 88%,transparent);
+.ws-canvas{position:absolute;inset:var(--ws-frame-top) var(--ws-frame-right) var(--ws-frame-bottom) 0;border:1px solid color-mix(in srgb,var(--line) 88%,transparent);
   border-radius:var(--ws-frame-radius);background:var(--ws-main-bg);box-shadow:0 8px 28px -24px rgba(30,45,70,.28)}
 
 /* The blank home surface shares its lower breathing space with the history
    column.  A quiet shelf behind the two columns makes the composer feel like
    one continuous home surface while keeping the history rows interactive. */
 html[data-desk-panel="workspace"][data-workspace-view="create"] .workspace-shell::after{
-  content:"";position:absolute;z-index:1;left:var(--ws-rail-w,52px);right:10px;bottom:var(--ws-frame-bottom);height:154px;
+  content:"";position:absolute;z-index:1;left:var(--ws-rail-w,52px);right:var(--ws-frame-right);bottom:var(--ws-frame-bottom);height:154px;
   box-sizing:border-box;border:1px solid color-mix(in srgb,var(--line) 88%,transparent);
   border-radius:var(--ws-frame-radius);background:var(--ws-main-bg);
   box-shadow:0 8px 28px -24px rgba(30,45,70,.28);pointer-events:none
@@ -346,7 +347,7 @@ html[data-desk-panel="workspace"][data-workspace-view="create"] .ws-side .ws-rec
 }
 /* Conversation history and its page share one frame, with a square internal split. */
 html[data-desk-panel="workspace"][data-workspace-layout="conversation"] .workspace-shell::before{
-  content:"";position:absolute;z-index:1;left:var(--ws-rail-w,52px);right:10px;top:var(--ws-frame-top);bottom:var(--ws-frame-bottom);
+  content:"";position:absolute;z-index:1;left:var(--ws-rail-w,52px);right:var(--ws-frame-right);top:var(--ws-frame-top);bottom:var(--ws-frame-bottom);
   box-sizing:border-box;border:1px solid color-mix(in srgb,var(--line) 88%,transparent);
   border-radius:var(--ws-frame-radius);background:#fdfdfd;
   box-shadow:0 8px 28px -24px rgba(30,45,70,.28);pointer-events:none
@@ -382,7 +383,7 @@ html[data-desk-panel="workspace"][data-workspace-layout="conversation"]:not([dat
 html[data-desk-panel="workspace"] :is(#aiDeskPanel,#historyBoard,#settingsPanel,#shortcutsPanel,#skinManager,#noticePanel,#teamPanel,#schPanel,#skPanel,#capPanel,#appsPanel,#mdPanel,#agPanel,#cloudEnvironmentPanel,#caPanel,#usagePanel,#sessionMemoryPanel,#composePanel,#libraryPanel,#archivePanel,#personalAccountPanel,#briefPanel:where(.workspace-hosted),#addMask:where(.workspace-hosted)){
   top:var(--ws-panel-top)!important;bottom:var(--ws-frame-bottom)!important;border-radius:var(--ws-frame-radius)!important}
 html[data-desk-panel="workspace"] :is(#aiDeskPanel,#historyBoard,#settingsPanel,#shortcutsPanel,#skinManager,#noticePanel,#teamPanel,#schPanel,#skPanel,#capPanel,#appsPanel,#mdPanel,#agPanel,#cloudEnvironmentPanel,#caPanel,#usagePanel,#sessionMemoryPanel,#composePanel,#libraryPanel,#archivePanel){
-  --window-main:1;position:fixed!important;left:var(--ws-main-left,220px)!important;right:10px!important;
+  --window-main:1;position:fixed!important;left:var(--ws-main-left,220px)!important;right:var(--ws-frame-right)!important;
   width:auto!important;height:auto!important;max-width:none!important;max-height:none!important;margin:0!important;transform:none!important;
   background:var(--ws-main-bg)!important;
   border:1px solid color-mix(in srgb,var(--line) 88%,transparent)!important;
@@ -392,7 +393,7 @@ html[data-desk-panel="workspace"] :is(#aiDeskPanel,#historyBoard,#settingsPanel,
  * navigation.
  */
 html[data-desk-panel="workspace"] #libraryPanel{overflow:auto!important}
-html[data-desk-panel="workspace"] #addMask.workspace-hosted{position:fixed!important;left:var(--ws-main-left,220px)!important;right:10px!important;
+html[data-desk-panel="workspace"] #addMask.workspace-hosted{position:fixed!important;left:var(--ws-main-left,220px)!important;right:var(--ws-frame-right)!important;
   width:auto!important;height:auto!important;background:var(--ws-main-bg)!important;z-index:20!important;display:block!important;
   border:1px solid color-mix(in srgb,var(--line) 88%,transparent)!important;overflow:hidden!important}
 html[data-desk-panel="workspace"][data-workspace-view="add"] #addMask .modal{--window-main:1;position:absolute!important;inset:0!important;width:auto!important;height:auto!important;

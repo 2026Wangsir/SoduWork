@@ -62,7 +62,8 @@ test('personal account uses the shared workspace frame below the optional window
   assert.match(workspaceHostRule[1], /bottom:\s*var\(--ws-frame-bottom\)!important/);
   assert.match(css, /--ws-panel-top:\s*calc\(var\(--window-menu-height,\s*0px\)\s*\+\s*var\(--ws-frame-top\)\)/);
   assert.match(css, /--ws-frame-top:\s*2px/);
-  assert.match(css, /--ws-frame-bottom:\s*15px/);
+  assert.match(css, /--ws-frame-bottom:\s*5px/);
+  assert.match(css, /--ws-frame-right:\s*5px/);
   assert.match(read('components/workspace/window-menu.css'), /html\[data-window-menu\]\s*\{[^}]*--window-menu-height:\s*34px/);
 });
 
