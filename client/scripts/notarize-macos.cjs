@@ -54,6 +54,19 @@ function assertPublicNotaryOptions(env) {
     throw new Error('Private notarization checkpoints are unavailable in the public source');
 }
 
+// Retry only Apple's host/network failure; invalid tickets and signatures still
+// fail immediately. Never resubmit or rebuild the accepted artifact here.
+function stapleArtifact(artifactPath, run, sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
+  for (let attempt = 0; ; attempt++) {
+    try { return run('xcrun', ['stapler', 'staple', artifactPath]); }
+    catch (error) {
+      if (error.status !== 68 || attempt >= 3) throw error;
+      console.warn(`Apple ticket download failed (68); retry ${attempt + 1}/3`);
+      sleep((attempt + 1) * 10000);
+    }
+  }
+}
+
 function notarizeArtifact({ artifactPath, env, run, staple = true }) {
   assertPublicNotaryOptions(env);
   unlockSigningKeychain(env, run);
@@ -65,7 +78,7 @@ function notarizeArtifact({ artifactPath, env, run, staple = true }) {
   if (keychain && env.SODUWORK_MAC_NOTARY_KEYCHAIN_SEARCH !== '1') args.push('--keychain', keychain);
   args.push('--wait');
   run('xcrun', args);
-  if (staple) run('xcrun', ['stapler', 'staple', artifactPath]);
+  if (staple) stapleArtifact(artifactPath, run);
 }
 
 // Signers see the app as a bundle; notarytool accepts a zip of it.
@@ -75,7 +88,7 @@ function notarizeApp({ appPath, env, run }) {
   run('ditto', ['-c', '-k', '--keepParent', appPath, zipPath]);
   try {
     notarizeArtifact({ artifactPath: zipPath, env, run, staple: false });
-    run('xcrun', ['stapler', 'staple', appPath]);
+    stapleArtifact(appPath, run);
   } finally {
     fs.rmSync(zipPath, { force: true });
   }
@@ -97,3 +110,5 @@ exports.notaryKeychain = notaryKeychain;
 exports.notarizeEnabled = notarizeEnabled;
 exports.notarizeArtifact = notarizeArtifact;
 exports.notarizeApp = notarizeApp;
+
+exports.stapleArtifact = stapleArtifact;

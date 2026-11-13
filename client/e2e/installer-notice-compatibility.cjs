@@ -7,12 +7,13 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { installerSpawnOptions } = require('./fixtures/installer-spawn-options.cjs');
 const { build, createFixtureGuid, fixtureNames, validateFixtureIdentity, prepareFixtureLauncher, Platform, Arch } = require('./fixtures/isolated-installer-build.cjs');
 function run(file, args, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore', ...installerSpawnOptions(file, args) });
     const timer = setTimeout(() => { child.kill(); reject(Error('Isolated fixture timed out')); }, 180000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', code => { clearTimeout(timer); resolve(code); });

@@ -117,10 +117,9 @@
       "name": "proxy-agent-negotiate",
       "version": "1.1.0",
       "license": "MIT",
-      "licenseNote": "Package metadata declares MIT; complete original notice is missing. This is retained upstream evidence, not clearance.",
       "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16/packages/negotiate/package.json",
       "path": "third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt",
-      "sha256": "d327e2b2289e1e93d6923162d266a7053c28d33b3ba40b4ad9198252a0c7b61b"
+      "sha256": "3b9898c2c1dee45b1a295acde777b38024338c98ceac4d6c3dd8952a1ba08617"
     },
     {
       "id": "dnspython",
@@ -298,16 +297,14 @@
       "name": "standardwebhooks",
       "version": "1.1.1",
       "notice": "standardwebhooks"
-    }
-  ],
-  "runtimeNoticeReviews": [
+    },
     {
       "name": "proxy-agent-negotiate",
       "version": "1.1.0",
-      "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16/packages/negotiate/package.json",
-      "reason": "Exact npm release and tagged source omit the original full license. MIT is a package metadata declaration only. Original upstream confirmation is required before binary distribution; evidence retained in third-party/licenses/proxy-agent-negotiate-upstream-evidence.txt."
+      "notice": "proxy-agent-negotiate-evidence"
     }
   ],
+  "runtimeNoticeReviews": [],
   "skillLicenseHashes": {},
   "binaryVendored": [],
   "pythonNoticeOverrides": [

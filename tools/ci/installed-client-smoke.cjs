@@ -46,7 +46,7 @@ async function main() {
     `--inspect=127.0.0.1:${inspectorPort}`, `--user-data-dir=${profile}`,
     '--disable-gpu', '--host-resolver-rules=MAP * 127.0.0.1', '--proxy-server=http://127.0.0.1:9'];
   // Containers do not provide a desktop login's Chromium sandbox namespace.
-  if (process.env.SODUWORK_ACCEPTANCE_CONTAINER === '1') args.push('--no-sandbox');
+  if (process.env.SODUWORK_ACCEPTANCE_CONTAINER === '1') args.push('--no-sandbox', '--password-store=gnome-libsecret');
   // Isolated test profiles contain no user credentials. Electron's test keychain
   // avoids interactive prompts from ad-hoc app copies; production release checks
   // opt into the real login Keychain through SODUWORK_MAC_REAL_KEYCHAIN.

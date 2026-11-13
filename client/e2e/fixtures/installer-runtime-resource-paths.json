@@ -1,7 +1,6 @@
 [
   "resources/runner/_internal/base_library.zip",
   "resources/runner/_internal/redis-5.3.1.dist-info/top_level.txt",
-  "resources/runner/_internal/skills/img2threejs/forge/requirements.txt",
   "resources/runner/_internal/websockets-16.1.1.dist-info/entry_points.txt",
   "resources/runner/_internal/websockets-16.1.1.dist-info/top_level.txt",
   "resources/shell/etc/package-versions.txt",
@@ -63,6 +62,5 @@
   "resources/shell/usr/share/gnupg/help.tr.txt",
   "resources/shell/usr/share/gnupg/help.txt",
   "resources/shell/usr/share/gnupg/help.zh_CN.txt",
-  "resources/shell/usr/share/gnupg/help.zh_TW.txt",
-  "resources/skills/img2threejs/forge/requirements.txt"
+  "resources/shell/usr/share/gnupg/help.zh_TW.txt"
 ]

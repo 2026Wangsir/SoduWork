@@ -28,27 +28,29 @@ async function main() {
       const container = 'soduwork-public-' + require('node:crypto').randomUUID();
       let created = false;
       try {
-        await run('docker', ['create', '--name', container, '--cpus', '2', '--memory', '4g', '--pids-limit', '512',
+        await run('docker', ['create', '--name', container, '--cap-add', 'IPC_LOCK', '--cpus', '2', '--memory', '4g', '--pids-limit', '512',
           '-v', packages + ':/pkg:ro', '-v', path.join(contract.root, 'tools') + ':/checks:ro',
           '-v', output + ':/evidence', '-e', 'SODUWORK_ACCEPT_UID=' + (os.userInfo().uid || 12001), image, 'sleep', 'infinity']);
         created = true;
         await run('docker', ['start', container]);
-        const args = [kind, '/pkg/' + item.name, record.version, '/pkg/' + path.basename(previous.path), previous.version];
+        const args = [kind, '/pkg/' + item.name, record.version, previous ? '/pkg/' + path.basename(previous.path) : '-', previous ? previous.version : '-'];
         await run('docker', ['exec', container, 'bash', '/checks/github/linux-installed-check.sh', 'prepare', ...args]);
         await run('docker', ['network', 'disconnect', 'bridge', container]);
         await run('docker', ['exec', container, 'bash', '/checks/github/linux-installed-check.sh', 'verify', ...args]);
         const result = await contract.read(path.join(output, 'result.json'));
         assert.equal(result.ok, true); assert.equal(result.version, record.version);
-        assert.equal(result.upgraded, true); assert.equal(result.oldVersion, previous.version);
+        assert.equal(result.upgraded, !!previous); assert.equal(result.oldVersion, previous ? previous.version : '');
+        if (!previous) assert.equal(result.reinstalled, true);
         assert.equal(result.nodeShimExecutable, true);
         assert.equal(result.credentialProviderDependencyVerified, kind !== 'tgz');
         assert.equal(result.upgradeDependencyResolutionVerified, false);
-        for (const phase of ['fresh', 'restart', 'old', 'upgraded']) {
+        for (const phase of ['fresh', 'restart', ...(previous ? ['old'] : []), 'restored']) {
           const smoke = await contract.read(path.join(output, phase + '.json'));
           assert.equal(smoke.secureStorage?.backend, 'gnome_libsecret');
           assert.equal(smoke.secureStorage?.roundTrip, true);
         }
-        checks.push({ name, ok: true, oldVersion: previous.version, secureStorageBackend: 'gnome_libsecret',
+        checks.push({ name, ok: true, upgraded: !!previous, reinstalled: !previous,
+          oldVersion: previous ? previous.version : '', secureStorageBackend: 'gnome_libsecret',
           credentialProviderDependencyVerified: result.credentialProviderDependencyVerified,
           upgradeDependencyResolutionVerified: false });
       } finally { if (created) await run('docker', ['rm', '-f', container]); }
@@ -56,6 +58,7 @@ async function main() {
     await contract.acceptance('linux', checks, [
       'Disposable Xvfb containers with a password-protected GNOME keyring; no desktop login, Wayland, KWallet or polkit interaction.',
       'Upgrade checks reuse dependencies from initial candidate installation; newly added dependency resolution during upgrade is not certified.',
+      ...(checks.some(row => !row.upgraded) ? ['First SoduWork release: fresh install, restart and reinstall preserve data; SoduWork Global migration is not supported.'] : []),
     ]);
   } finally { await fs.rm(packages, { recursive: true, force: true }); }
 }

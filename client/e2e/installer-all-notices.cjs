@@ -29,7 +29,7 @@ async function main() {
   }
   function verify(name) {
     const report = path.join(work, name + '.json');
-    const profile = require('../scripts/installed-distribution.cjs').installedDistribution(root);
+    const profile = require('../main/distribution.cjs').current();
     const result = spawnSync(path.join(root, profile.windowsExecutableName + '.exe'), [path.join(root, '.soduwork-verify.cjs'), root, report], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', windowsHide: true, timeout: 300000,
     });

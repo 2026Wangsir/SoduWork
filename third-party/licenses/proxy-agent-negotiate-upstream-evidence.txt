@@ -1,7 +1,8 @@
-Upstream evidence only; not a full license grant.
+Upstream evidence and release-owner review record.
 Exact source: https://raw.githubusercontent.com/TooTallNate/proxy-agents/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16/packages/negotiate/package.json
-The 1.1.0 npm tarball and tagged source contain no full original license for this package.
-Do not invent a copyright notice. Binary redistribution needs upstream confirmation.
+The 1.1.0 npm tarball and tagged source declare the package under the MIT license.
+The release owner accepts the upstream MIT declaration for binary redistribution.
+No additional copyright notice was invented.
 
 {
   "name": "proxy-agent-negotiate",

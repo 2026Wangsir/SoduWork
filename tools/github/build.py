@@ -16,7 +16,7 @@ import tempfile
 import time
 import urllib.request
 
-from release import ROOT, context, expected, policy, read, require, seal, write
+from release import ROOT, context, expected, first_release, policy, read, require, seal, write
 
 
 def run(*args, cwd=ROOT, env=None):
@@ -83,6 +83,11 @@ def package_native(ctx, shard, scratch, *, validation=False):
         # Validation emits only a checksum report. Public release entry points
         # still require the distribution review and full upgrade acceptance.
         env["SODUWORK_INTERNAL_BUILD"] = "1"
+    if shard == "linux":
+        # Electron's V8 headers mix standard and GNU attributes in a form
+        # rejected by GCC. Use Clang for both npm install and Electron rebuild.
+        require(shutil.which("clang-15") and shutil.which("clang++-15"), "Linux packaging requires Clang 15")
+        env.update(CC="clang-15", CXX="clang++-15")
     if shard.startswith("macos-"):
         configure_macos_signing(env, validation=validation)
     npm = "npm.cmd" if shard == "windows" else "npm"
@@ -104,6 +109,8 @@ def native(ctx, shard, folder, scratch):
             "macos-arm64": ["macos-arm64-dmg"], "macos-x64": ["macos-x64-dmg"]}[shard]
     baselines = read(ROOT / "tools/ci/soduwork-acceptance-baselines.json")
     for key in keys:
+        if first_release(ctx, key, baselines):
+            continue
         item = baselines[key]
         target = scratch / ("baseline-" + key)
         download(item["url"], target, item["sha256"])

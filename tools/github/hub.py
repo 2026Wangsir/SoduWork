@@ -83,6 +83,8 @@ def build_and_accept(ctx, folder):
         docker("exec", hub, "python", "db_admin.py", "migrate")
         docker("exec", hub, "python", "-m", "alembic", "check")
         docker("restart", hub)
+        # Docker can assign a new ephemeral host port after restart.
+        origin = "http://" + docker("port", hub, "8989/tcp", output=True)
         wait(ready)
         archive = folder / expected(ctx, "hub")[0]
         with archive.open("xb") as target, gzip.GzipFile(fileobj=target, mode="wb", mtime=0) as compressed:
