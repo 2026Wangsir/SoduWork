@@ -103,19 +103,40 @@ function models(file, root) {
   const value = parse(before, /"localOnly"\s*:\s*true/);
   if (!object(value?.providers)) return;
   let changed = false;
-  for (const provider of Object.values(value.providers || {})) {
+  let catalog;
+  const legacyReference = (providerId, modelId) => {
+    if (typeof modelId !== 'string' || !modelId.trim()) return '';
+    try {
+      catalog ||= store.get();
+      const candidates = (catalog.myModels || []).filter(row => row.name === modelId);
+      const exact = candidates.filter(row => row.providerId === providerId);
+      const rows = exact.length ? exact : providerId === 'soduwork' ? candidates : [];
+      return rows.length === 1 ? rows[0].id : '';
+    } catch (_) { return ''; }
+  };
+  for (const [providerId, provider] of Object.entries(value.providers || {})) {
     if (provider?.localOnly !== true) continue;
-    provider.baseUrl = 'https://local-model.invalid/v1';
-    provider.apiKey = 'soduwork-local-no-key';
-    if (local(provider.localRef)) provider.localRef = canonical(provider.localRef);
+    if (provider.baseUrl !== 'https://local-model.invalid/v1') {
+      provider.baseUrl = 'https://local-model.invalid/v1';
+      changed = true;
+    }
+    if (provider.apiKey !== 'soduwork-local-no-key') {
+      provider.apiKey = 'soduwork-local-no-key';
+      changed = true;
+    }
+    if (local(provider.localRef)) {
+      const ref = canonical(provider.localRef);
+      if (provider.localRef !== ref) { provider.localRef = ref; changed = true; }
+    }
     if (!Array.isArray(provider.models)) throw failure();
     for (const model of provider.models) {
-      const ref = model.localRef || provider.localRef;
-      if (!local(ref)) throw Error('Local model metadata has no private reference');
-      model.id = model.localRef = canonical(ref);
-      model.name = 'Local model';
+      const ref = model.localRef || provider.localRef || model.id;
+      const canonicalRef = local(ref) ? canonical(ref) : legacyReference(providerId, ref);
+      if (!local(canonicalRef)) throw Error('Local model metadata has no private reference');
+      if (model.id !== canonicalRef) { model.id = canonicalRef; changed = true; }
+      if (model.localRef !== canonicalRef) { model.localRef = canonicalRef; changed = true; }
+      if (model.name !== 'Local model') { model.name = 'Local model'; changed = true; }
     }
-    changed = true;
   }
   if (changed) replace(file, before, JSON.stringify(value, null, 2), root);
 }

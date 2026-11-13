@@ -837,8 +837,77 @@
     var name = String(value || '').trim();
     return name.startsWith('local:') || /^image::[^:]+::local:/.test(name);
   }
+  function localModelReference(value) {
+    var name = String(value || '').trim();
+    if (name.startsWith('local:')) return name;
+    var wrapped = name.match(/^image::[^:]+::(local:.+)$/);
+    return wrapped ? wrapped[1] : '';
+  }
   function requireRemoteModel(value) {
     if (isLocalModelChoice(value)) throw new Error('本地模型仅支持本机对话，请为后台任务选择托管模型');
+  }
+  function localParseInput(text, attachments) {
+    var parts = ['原始需求：', String(text || '').slice(0, 12000)];
+    var rows = Array.isArray(attachments) ? attachments.slice(0, 8) : [];
+    rows.forEach(function (item) {
+      if (!item || typeof item !== 'object') return;
+      var name = String(item.name || '未命名材料').slice(0, 160);
+      var mode = String(item.mode || '');
+      if (mode === 'text' && typeof item.text === 'string') {
+        parts.push('\n本地附件文本（' + name + '）：\n' + item.text.slice(0, 2000));
+      } else {
+        var type = String(item.type || item.kind || '附件').slice(0, 80);
+        var size = Number.isFinite(Number(item.size)) ? String(Math.max(0, Number(item.size))) : '';
+        parts.push('\n本地附件元数据：' + name + ' · ' + type + (size ? ' · ' + size + ' bytes' : '') +
+          '（未上传附件内容）');
+      }
+    });
+    return parts.join('\n').slice(0, 16000);
+  }
+  function localParseInstructions(options) {
+    var kind = options?.kind === 'automation' ? 'automation' : 'requirement';
+    return [
+      '你是本机需求整理助手。只根据用户原文和附件材料整理内容，不访问网络，不补造事实。',
+      '仅返回一个 JSON 对象，不要 Markdown、代码围栏或解释文字。',
+      'JSON 字段必须是：title（不超过200字）、note（正文，不超过4000字）、checklist（字符串数组）、',
+      'kind（requirement、bug、ticket、improvement、other 之一）、priority（low、normal、high、urgent 之一）、',
+      'due（无法从原文确定时为空字符串）、tags（字符串数组）。',
+      '保留原文中的关键约束；无法确定的字段使用空字符串、空数组或 normal。当前表单类型：' + kind + '。',
+      options?.instruction ? '额外整理要求：' + String(options.instruction).slice(0, 1000) : '',
+    ].filter(Boolean).join('\n');
+  }
+  function localParseFields(raw) {
+    var value = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    var start = value.indexOf('{'), end = value.lastIndexOf('}');
+    if (start < 0 || end <= start) throw Error('invalid JSON');
+    var parsed = JSON.parse(value.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('invalid object');
+    var text = function (field, max) { return typeof parsed[field] === 'string' ? parsed[field].trim().slice(0, max) : ''; };
+    var list = function (field, maxItems, maxLength) {
+      return Array.isArray(parsed[field]) ? parsed[field].filter(item => typeof item === 'string')
+        .map(item => item.trim().slice(0, maxLength)).filter(Boolean).slice(0, maxItems) : [];
+    };
+    var kinds = ['requirement', 'bug', 'ticket', 'improvement', 'other'];
+    var priorities = ['low', 'normal', 'high', 'urgent'];
+    var kind = text('kind', 32), priority = text('priority', 16);
+    return { title: text('title', 200), note: text('note', 4000), checklist: list('checklist', 30, 300),
+      kind: kinds.includes(kind) ? kind : 'requirement', priority: priorities.includes(priority) ? priority : 'normal',
+      due: text('due', 64), tags: list('tags', 20, 40) };
+  }
+  async function parseLocalTaskText(text, model, attachments, options) {
+    var reference = localModelReference(model), bridge = global.soduWorkAPI?.conversationSession;
+    if (!reference || typeof bridge?.localRequirementParse !== 'function') {
+      return { _parseError: '本地模型需求解析暂不可用；原文已保留，请稍后重试或手动填写' };
+    }
+    var requestId = 'task-parse-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    try {
+      var result = await bridge.localRequirementParse({ model: reference, input: localParseInput(text, attachments),
+        instructions: localParseInstructions(options), maxOutputTokens: 1024, timeoutMs: 60000, requestId });
+      if (!result?.ok) return { _parseError: '本地模型需求解析失败；原文已保留，请重试或手动填写' };
+      return localParseFields(result.text);
+    } catch (_) {
+      return { _parseError: '本地模型返回的需求格式无效；原文已保留，请重试或手动填写' };
+    }
   }
   async function localModelCatalog() {
     var bridge = global.soduWorkAPI?.localModels;
@@ -1080,7 +1149,7 @@
 
     /* Derive task fields from instructions and materials. Preserve input for manual editing when the API rejects or fails. */
     async parseTaskText(text, model, attachments, options) {
-      if (isLocalModelChoice(model)) return { _parseError: '本地模型不能用于后台解析；原文已保留，请选择托管模型或手动填写' };
+      if (isLocalModelChoice(model)) return parseLocalTaskText(text, model, attachments, options);
       var signal;
       var timeoutMs = options?.kind === 'automation' ? 90000 : 130000;
       try {
