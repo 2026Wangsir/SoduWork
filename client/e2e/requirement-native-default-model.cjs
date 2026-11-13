@@ -147,7 +147,8 @@ if (typeof electron === 'string') {
         models:[],modelOptions:[{name:'only-model',providerId:'fixture-provider',providerName:'Example provider'}],defaultModel:'only-model',defaultModels:{pi:'only-model'}});
       RequirementAssignment.close();await RequirementAssignment.open(taskFixture.id);})()`);
     await waitDOM(`document.querySelector('#fwdModel option[value="only-model"]')`);
-    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认 · only-model · Example provider');
+    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认');
+    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').title`),'跟随底座默认 · only-model · Example provider');
     assert.equal(await js(`document.querySelector('#fwdModel option[value="only-model"]').textContent`),'only-model · Example provider');
     assert.equal(await js(`document.querySelector('#fwdModel').value`),'');
     await js(`{const select=document.querySelector('#fwdModel');select.value='only-model';select.dispatchEvent(new Event('change'));}void 0;`);
@@ -159,7 +160,8 @@ if (typeof electron === 'string') {
       modelOptions:[{name:'catalog-model'},{name:'review-model'}],defaultModel:'catalog-model',defaultModels:{pi:'review-model'}});
       RequirementAssignment.close();await RequirementAssignment.open(taskFixture.id);})()`);
     await waitDOM(`document.querySelector('#fwdModel option[value="catalog-model"]')`);
-    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认 · review-model');
+    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认');
+    assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').title`),'跟随底座默认 · review-model');
     assert.equal(await js(`document.querySelectorAll('#fwdModel option[value="catalog-model"]').length`),1);
     assert.equal(await js(`document.querySelector('#fwdModel').value`),'');
     report.cases.push({name:'Agent-specific default is named independently from the explicitly selectable catalog default',ok:true});

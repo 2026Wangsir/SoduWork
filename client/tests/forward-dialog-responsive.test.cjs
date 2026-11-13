@@ -63,10 +63,12 @@ test('assignment includes the concrete catalog default and shows the selected Ag
   const state=context._fwpModelState(options,'catalog-default');
   assert.deepEqual(Array.from(state.models),['catalog-default','review']);assert.equal(state.stale,false);
   assert.match(context._fwpModelOptions(state,'Default'),/value="catalog-default" selected/);
-  assert.equal(context._fwpDefaultModelLabel(options,{cli:'pi'}),'跟随底座默认 · review');
+  assert.equal(context._fwpDefaultModelLabel(options,{cli:'pi'}),'跟随底座默认');
+  assert.equal(context._fwpDefaultModelTitle(options,{cli:'pi'}),'跟随底座默认 · review');
   assert.match(context._fwpDefaultModelLabel(options,{cli:'qwen'}),/不可用/);
   assert.match(context._fwpDefaultModelLabel(options,{cli:'pi',remote:true}),/派发时解析/);
-  assert.match(context._fwpDefaultModelLabel({defaultModel:'old-hub-default'},{cli:'pi'}),/目录默认：old-hub-default/);
+  assert.equal(context._fwpDefaultModelLabel({defaultModel:'old-hub-default'},{cli:'pi'}),'跟随底座默认');
+  assert.match(context._fwpDefaultModelTitle({defaultModel:'old-hub-default'},{cli:'pi'}),/目录默认：old-hub-default/);
   assert.equal(context._fwpModelState({defaultModel:'only',models:[]},'').models.length,1);
   assert.equal(context._fwpModelState(options,'removed').stale,true);
 });
@@ -77,7 +79,12 @@ test('assignment labels identify an unambiguous provider without changing model 
   vm.runInNewContext(fs.readFileSync(path.join(root,'components/panels/panels-forward-plugin.js'),'utf8'),context);
   const row = {name:'model-a',providerId:'provider-a',providerName:'Example <provider>'};
   const options = {defaultModels:{pi:'model-a'},defaultModel:'model-a',modelOptions:[row]};
-  assert.equal(context._fwpDefaultModelLabel(options,{cli:'pi'}),'跟随底座默认 · model-a · Example <provider>');
+  assert.equal(context._fwpDefaultModelLabel(options,{cli:'pi'}),'跟随底座默认');
+  assert.equal(context._fwpDefaultModelTitle(options,{cli:'pi'}),'跟随底座默认 · model-a · Example <provider>');
+  const markup=context._fwpModelOptions(context._fwpModelState(options,''),
+    context._fwpDefaultModelLabel(options,{cli:'pi'}),context._fwpDefaultModelTitle(options,{cli:'pi'}));
+  assert.match(markup, /value="" selected title="跟随底座默认 · model-a · Example &lt;provider>">跟随底座默认<\/option>/);
+  assert.match(markup, /value="model-a">model-a · Example &lt;provider>/);
   const state=context._fwpModelState(options,'model-a');
   assert.equal(state.value,'model-a');assert.equal(state.stale,false);
   assert.match(context._fwpModelOptions(state,'Default'),/value="model-a" selected>model-a · Example &lt;provider>/);

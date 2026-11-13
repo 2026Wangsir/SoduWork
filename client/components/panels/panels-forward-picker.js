@@ -180,27 +180,49 @@ function _fwdRepoLoadState(failed) {
 
 // Default to no plugin; remembered choices are local to this dispatch overlay and do not change the dispatch protocol.
 let _fwdDefaultPending = true, _fwdNoPlugin = true, _fwdPlainChoice = null;
-const _fwdWorkflowChoices = new Map();
+const _fwdWorkflowChoices = new Map(), _fwdLocalAliases = new Map();
+let _fwdManualAgent = '';
 function _fwdDirectAgents() {
   const rows = (window.TaskExecutionClient?.targets
     ? TaskExecutionClient.targets(_fwdOptions || {})
-    : (_fwdOptions?.substrates || [])).slice();
+    : (_fwdOptions?.substrates || [])).map(row => ({...row}));
+  _fwdLocalAliases.clear();
+  const task = typeof tasks === 'undefined' ? null : tasks.find(row => _fwdSameId(row.id, _fwdTaskId));
+  const ordinary = window.RequirementSessionChoice?.canUseLocalAgents?.(task, _fwdOptions) === true;
+  const clientId = _fwdId(window.SoduWorkAPI?.clientId);
+  if (window.RequirementSessionChoice?.canUseLocalAgents && !ordinary) return rows;
   for (const agent of _fwdLocalAgents) {
-    const existing = rows.find(row => _fwdSameId(row.key, agent.key));
-    if (!existing) rows.push(agent);
+    const exact = rows.find(row => _fwdSameId(row.key, agent.key));
+    const cli = _fwdId(agent.cli);
+    // Only the authenticated device identity and an explicit location attest
+    // that this Runner is another transport for the probed local runtime.
+    const matches = ordinary && clientId && agent.executionSource === 'conversation' &&
+      agent.available === true && /^[a-z][a-z0-9-]{0,39}$/.test(cli)
+      ? rows.filter(row => row.cli === cli && row.locationMode === 'local' && row.remote !== true &&
+        row.clientId === clientId && row.locations?.length === 1 &&
+        row.locations[0].mode === 'local' && row.locations[0].clientId === clientId)
+      : [];
+    if (!exact && matches.length === 1) {
+      const existing = matches[0];
+      // A manual transport choice and an explicit Hub denial remain authoritative.
+      if (!_fwdAvailable(existing) || _fwdSameId(existing.key, _fwdManualAgent)) continue;
+      const merged = {...agent, locationLabel: existing.locationLabel || agent.locationLabel};
+      // Keep display provenance only. Copying Runner locations back into targets()
+      // would turn this native choice into a controlled dispatch again.
+      rows[rows.indexOf(existing)] = merged;
+      _fwdLocalAliases.set(_fwdId(existing.key), merged);
+    } else if (!exact) rows.push(agent);
     else if (agent.executionSource === 'conversation') {
-      // The Hub can already advertise the same CLI as a Runner. Keep the local
-      // conversation probe attached to that row so its device-owned models are
-      // available without replacing the Hub's routing metadata.
-      existing.localConversationAvailable = true;
-      existing.localModelPick = agent.modelPick !== false;
-      existing.localConversationName = agent.name || existing.name || existing.cli || 'Agent';
+      exact.localConversationAvailable = true;
+      exact.localModelPick = agent.modelPick !== false;
+      exact.localConversationName = agent.name || exact.name || exact.cli || 'Agent';
     }
   }
   return rows;
 }
 function _fwdResetMethodChoice() {
   _fwdDefaultPending = true; _fwdNoPlugin = true; _fwdPlainChoice = null;
+  _fwdManualAgent = ''; _fwdLocalAliases.clear();
   _fwdWorkflowChoices.clear();
 }
 function _fwdDefaultPlainChoice() {
@@ -208,12 +230,18 @@ function _fwdDefaultPlainChoice() {
   if (current?.type === 'direct' && _fwdChoiceIsCurrent(current)) return current;
   if (_fwdPlainChoice && _fwdChoiceIsCurrent(_fwdPlainChoice.choice)) return _fwdPlainChoice.choice;
   const rows = _fwdDirectAgents().filter(item => item?.key && _fwdAvailable(item));
-  const agent = rows.find(item => _fwdSameId(item.key, _fwdOptions?.recommendation?.substrateKey)) || rows[0];
+  const recommended = _fwdLocalAliases.get(_fwdId(_fwdOptions?.recommendation?.substrateKey))?.key || _fwdOptions?.recommendation?.substrateKey;
+  const agent = rows.find(item => _fwdSameId(item.key, recommended)) || rows[0];
   if (agent) return {type:'direct', id:agent.key, name:agent.name || agent.cli || 'Agent', cli:agent.cli || '', available:true};
   return null;
 }
 function _fwdRestoreAIChoice() {
+  _fwdDirectAgents();
   const current = _fwdSelection.ai;
+  for (const choice of [current, _fwdPlainChoice?.choice]) {
+    const alias = choice?.type === 'direct' && _fwdLocalAliases.get(_fwdId(choice.id));
+    if (alias) { choice.id = alias.key; choice.name = alias.name; choice.cli = alias.cli; }
+  }
   if (!current || !_fwdChoiceIsCurrent(current)) {
     if (current?.type === 'direct' && _fwdLocalLoading) return;
     // Apply defaults only on initial catalog load; invalidated manual choices require reselection.
@@ -286,7 +314,7 @@ function _fwdAgentPickerState(flow) {
     }
     if (rows.find(row => row.value === state.kind)?.modelPick === false) state.model = '';
     return {rows, value:state.kind, stale:!rows.some(row => row.value === state.kind),
-      modelStale:_fwpModelState(_fwdOptions, state.model).stale, state};
+      modelStale:_fwpWorkflowModelState(_fwdOptions, state.model).stale, state};
   }
   return {rows:_fwdDirectAgents().filter(row => row?.key).map(row => ({
     value:row.key, label:row.name || row.cli || 'Agent', note:row.note || '',
@@ -393,7 +421,7 @@ function _fwdRenderAIPickers(tid, box) {
     _fwpSyncModel(card, _fwdOptions);
     const modelValue = card.querySelector('[data-fwp-model]')?.value || '';
     if (modelValue !== '__unselected__') agentState.state.model = modelValue;
-    agentState.modelStale = _fwpModelState(_fwdOptions, agentState.state.model).stale;
+    agentState.modelStale = _fwpWorkflowModelState(_fwdOptions, agentState.state.model).stale;
     _fwdSyncConfirm(tid);
   });
   if (agentState.stale) _fwdSetStatus('原 Agent 已不可用，请重新选择后再安排执行。', true);

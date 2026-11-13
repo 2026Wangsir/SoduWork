@@ -4,6 +4,10 @@
    the target-language catalog by the same key after template matching). */
 (function (global) {
   const messages = {
+    "跟随底座默认 · {model}": "기반 기본값 따르기 · {model}",
+    "跟随底座默认（目录默认：{model}）": "기반 기본값 따르기(카탈로그 기본값: {model})",
+    "跟随默认模型（派发时解析）": "기본 모델 따르기(할당 시 결정)",
+    "底座默认不可用，请明确选择模型": "기반 기본값을 사용할 수 없습니다. 모델을 선택하세요",
     '创建即用：': '앱 만들기: ',
     '创建网页类即用：': '웹 앱 만들기: ',
     '创建桌面客户端：': '데스크톱 앱 만들기: ',
