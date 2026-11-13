@@ -1,4 +1,5 @@
 """Real Office-package regressions, including hostile editable sizes."""
+import csv
 import io
 import unittest
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -7,6 +8,23 @@ from app.services import library_formats
 
 
 class LibraryFormatsTests(unittest.TestCase):
+    def test_csv_round_trip_preserves_embedded_newlines_tabs_commas_and_quotes(self):
+        original = 'name,description\r\nAlice,"line1\nline2\twith, a comma and ""quotes"""\r\n'
+
+        editor_content = library_formats.read('csv', original.encode('utf-8'))
+        self.assertEqual(
+            editor_content,
+            'name\tdescription\nAlice\t"line1\nline2\twith, a comma and ""quotes"""',
+        )
+
+        saved, suffix, mime = library_formats.export('csv', 'sample', editor_content)
+        self.assertEqual(suffix, '.csv')
+        self.assertEqual(mime, 'text/csv; charset=utf-8')
+        self.assertEqual(
+            list(csv.reader(io.StringIO(saved.decode('utf-8'), newline=''))),
+            list(csv.reader(io.StringIO(original, newline=''))),
+        )
+
     def test_formula_like_spreadsheet_values_are_exported_as_literal_text(self):
         from openpyxl import load_workbook
         data, suffix, mime = library_formats.export("spreadsheet", "cells", "=1+1\t@SUM(A1:A9)")

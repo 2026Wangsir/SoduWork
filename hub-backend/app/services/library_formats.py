@@ -54,11 +54,17 @@ def _bounded_package(data):
 
 def export(kind: str, title: str, content: str, text_format: str | None = None):
     if kind == 'csv':
+        # The library editor uses a tab-delimited representation for CSV
+        # files.  Parse that representation as TSV instead of splitting on
+        # literal tabs and line breaks so quoted cell content survives a
+        # read/edit/save round trip.
+        reader = csv.reader(StringIO(content, newline=''), delimiter='\t', strict=True)
         out = StringIO(newline='')
-        rows = content.splitlines()
-        if len(rows) > 5000 or any(len(row.split('\t')) > 100 for row in rows):
-            raise ValueError('电子表格最多支持 5000 行和 100 列')
-        csv.writer(out).writerows(row.split('\t') for row in rows)
+        writer = csv.writer(out)
+        for row_index, row in enumerate(reader):
+            if row_index >= 5000 or len(row) > 100:
+                raise ValueError('电子表格最多支持 5000 行和 100 列')
+            writer.writerow(row)
         return out.getvalue().encode('utf-8'), '.csv', 'text/csv; charset=utf-8'
     suffix, mime = FORMATS[kind]
     out = BytesIO()
@@ -110,12 +116,22 @@ def read(kind: str, data: bytes) -> str:
     if kind in {'note', 'document'}:
         return data.decode('utf-8')
     if kind == 'csv':
-        rows = []
-        for row in csv.reader(StringIO(data.decode('utf-8-sig'), newline='')):
-            if len(rows) >= 5000 or len(row) > 100:
+        source = data.decode('utf-8-sig')
+        reader = csv.reader(StringIO(source, newline=''))
+        out = StringIO(newline='')
+        writer = csv.writer(out, delimiter='\t', lineterminator='\n')
+        for row_index, row in enumerate(reader):
+            if row_index >= 5000 or len(row) > 100:
                 raise ValueError('电子表格最多支持 5000 行和 100 列')
-            rows.append('\t'.join(row))
-        return '\n'.join(rows)
+            writer.writerow(row)
+        result = out.getvalue()
+        # csv.writer terminates every logical row. The editor representation
+        # historically omitted the final record terminator, so remove only
+        # that writer-added byte; embedded newlines inside quoted cells stay
+        # intact.
+        if result.endswith('\n'):
+            result = result[:-1]
+        return result
     if kind in {'legacy_document', 'spreadsheet', 'presentation'}:
         _bounded_package(data)
     if kind == 'legacy_document':
