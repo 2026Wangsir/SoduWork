@@ -91,12 +91,12 @@ test('assignment labels keep local model references distinct from Hub models', (
   vm.runInNewContext(fs.readFileSync(path.join(root,'components/panels/panels-forward-plugin.js'),'utf8'),context);
   const local = {name:'local:model-abc', modelName:'qwen-local', label:'Qwen Local',
     providerId:'ollama', providerName:'本机 Ollama', localOnly:true, source:'local'};
-  const options = {defaultModel:'sodu-prd-large', modelOptions:[
-    {name:'sodu-prd-large', providerId:'sodu', providerName:'sodu'}, local,
+  const options = {defaultModel:'hub-model', modelOptions:[
+    {name:'hub-model', providerId:'hub-provider', providerName:'Example Hub'}, local,
   ]};
   assert.equal(context._fwpModelLabel(options, local.name), 'Qwen Local · 本机 Ollama · 本机');
   assert.deepEqual(Array.from(context._fwpModelState(options, local.name).models),
-    ['sodu-prd-large', 'local:model-abc']);
+    ['hub-model', 'local:model-abc']);
   assert.match(context._fwpModelOptions(context._fwpModelState(options, local.name), 'Default'),
     /value="local:model-abc" selected>Qwen Local · 本机 Ollama · 本机/);
 });

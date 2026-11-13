@@ -279,7 +279,7 @@ test('modelPick false still clears stale direct and workflow model overrides', (
 });
 
 test('local model catalog is optional, source-labeled and kept beside Hub choices', async () => {
-  const h = fixture({modelOptions: [{name: 'hub-model', providerId: 'sodu', providerName: 'sodu'}]});
+  const h = fixture({modelOptions: [{name: 'hub-model', providerId: 'hub-provider', providerName: 'Example Hub'}]});
   h.ctx.window.soduWorkAPI = {localModels: {get: async () => ({usable: [
     {name: 'local:model-abc', modelName: 'qwen-local', label: 'Qwen Local',
       providerId: 'ollama', providerName: '本机 Ollama', localOnly: true, modality: 'chat'},
