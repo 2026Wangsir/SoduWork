@@ -54,6 +54,39 @@ test('settings placeholders and screenshot notices follow every supported locale
   }
 });
 
+test('model save outcomes and retry guidance follow every supported locale', () => {
+  const c = client();
+  const phrases = ['模型配置已保存，但模型选择器刷新失败，请重新打开对话。',
+    '本地模型配置已保存，Hub 模型配置未保存，请重试。',
+    '模型配置已保存，但模型清单刷新失败，请重新打开模型页面。',
+    '请重新打开模型页面，刷新服务配置后再保存。'];
+  const expected = {
+    'zh-CN': phrases,
+    'en-US': [
+      'Model settings were saved, but the model picker could not refresh. Reopen the chat.',
+      'Local model settings were saved, but Hub model settings were not. Try again.',
+      'Model settings were saved, but the model list could not refresh. Reopen the models page.',
+      'Reopen the models page and refresh the service settings before saving again.',
+    ],
+    'ja-JP': [
+      'モデル設定は保存されましたが、モデル選択メニューを更新できませんでした。会話を開き直してください。',
+      'ローカルモデルの設定は保存されましたが、Hub のモデル設定は保存されていません。もう一度お試しください。',
+      'モデル設定は保存されましたが、モデル一覧を更新できませんでした。モデルページを開き直してください。',
+      'モデルページを開き直し、サービス設定を更新してから、もう一度保存してください。',
+    ],
+    'ko-KR': [
+      '모델 설정은 저장되었지만 모델 선택 목록을 새로고침하지 못했습니다. 대화를 다시 열어 주세요.',
+      '로컬 모델 설정은 저장되었지만 Hub 모델 설정은 저장되지 않았습니다. 다시 시도해 주세요.',
+      '모델 설정은 저장되었지만 모델 목록을 새로고침하지 못했습니다. 모델 페이지를 다시 열어 주세요.',
+      '모델 페이지를 다시 열고 서비스 설정을 새로고침한 후 다시 저장해 주세요.',
+    ],
+  };
+  for (const [locale, messages] of Object.entries(expected)) {
+    c.api.setLocale(locale);
+    assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), messages, locale);
+  }
+});
+
 test('requirement parsing warnings, tag controls, and built-in model names follow every supported locale', () => {
   const c = client();
   const phrases = [

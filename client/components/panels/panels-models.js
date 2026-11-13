@@ -25,6 +25,11 @@ let _mdMyModels = [];               /* Current custom-model edits. */
 let _mdOpen = '';                   /* Expand one provider at a time. */
 let _mdQuery = '';
 let _mdDirty = false;
+let _mdLocalDirty = false;
+let _mdManagedDirty = false;
+let _mdLocalKeyIds = new Set();
+let _mdManagedNeedsReload = false;
+let _mdSaveFlight = null;
 let _mdTest = {};                   /* providerId -> {state:'ing'|'ok'|'bad', detail} */
 let _mdEditor = '';                 /* A native child window edits one provider; empty selection indicates the overview. */
 let _mdNew = null;                  /* New-provider draft. */
@@ -99,13 +104,15 @@ function closeModelsPanel() {
   if (typeof shrinkFromOverlay === 'function') shrinkFromOverlay();
 }
 
-async function _mdLoad() {
+async function _mdLoad(options) {
   const box = document.getElementById('mdBody');
   if (!box) return;
   const loadId = ++_mdLoadId;
   const current = () => loadId === _mdLoadId && document.getElementById('mdBody') === box;
   const previous = { data: _mdData, keys: _mdKeyEdits, models: _mdMyModels,
-    dirty: _mdDirty, editor: _mdEditor, draft: _mdNew };
+    dirty: _mdDirty, localDirty: _mdLocalDirty, managedDirty: _mdManagedDirty,
+    localKeyIds: _mdLocalKeyIds, managedNeedsReload: _mdManagedNeedsReload,
+    editor: _mdEditor, draft: _mdNew };
   let timer, rendering = false;
   _mdLoadState = 'loading';
   box.setAttribute('aria-busy', 'true');
@@ -134,14 +141,22 @@ async function _mdLoad() {
     }
     _mdKeyEdits = {};
     _mdMyModels = r.myModels.slice();
-    _mdDirty = false;
+    _mdDirty = false; _mdLocalDirty = false; _mdManagedDirty = false;
+    _mdLocalKeyIds = new Set(); _mdManagedNeedsReload = false;
     _mdRender();
     _mdLoadState = 'ready';
     return true;
   } catch (error) {
     if (!current()) return false;
     _mdData = previous.data; _mdKeyEdits = previous.keys; _mdMyModels = previous.models;
-    _mdDirty = previous.dirty; _mdEditor = previous.editor; _mdNew = previous.draft;
+    _mdDirty = previous.dirty; _mdLocalDirty = previous.localDirty; _mdManagedDirty = previous.managedDirty;
+    _mdLocalKeyIds = previous.localKeyIds; _mdManagedNeedsReload = previous.managedNeedsReload;
+    _mdEditor = previous.editor; _mdNew = previous.draft;
+    if (options?.saved) {
+      _mdLoadState = 'ready';
+      _mdRender();
+      return false;
+    }
     _mdLoadState = 'error';
     const message = rendering ? '页面显示遇到问题，请重试。已有模型配置未被修改。' :
       error?.code === 'MODEL_CATALOG_INVALID' ? '模型清单格式异常，请重试。已有模型配置未被修改。' :
@@ -358,11 +373,13 @@ function _mdHost(raw) {
 }
 
 function _mdAddService() {
+  if (_mdSaveFlight) return;
   const id = 'custom-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   _mdNew = { id, name: '', kind: 'openai-compat', baseUrl: '', defaultBaseUrl: '',
     personal: true, localOnly: true, authMode: 'key', modelNames: [], note: '', myKeySet: false, keySet: false };
   _mdEditor = '__new__:' + id;
   _mdOpen = id;
+  _mdMarkOwnedDirty(_mdNew);
   _mdRender();
 }
 
@@ -373,11 +390,20 @@ function _mdProvider(pid) {
 }
 
 function _mdTouchProvider(pid, patch) {
+  if (_mdSaveFlight) return;
   const p = _mdProvider(pid);
   if (!p) return;
   Object.assign(p, patch || {});
   p._capStale = true;
   for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
+  _mdMarkOwnedDirty(p);
+}
+
+/* Track ownership so a local edit never becomes an implicit Hub replacement. */
+function _mdMarkOwnedDirty(providerOrId) {
+  const provider = typeof providerOrId === 'string' ? _mdProvider(providerOrId) : providerOrId;
+  if (provider?.localOnly === true) { _mdLocalDirty = true; _mdLocalKeyIds.add(provider.id); }
+  else _mdManagedDirty = true;
   _mdDirty = true; _mdMark();
 }
 
@@ -404,12 +430,13 @@ function _mdBind(box) {
   }));
 
   box.querySelectorAll('[data-pkey]').forEach(el => el.addEventListener('input', () => {
+    if (_mdSaveFlight || el.isConnected === false) return;
     const pid = el.getAttribute('data-pkey');
     const provider = _mdProvider(pid); if (provider) provider._capStale = true;
     for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
     if (el.value.trim()) _mdKeyEdits[pid] = el.value.trim();
     else delete _mdKeyEdits[pid];
-    _mdMark();
+    _mdMarkOwnedDirty(provider || pid);
   }));
   box.querySelectorAll('[data-pname]').forEach(el => el.addEventListener('input', () =>
     _mdTouchProvider(el.getAttribute('data-pname'), { name: el.value })));
@@ -430,9 +457,10 @@ function _mdBind(box) {
     _mdRender();
   }));
   box.querySelectorAll('[data-pdelete]').forEach(el => el.addEventListener('click', () => {
-    if (el.isConnected === false) return;
+    if (_mdSaveFlight || el.isConnected === false) return;
     const pid = el.getAttribute('data-pdelete');
-    if (!_mdProvider(pid)) return;
+    const provider = _mdProvider(pid);
+    if (!provider) return;
     if (_mdDeletePending !== pid) { _mdDeletePending = pid; _mdRender(); return; }
     _mdDeletePending = '';
     _mdData.providers = (_mdData.providers || []).filter((p) => p.id !== pid);
@@ -440,9 +468,9 @@ function _mdBind(box) {
     _mdDrafts.delete(pid);
     if (_mdNew?.id === pid) _mdNew = null;
     for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
-    _mdKeyEdits[pid] = null; _mdDirty = true;
+    _mdKeyEdits[pid] = null; _mdMarkOwnedDirty(provider);
     _mdRender();
-    _mdSave(true);
+    _mdSave(false);
   }));
   box.querySelectorAll('[data-peye]').forEach(el => el.addEventListener('click', () => {
     const inp = box.querySelector('[data-pkey="' + el.getAttribute('data-peye') + '"]');
@@ -453,20 +481,21 @@ function _mdBind(box) {
     el.setAttribute('aria-pressed', String(show));
   }));
   box.querySelectorAll('[data-pclear]').forEach(el => el.addEventListener('click', async () => {
+    if (_mdSaveFlight || el.isConnected === false) return;
     const pid = el.getAttribute('data-pclear');
     _mdKeyEdits[pid] = null;    /* null explicitly removes the personal key. */
     const p = _mdProvider(pid);
+    _mdMarkOwnedDirty(p || pid);
     el.textContent = p && p.addressOverridden ? '（保存后此地址将没有凭据）' : '（保存后回落到公司凭据）';
     el.disabled = true;
-    _mdMark();
     // Clearing a personal key is the removal action for built-in providers.
     // Persist it immediately so the provider leaves the usable/default list.
     const saved = await _mdSave(false);
-    if (!saved) await _mdLoad();
+    if (!saved) _mdRender();
   }));
   box.querySelectorAll('[data-ptest]').forEach(el => el.addEventListener('click', () => _mdDoTest(el)));
   box.querySelectorAll('[data-mdel]').forEach(el => el.addEventListener('click', async () => {
-    if (el.isConnected === false) return;
+    if (_mdSaveFlight || el.isConnected === false) return;
     const [pid, i] = el.getAttribute('data-mdel').split('|');
     const own = _mdMyModels.filter(m => m.providerId === pid);
     const target = own[+i];
@@ -475,12 +504,12 @@ function _mdBind(box) {
     _mdMyModels.splice(at, 1);
     if (_mdDrafts.get(pid)?.original === target.name) _mdDrafts.delete(pid);
     _mdChecks.delete(_mdCheckKey(pid, target.name));
-    _mdDirty = true; _mdRender();
+    _mdMarkOwnedDirty(_mdProvider(pid) || pid); _mdRender();
     // Removing a personal model is an explicit destructive action. Persist it
     // immediately so it does not reappear when the panel is reopened, and so a
     // stale model cannot remain selected in the conversation picker.
     const saved = await _mdSave(false);
-    if (!saved) await _mdLoad();
+    if (!saved) _mdRender();
   }));
   _mdBindModels(box);
 }
@@ -490,6 +519,7 @@ function _mdBind(box) {
  * credential.
  */
 async function _mdDoTest(el) {
+  if (_mdSaveFlight) return;
   const pid = el.getAttribute('data-ptest');
   if (_mdTest[pid]?.state === 'ing') return;
   const p = _mdProvider(pid);
@@ -504,15 +534,7 @@ async function _mdDoTest(el) {
   _mdRender();
   try {
     if (_mdDirty || Object.keys(_mdKeyEdits).length) {
-      const body = _mdPayload();
-      await SoduWorkAPI.saveMyModels(body);
-      _mdKeyEdits = {}; _mdDirty = false;
-      _mdData = await SoduWorkAPI.myModels();
-      if (_mdNew) {
-        const added = (_mdData.providers || []).find((x) => x.personal && x.id === _mdNew.id);
-        if (added) { _mdEditor = added.id; _mdNew = null; }
-      }
-      if (window.soduWorkAPI && soduWorkAPI.broadcast) soduWorkAPI.broadcast('models', { providerId: pid });
+      if (!await _mdSave(false)) throw Error('请先保存模型配置，再检测能力');
     }
     const testPid = pid === '__new__' ? (_mdNew && _mdNew.id) : pid;
     const r = await SoduWorkAPI.testMyModel(testPid);
@@ -535,11 +557,15 @@ async function _mdDoTest(el) {
 
 /* Enable saving only when unsaved changes exist. */
 function _mdMark() {
+  document.getElementById('mdBody')?.querySelectorAll?.('input,select,textarea,button').forEach(control => {
+    if (_mdSaveFlight && !control.disabled) { control.disabled = true; control._mdSaveDisabled = true; }
+    else if (!_mdSaveFlight && control._mdSaveDisabled) { control.disabled = false; delete control._mdSaveDisabled; }
+  });
   const btn = document.getElementById('mdSave');
   if (!btn) return;
-  const dirty = _mdDirty || Object.keys(_mdKeyEdits).length > 0;
-  btn.disabled = !dirty || _mdLoadState !== 'ready';
-  btn.textContent = dirty || _mdLoadState !== 'ready' ? '保存' : '已保存';
+  const dirty = _mdDirty || _mdLocalDirty || _mdManagedDirty || Object.keys(_mdKeyEdits).length > 0;
+  btn.disabled = !!_mdSaveFlight || !dirty || _mdLoadState !== 'ready';
+  btn.textContent = _mdSaveFlight ? '保存中…' : dirty || _mdLoadState !== 'ready' ? '保存' : '已保存';
 }
 
 function _mdPayload() {
@@ -551,39 +577,107 @@ function _mdPayload() {
     baseUrl: p.baseUrl || '', defaultBaseUrl: p.defaultBaseUrl || '', personal: !!p.personal,
     authMode: p.authMode || 'key', note: p.note || '', localOnly: p.localOnly === true }));
   const localProviders = all.filter(p => p.localOnly === true);
-  const localIds = new Set(localProviders.map(p => p.id));
-  return { providers, models: _mdMyModels, keys: _mdKeyEdits, expectedRevision: _mdData && _mdData.revision,
-    localProviders, localModels: _mdMyModels.filter(m => m.localOnly === true || localIds.has(m.providerId)),
-    localKeys: Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => localIds.has(id))),
-    localRevision: _mdData && _mdData.localRevision };
+  const localIds = new Set([...localProviders.map(p => p.id), ..._mdLocalKeyIds]);
+  const payload = {};
+  if (_mdManagedDirty) {
+    payload.providers = providers.filter(p => p.localOnly !== true);
+    payload.models = _mdMyModels.filter(m => m.localOnly !== true && !localIds.has(m.providerId));
+    payload.keys = Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => !localIds.has(id)));
+    payload.expectedRevision = _mdData && _mdData.revision;
+  }
+  if (_mdLocalDirty) {
+    payload.localProviders = localProviders;
+    payload.localModels = _mdMyModels.filter(m => m.localOnly === true || localIds.has(m.providerId));
+    payload.localKeys = Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => localIds.has(id)));
+    payload.localRevision = _mdData && _mdData.localRevision;
+  }
+  return payload;
 }
 
-async function _mdSave(closeAfter) {
-  const btn = document.getElementById('mdSave');
-  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+function _mdSave(closeAfter) {
+  if (_mdSaveFlight) return _mdSaveFlight;
+  _mdSaveFlight = Promise.resolve().then(() => _mdSaveChanges(closeAfter)).finally(() => {
+    _mdSaveFlight = null; _mdMark();
+  });
+  _mdMark();
+  return _mdSaveFlight;
+}
+
+async function _mdSaveChanges(closeAfter) {
+  const loadId = _mdLoadId, scope = SoduWorkAPI.taskStorageKey?.('ops');
+  const current = () => loadId === _mdLoadId && scope === SoduWorkAPI.taskStorageKey?.('ops');
+  let localSaved = false;
   try {
     const p = _mdProvider(_mdOpen || _mdEditor);
     if (p && (!String(p.baseUrl || '').startsWith('http://') && !String(p.baseUrl || '').startsWith('https://'))) {
       throw new Error('API 地址要以 http:// 或 https:// 开头');
     }
     if (p && p.personal && !String(p.name || '').trim()) throw new Error('请填写服务名称');
-    const body = _mdPayload();
-    await SoduWorkAPI.saveMyModels(body);
-    if (typeof petSay === 'function') petSay('模型配置存好了～');
-    await _mdLoad();
+    // Keep the two ownership domains independent, including partial failures.
+    const body = structuredClone(_mdPayload());
+    if (Array.isArray(body.localProviders)) {
+      const result = await SoduWorkAPI.saveMyModels({ localProviders: body.localProviders,
+        localModels: body.localModels, localKeys: body.localKeys, localRevision: body.localRevision });
+      if (!current()) return false;
+      localSaved = true; _mdLocalDirty = false; _mdLocalKeyIds.clear();
+      for (const id of Object.keys(body.localKeys)) delete _mdKeyEdits[id];
+      if (result && Array.isArray(result.providers) && Array.isArray(result.myModels)) {
+        const localIds = new Set([...body.localProviders.map(provider => provider.id), ...Object.keys(body.localKeys)]);
+        const managed = rows => (rows || []).filter(row => !row.localOnly && !localIds.has(row.providerId));
+        _mdMyModels = result.myModels.concat(managed(_mdMyModels));
+        _mdData = { ..._mdData, localRevision: result.revision,
+          providers: result.providers.concat(_mdData.providers.filter(provider => !provider.localOnly)),
+          myModels: _mdMyModels, usable: (result.usable || []).concat(managed(_mdData.usable)),
+          mediaUsable: Object.fromEntries(['image', 'video'].map(type =>
+            [type, (result.mediaUsable?.[type] || []).concat(managed(_mdData.mediaUsable?.[type]))])) };
+        if (_mdNew && result.providers.some(provider => provider.id === _mdNew.id)) {
+          _mdEditor = _mdNew.id; _mdNew = null;
+        }
+      }
+    }
+    if (Array.isArray(body.providers)) {
+      if (_mdManagedNeedsReload) throw Error('请重新打开模型页面，刷新服务配置后再保存。');
+      await SoduWorkAPI.saveMyModels({ providers: body.providers, models: body.models,
+        keys: body.keys, expectedRevision: body.expectedRevision });
+      if (!current()) return false;
+      _mdManagedDirty = false; _mdManagedNeedsReload = true;
+      for (const id of Object.keys(body.keys)) delete _mdKeyEdits[id];
+    }
+    _mdDirty = _mdLocalDirty || _mdManagedDirty || Object.keys(_mdKeyEdits).length > 0;
+  } catch (e) {
+    if (!current()) return false;
+    _mdDirty = _mdLocalDirty || _mdManagedDirty || Object.keys(_mdKeyEdits).length > 0;
+    if (typeof petSay === 'function') petSay(localSaved
+      ? '本地模型配置已保存，Hub 模型配置未保存，请重试。' : _humanErr(e, '没存上'));
+    try { _mdRender(); } catch (_) { /* Preserve the remaining draft after a display failure. */ }
+    if (localSaved) await _mdRefreshSavedModels();
+    return false;
+  }
+  if (typeof petSay === 'function') petSay('模型配置存好了～');
+  let reloaded = false;
+  try { reloaded = await _mdLoad({ saved: true }); } catch (_) { /* The write has already committed. */ }
+  if (!reloaded && typeof petSay === 'function')
+    petSay('模型配置已保存，但模型清单刷新失败，请重新打开模型页面。');
+  await _mdRefreshSavedModels();
+  try {
+    if (closeAfter && window.soduWorkAPI && soduWorkAPI.closeDeskWindow) soduWorkAPI.closeDeskWindow();
+  } catch (_) { /* The workspace must remain usable after a provider save. */ }
+  return true;
+}
+
+async function _mdRefreshSavedModels() {
+  try {
     if (globalThis.ComposeModelPicker && typeof ComposeModelPicker.refresh === 'function') {
       await ComposeModelPicker.refresh(true);
     }
+  } catch (_) {
+    if (typeof petSay === 'function') petSay('模型配置已保存，但模型选择器刷新失败，请重新打开对话。');
+  }
+  try {
     if (window.soduWorkAPI && soduWorkAPI.broadcast) {
       soduWorkAPI.broadcast('models', { providerId: _mdEditor || '' });
     }
-    if (closeAfter && window.soduWorkAPI && soduWorkAPI.closeDeskWindow) soduWorkAPI.closeDeskWindow();
-    return true;
-  } catch (e) {
-    if (typeof petSay === 'function') petSay(_humanErr(e, '没存上'));
-    if (btn) { btn.disabled = false; btn.textContent = '保存'; }
-    return false;
-  }
+  } catch (_) { /* Do not turn a persisted change into a false failure. */ }
 }
 
 // Source-owned messages keep count updates and language changes independent.
@@ -597,7 +691,7 @@ function _mdBackgroundRefresh() {
   if (_mdRefreshFlight) return _mdRefreshFlight;
   const panel = document.getElementById('mdPanel'), box = document.getElementById('mdBody');
   const editable = () => panel?.classList.contains('show') && document.getElementById('mdBody') === box &&
-    _mdLoadState === 'ready' && _mdData && !_mdDirty && !Object.keys(_mdKeyEdits).length &&
+    !_mdSaveFlight && _mdLoadState === 'ready' && _mdData && !_mdDirty && !Object.keys(_mdKeyEdits).length &&
     !_mdNew && !_mdDeletePending && !_mdDrafts.size &&
     !Object.values(_mdTest).some(test => test.state === 'ing') && ![..._mdChecks.values()].some(check => check.pending);
   if (!box || !editable()) return Promise.resolve(false);

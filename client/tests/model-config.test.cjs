@@ -129,7 +129,8 @@ test('模型中心支持个人地址覆盖与任意自定义服务', () => {
   assert.match(panel, /data-pname=/);
   assert.match(panel, /OpenAI 兼容/);
   assert.match(panel, /本地服务无需密钥/);
-  assert.match(panel, /providers, models: _mdMyModels, keys: _mdKeyEdits/);
+  assert.match(panel, /payload\.providers/);
+  assert.match(panel, /payload\.localProviders/);
   assert.match(api, /async saveMyModels\(body\)[\s\S]*?jfetch\('\/my-models', \{ method: 'PUT'/);
 });
 

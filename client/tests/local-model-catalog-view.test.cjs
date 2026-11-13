@@ -132,6 +132,30 @@ test('a no-key local service can discover its first model without a manual model
   assert.equal(pickerRefreshes, 1);
 });
 
+test('local-only panel saves omit managed fields and survive post-save refresh failures', async () => {
+  const f = fixture();
+  const catalog = localCatalog(['saved-model']);
+  const saves = [], button = { disabled: false, textContent: '' };
+  const body = { innerHTML: '', setAttribute() {}, removeAttribute() {}, querySelectorAll: () => [] };
+  f.context.catalog = catalog;
+  f.context.document = { getElementById: id => id === 'mdBody' ? body : id === 'mdSave' ? button : null };
+  f.context.SoduWorkAPI = {
+    saveMyModels: async payload => { saves.push(payload); return { ok: true }; },
+    myModels: async () => structuredClone(catalog),
+  };
+  f.context.ComposeModelPicker = { refresh: async () => { throw Error('picker refresh failed'); } };
+  f.context.soduWorkAPI = { broadcast: () => { throw Error('broadcast unavailable'); } };
+  f.evaluate('_mdData = catalog; _mdMyModels = catalog.myModels.slice(); _mdOpen = "local-fixture"; _mdLoadState = "ready"; _mdLocalDirty = true; _mdManagedDirty = false; _mdDirty = true;');
+  assert.equal(await f.evaluate('_mdSave(false)'), true);
+  assert.equal(saves.length, 1);
+  assert.deepEqual(Object.keys(saves[0]).sort(), ['localKeys', 'localModels', 'localProviders', 'localRevision']);
+  assert.equal(Object.hasOwn(saves[0], 'providers'), false);
+  assert.equal(Object.hasOwn(saves[0], 'models'), false);
+  assert.equal(Object.hasOwn(saves[0], 'expectedRevision'), false);
+  assert.equal(f.messages.some(message => message.includes('模型配置存好了')), true);
+  assert.equal(f.messages.some(message => message.includes('没存上')), false);
+});
+
 test('an incomplete local catalog fails loading instead of promoting mirrored definitions', async () => {
   const f = fixture(), incomplete = localCatalog();
   delete incomplete.myModels;
@@ -199,7 +223,7 @@ test('removing the model being edited clears only its edit draft before saving',
   assert.equal(f.evaluate('_mdDrafts.has("other-provider")'), true);
   assert.equal(f.evaluate('_mdMyModels.length'), 0);
   assert.doesNotMatch(f.detail(), /shared-model|应用修改/);
-  assert.equal(JSON.parse(f.context.saves[0]).models.length, 0);
+  assert.equal(JSON.parse(f.context.saves[0]).localModels.length, 0);
 });
 
 test('removing another model preserves the current edit draft and its unsaved fields', async () => {
