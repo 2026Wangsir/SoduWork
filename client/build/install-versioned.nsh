@@ -40,7 +40,7 @@ ${Do}
   System::Call 'kernel32::CreateFileW(w "$soduWorkRoot\.soduwork-update.lock", i 0xC0000000, i 0, p 0, i 4, i 0, p 0) p .r0'
 ${Loop}
 ${If} $0 == -1
-  MessageBox MB_OK|MB_ICONINFORMATION "另一个 SoduWork 更新正在进行，请等待它完成。" /SD IDOK
+  MessageBox MB_OK|MB_ICONINFORMATION "$(soduworkUpdateBusy)" /SD IDOK
   SetErrorLevel 1618
   Quit
 ${EndIf}
@@ -96,7 +96,7 @@ ${If} $0 == 0
   ; Backup/ACL/rename failure leaves the live entry in place; no payload pointer
   ; has been changed, so there is no destructive restore operation to race.
   !insertmacro soduworkLog "launcher-swap-failed operation=$2 win32=$1"
-  MessageBox MB_OK|MB_ICONEXCLAMATION "SoduWork 的启动文件暂时无法更新。请重试安装；旧版本和工作数据仍然保留。" /SD IDOK
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(soduworkLauncherUpdateFailed)" /SD IDOK
   SetErrorLevel 2
   Quit
 ${EndIf}
@@ -134,7 +134,7 @@ ${If} ${Errors}
   StrCpy $INSTDIR "$soduWorkRoot"
   !insertmacro soduworkLog "native-extraction-failed"
   SetErrorLevel 2
-  MessageBox MB_OK|MB_ICONEXCLAMATION "安装文件写入未完成。请检查目标目录权限和磁盘空间后重试。" /SD IDOK
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(soduworkExtractionFailed)" /SD IDOK
   Quit
 ${EndIf}
 File "/oname=${UNINSTALL_FILENAME}" "${UNINSTALLER_OUT_FILE}"
@@ -143,7 +143,7 @@ ${IfNot} ${FileExists} "$soduworkStage\${APP_EXECUTABLE_FILENAME}"
 ${OrIfNot} ${FileExists} "$soduworkStage\resources\app.asar"
   !insertmacro soduworkLog "payload-incomplete"
   SetErrorLevel 2
-  MessageBox MB_OK|MB_ICONEXCLAMATION "安装文件未准备完整，本次安装未完成。请重试安装。" /SD IDOK
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(soduworkPayloadIncomplete)" /SD IDOK
   Quit
 ${EndIf}
 ; Installation checks the Python bootstrap ZIP for existence only, as authorized.
@@ -167,7 +167,7 @@ ${If} $0 != 0
   FileWrite $9 "verifier-exit=$0$\r$\n$1$\r$\n"
   FileClose $9
   SetErrorLevel 2
-  MessageBox MB_OK|MB_ICONEXCLAMATION "安装文件校验未通过，本次安装未完成。$\r$\n请稍后重新运行安装包；若仍失败，请将以下安装日志交给技术支持：$\r$\n$soduWorkRoot\.soduwork-update.log$\r$\n$soduWorkRoot\.soduwork-update-details.json" /SD IDOK
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(soduworkVerificationFailed)$\r$\n$soduWorkRoot\.soduwork-update.log$\r$\n$soduWorkRoot\.soduwork-update-details.json" /SD IDOK
   Quit
 ${EndIf}
 FileOpen $0 "$soduworkStage\.soduwork-release" w

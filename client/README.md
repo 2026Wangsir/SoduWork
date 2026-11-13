@@ -64,6 +64,8 @@ On Windows, install `../hub-backend/requirements-runner-build.txt` in the backen
 
 Windows packaging freezes source payloads through `scripts/payload-sources.cjs` to handle filesystems that expose different bytes to different processes. Source changes after manifest generation fail the build. Generated `.runtime/installer/payload-sources/` is not versioned. Native installer builds share resources and should run sequentially.
 
+The interactive Windows installer offers English, Simplified Chinese, Japanese and Korean. It defaults to the Windows UI language, with English as the fallback, and lets the user choose before installation. Silent updates do not show the selector. Installer language does not overwrite the desktop's saved interface language. macOS and Linux retain their platform installation interfaces.
+
 Frozen input directories contain at most 64 files to avoid repeated compiler scans. Installation and verification share one extraction function with compression and per-file verification; the verifier documents compatibility exceptions for older installers. Installer fault-injection tests share the build directory and must also run sequentially. Before release, verify the final installer, upgrade, and rollback. Packaging excludes test files and selects only the single-file Runner executable as a Runner resource.
 
 OpenCode is optional and is neither bundled nor downloaded during packaging. There is one lightweight build recipe. Agent identifiers, display metadata, model scope, and permissions come from the shared `../hub-backend/app/agent_catalog.json`, copied into release resources. Avoid a second renderer-owned catalog.

@@ -20,7 +20,7 @@
       DeleteRegKey SHELL_CONTEXT "Software\Classes\*\shell\SoduWork.Open"
     ${EndIf}
   !endif
-  WriteRegStr SHELL_CONTEXT "${SODUWORK_FILE_VERB}" "" "用 ${PRODUCT_NAME} 打开"
+  WriteRegStr SHELL_CONTEXT "${SODUWORK_FILE_VERB}" "" "$(soduworkOpenFile)"
   WriteRegStr SHELL_CONTEXT "${SODUWORK_FILE_VERB}" "Icon" '"$appExe",0'
   WriteRegStr SHELL_CONTEXT "${SODUWORK_FILE_VERB}" "MultiSelectModel" "Single"
   WriteRegStr SHELL_CONTEXT "${SODUWORK_FILE_VERB}\command" "" '"$appExe" --soduwork-open-file "%1"'

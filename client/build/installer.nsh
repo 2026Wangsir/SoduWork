@@ -17,6 +17,14 @@
     !include "${BUILD_RESOURCES_DIR}\package-check.nsh"
   !endif
   !addincludedir "${PROJECT_DIR}\node_modules\app-builder-lib\templates\nsis"
+  !include "${BUILD_RESOURCES_DIR}\installer-language.nsh"
+  ; Use the Windows UI font that contains each selected script. The default
+  ; shell font can render Korean/Japanese NSIS strings as vertical tofu on a
+  ; Simplified Chinese desktop even though the language resource is correct.
+  SetFont "Segoe UI" 9
+  SetFont /LANG=2052 "Microsoft YaHei UI" 9
+  SetFont /LANG=1041 "Meiryo UI" 9
+  SetFont /LANG=1042 "Malgun Gothic" 9
   !cd "${BUILD_RESOURCES_DIR}"
   ; Upstream process-check functions are intentionally unused: no global process killing.
   ; Keep all other compiler warnings fatal.
@@ -131,7 +139,7 @@
     nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
     Pop $0
     ${If} $0 == 0
-      MessageBox MB_OK|MB_ICONINFORMATION "请先从托盘退出 SoduWork，再卸载。正在进行的工作不会被强制中断。" /SD IDOK
+      MessageBox MB_OK|MB_ICONINFORMATION "$(soduworkQuitBeforeUninstall)" /SD IDOK
       SetErrorLevel 2
       Quit
     ${EndIf}

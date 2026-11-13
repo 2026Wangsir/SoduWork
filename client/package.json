@@ -203,6 +203,8 @@
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
       "oneClick": false,
+      "displayLanguageSelector": true,
+      "installerLanguages": ["en_US", "zh_CN", "ja_JP", "ko_KR"],
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
