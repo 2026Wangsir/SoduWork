@@ -110,7 +110,7 @@
     "退回去向": "Return destination",
     "让 AI 继续修改": "Let the AI revise it",
     "退回待开始，人工重新安排": "Return to backlog for manual reassignment",
-    "已退回待开始，需求回到需求池等待重新安排": "Returned to backlog; the requirement waits in the pool for reassignment",
+    "已退回待开始，需求回到需求池等待重新安排": "Returned to backlog; the issue waits in Issues for reassignment.",
     "审批说明": "Approval notes",
     "需要修改什么，或补充批准依据": "Describe required changes or reasons for approval",
     "查看验收标准与证据": "View acceptance criteria and evidence",

@@ -96,7 +96,7 @@ test('requirement creation card controls follow locale changes without translati
     '负责人', '优先级', '期望完成', '类型', '可见范围', '仅相关人', '标签', '创建需求',
     '继续对话'];
   const expected = {
-    'en-US': ['Add to issue pool', 'Review issue details', 'Issue content', 'Context and description',
+    'en-US': ['Add to Issues', 'Review issue details', 'Issue content', 'Context and description',
       'Acceptance criteria', 'Basic information', 'Owner', 'Priority', 'Expected completion', 'Type',
       'Visibility', 'Related people', 'Tags', 'Create issue', 'Continue chatting'],
     'ja-JP': ['課題プールに追加', '課題の詳細を確認', '課題の内容', '背景と説明', '受け入れ基準',
