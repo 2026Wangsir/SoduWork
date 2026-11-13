@@ -2,6 +2,7 @@
 (function (global) {
   'use strict';
   const esc = value => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const tx = value => global.SoduWorkI18n?.translateText?.(value) || value;
   const wired = new WeakSet(), composing = new WeakSet(), visibilityWired = new WeakSet();
   const sectionPaths = {
     content: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
@@ -21,17 +22,17 @@
   }
   function tagChips(tags, disabled = false) {
     return tags.map((tag, index) => '<span class="rq-tag-chip"><span>' + esc(tag) +
-      '</span><button type="button" data-rq-tag-remove="' + index + '" aria-label="删除标签：' + esc(tag) +
-      '" title="删除标签"' + (disabled ? ' disabled data-rq-locked' : '') + '><span aria-hidden="true">×</span></button></span>').join('');
+      '</span><button type="button" data-rq-tag-remove="' + index + '" aria-label="' + esc(tx('删除标签')) + '：' + esc(tag) +
+      '" title="' + esc(tx('删除标签')) + '"' + (disabled ? ' disabled data-rq-locked' : '') + '><span aria-hidden="true">×</span></button></span>').join('');
   }
   function tagHtml(tags, options = {}) {
     const value = normalizeTags(tags), id = options.id || 'rqTags', disabled = options.disabled === true;
     return '<div class="rq-tag-editor" data-rq-tag-editor' + (disabled ? ' aria-disabled="true"' : '') +
       '><div class="rq-tag-chips" data-rq-tag-chips>' + tagChips(value, disabled) +
       '</div><input type="hidden" data-rq-tag-value id="' + esc(id) + '"' + (options.name ? ' name="' + esc(options.name) + '"' : '') +
-      ' value="' + esc(JSON.stringify(value)) + '"><input id="' + esc(id) + 'Input" data-rq-tag-input type="text" aria-label="添加标签" placeholder="' +
-      (disabled ? '' : '输入标签后按回车') + '" autocomplete="off"' + (disabled ? ' disabled data-rq-locked' : '') + '>' +
-      '<span class="rq-tag-limit" data-rq-tag-limit role="status" hidden>最多添加 20 个标签</span></div>';
+      ' value="' + esc(JSON.stringify(value)) + '"><input id="' + esc(id) + 'Input" data-rq-tag-input type="text" aria-label="' + esc(tx('添加标签')) + '" placeholder="' +
+      (disabled ? '' : esc(tx('输入标签后按回车'))) + '" autocomplete="off"' + (disabled ? ' disabled data-rq-locked' : '') + '>' +
+      '<span class="rq-tag-limit" data-rq-tag-limit role="status" hidden>' + esc(tx('最多添加 20 个标签')) + '</span></div>';
   }
   function storedTags(field) {
     try { return normalizeTags(JSON.parse(field?.value || '[]')); } catch (_) { return normalizeTags(field?.value); }
@@ -48,7 +49,7 @@
       const chip = document.createElement('span'), label = document.createElement('span'), button = document.createElement('button');
       chip.className = 'rq-tag-chip'; label.textContent = tag; label.setAttribute('data-user-content', '');
       button.type = 'button'; button.setAttribute('data-rq-tag-remove', String(index));
-      button.setAttribute('aria-label', '删除标签：' + tag); button.title = '删除标签';
+      button.setAttribute('aria-label', tx('删除标签') + '：' + tag); button.title = tx('删除标签');
       const icon = document.createElement('span'); icon.textContent = '×'; icon.setAttribute('aria-hidden', 'true');
       button.append(icon); chip.append(label, button); return chip;
     }));
@@ -117,10 +118,10 @@
     });
   }
   function visibilityDescription(value, scope) {
-    if (scope === 'repository') return '仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。';
+    if (scope === 'repository') return tx('仓库成员可查看需求内容；执行会话和日志仍按原有权限访问。');
     if (scope === 'organization') value = 'organization';
-    return value === 'organization' ? '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。' :
-      '仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。';
+    return value === 'organization' ? tx('同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。') :
+      tx('仅相关人可查看需求内容；执行会话和日志仍按原有权限访问。');
   }
   function visibilityHint(value, id, scope) {
     return '<span class="rq-visibility-hint" id="' + esc(id) + '">' + visibilityDescription(value, scope) + '</span>';
@@ -140,18 +141,18 @@
   }
   function html(draft, options) {
     const kinds = global.Requirements?.kinds || { requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' };
-    return '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpKind">类型</label>' +
+    return '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpKind">' + esc(tx('类型')) + '</label>' +
       '<select id="cpKind">' + Object.entries(kinds).map(([key, label]) => '<option value="' + key + '"' +
-        (draft.kind === key ? ' selected' : '') + '>' + esc(label) + '</option>').join('') + '</select>' +
-      '<label class="cp-k cp-k2" for="cpVisibility">可见范围</label><select id="cpVisibility" data-rq-visibility aria-describedby="cpVisibilityHint">' +
-      '<option value="related"' + (draft.visibility !== 'organization' ? ' selected' : '') + '>仅相关人</option>' +
-      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>同公司可见</option></select></div>' +
+        (draft.kind === key ? ' selected' : '') + '>' + esc(tx(label)) + '</option>').join('') + '</select>' +
+      '<label class="cp-k cp-k2" for="cpVisibility">' + esc(tx('可见范围')) + '</label><select id="cpVisibility" data-rq-visibility aria-describedby="cpVisibilityHint">' +
+      '<option value="related"' + (draft.visibility !== 'organization' ? ' selected' : '') + '>' + esc(tx('仅相关人')) + '</option>' +
+      '<option value="organization"' + (draft.visibility === 'organization' ? ' selected' : '') + '>' + esc(tx('同公司可见')) + '</option></select></div>' +
       visibilityHint(draft.visibility, 'cpVisibilityHint') +
-      '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTagsInput">标签</label>' +
+      '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTagsInput">' + esc(tx('标签')) + '</label>' +
       tagHtml(draft.tags, {id: 'cpTags'}) + '</div>' +
-      (options?.saveOnly ? '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTriage">加入阶段</label><select id="cpTriage">' +
+      (options?.saveOnly ? '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpTriage">' + esc(tx('加入阶段')) + '</label><select id="cpTriage">' +
         [['intake', '收集箱'], ['clarifying', '收集箱 · 待补充'], ['ready', '待开始']].map(([key,label]) => '<option value="' + key + '"' +
-          ((draft.triageStage || options.triageStage || 'intake') === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div>' : '');
+          ((draft.triageStage || options.triageStage || 'intake') === key ? ' selected' : '') + '>' + esc(tx(label)) + '</option>').join('') + '</select></div>' : '');
   }
   function projectPicker(options = {}) {
     const owner = String(global.SoduWorkAPI?.taskStorageKey?.('ops') || '');
@@ -162,11 +163,11 @@
     const editable = () => current() && options.editable?.() !== false;
     const knownName = () => rows.find(row => row.id === value)?.name ||
       (phase !== 'ready' && value === initial ? initialName : '');
-    const label = () => !value ? '不关联项目' : knownName() || (phase === 'ready' ? '当前关联项目（不可用）' : '当前关联项目');
+    const label = () => !value ? tx('不关联项目') : knownName() || (phase === 'ready' ? tx('当前关联项目（不可用）') : tx('当前关联项目'));
     const statusHtml = () => '<span class="rq-field-hint" data-rq-project-error role="alert" hidden></span>' +
-      '<button type="button" data-rq-project-retry hidden>重试</button>';
+      '<button type="button" data-rq-project-retry hidden>' + esc(tx('重试')) + '</button>';
     function choiceRows() {
-      const list = [['', '不关联项目'], ...rows.map(row => [row.id, row.name])];
+      const list = [['', tx('不关联项目')], ...rows.map(row => [row.id, row.name])];
       if (value && !rows.some(row => row.id === value)) list.push([value, label()]);
       return list.map(([id, name]) => ({id, name, selected:id === value,
         userContent:Boolean(id && (rows.some(row => row.id === id) || phase !== 'ready' && id === initial && initialName)),
@@ -202,7 +203,7 @@
       const error = host.querySelector('[data-rq-project-error]');
       if (error) {
         error.hidden = phase !== 'error';
-        error.textContent = phase === 'error' ? '项目列表暂时无法加载，当前关联已保留。' : '';
+        error.textContent = phase === 'error' ? tx('项目列表暂时无法加载，当前关联已保留。') : '';
       }
       const retry = host.querySelector('[data-rq-project-retry]'); if (retry) retry.hidden = phase !== 'error';
     }
@@ -226,7 +227,7 @@
       html({id, name, hint = ''} = {}) {
         return '<select data-rq-project-select id="' + esc(id || 'rqProject') + '"' +
           (name ? ' name="' + esc(name) + '"' : '') + ' disabled data-rq-locked aria-busy="true">' + choices() + '</select>' +
-          (hint ? '<span class="rq-field-hint">' + esc(hint) + '</span>' : '') +
+          (hint ? '<span class="rq-field-hint">' + esc(tx(hint)) + '</span>' : '') +
           statusHtml();
       },
       bind(root) {

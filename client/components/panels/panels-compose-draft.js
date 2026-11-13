@@ -24,6 +24,10 @@
 
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const tx = value => global.SoduWorkI18n?.translateText?.(value) || value;
+  const txf = (value, params = {}) => Object.entries(params).reduce((text, [key, replacement]) =>
+    text.replaceAll('{' + key + '}', String(replacement)), tx(value));
+  const locale = () => global.SoduWorkI18n?.getLocale?.() || global.document?.documentElement?.lang || 'zh-CN';
 
   const requirementKind = value => ['requirement', 'bug', 'ticket', 'improvement', 'other'].includes(value) ? value : 'requirement';
   const _normalizeTags = value => {
@@ -115,10 +119,10 @@
   function _loadingHtml(text) {
     if (_opts.variant !== 'chat') {
       return '<div class="cp-loading cp-loading-thinking" role="status" aria-live="polite">' +
-        '<i aria-hidden="true"></i><span><b>正在思考</b><small>' + esc(text) + '…</small></span></div>';
+        '<i aria-hidden="true"></i><span><b>' + esc(tx('正在思考')) + '</b><small>' + esc(tx(text)) + '…</small></span></div>';
     }
-    return '<div class="cp-loading cp-loading-chat cp-loading-thinking" role="status" aria-live="polite"><i aria-hidden="true"></i><span><b>正在思考</b><small>' + esc(text) + '…</small></span>' +
-      '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
+    return '<div class="cp-loading cp-loading-chat cp-loading-thinking" role="status" aria-live="polite"><i aria-hidden="true"></i><span><b>' + esc(tx('正在思考')) + '</b><small>' + esc(tx(text)) + '…</small></span>' +
+      '<button class="cp-card-close" id="cpCancel" title="' + esc(tx('继续对话')) + '" aria-label="' + esc(tx('继续对话')) + '">' +
         '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
   }
 
@@ -220,8 +224,8 @@
     const button = _box()?.querySelector('#cpCreate');
     if (button) {
       button.disabled = Boolean(record.phase === 'submitting' || _submission?.running || _submission?.preflighting);
-      if (record.phase === 'submitting') { button.textContent = record.submitLabel || '正在提交需求…'; button.setAttribute?.('aria-busy', 'true'); }
-      if (record.phase === 'error') button.textContent = _submission?.stored ? '重试上传并继续' : '重试创建需求';
+      if (record.phase === 'submitting') { button.textContent = tx(record.submitLabel || '正在提交需求…'); button.setAttribute?.('aria-busy', 'true'); }
+      if (record.phase === 'error') button.textContent = tx(_submission?.stored ? '重试上传并继续' : '重试创建需求');
     }
     const cancel = _box()?.querySelector('#cpCancel'); if (cancel) cancel.disabled = false;
     _projectPicker?.paint();
@@ -418,12 +422,12 @@
   /* Current assignee display. */
   function _whoLabel() {
     const w = _d.who || { kind: 'me' };
-    if (w.kind === 'pending') return { name: '待确认：' + (w.requested || '负责人'), sub: w.hint || '请选择负责人' };
+    if (w.kind === 'pending') return { name: tx('待确认') + '：' + (w.requested || tx('负责人')), sub: w.hint || tx('请选择负责人') };
     if (w.kind === 'mate') {
       const m = _mateOf(w.id);
-      return m ? { name: m.name, sub: m.org || '同事' } : { name: '选一位同事', sub: '' };
+      return m ? { name: m.name, sub: m.org || tx('同事') } : { name: tx('选一位同事'), sub: '' };
     }
-    return { name: '自己', sub: '先放进我的需求里' };
+    return { name: tx('自己'), sub: tx('先放进我的需求里') };
   }
 
   /* Render the draft card. */
@@ -449,21 +453,21 @@
     box.innerHTML =
       '<div class="cp-card' + (inChat ? ' cp-card-chat' : '') + '">' +
         (fixedActions ? '<div class="cp-form-scroll">' : '') +
-        (inChat ? '<div class="cp-card-head"><span><b>检查需求详情</b><i>确认后才会创建</i></span>' +
-          '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
+        (inChat ? '<div class="cp-card-head"><span><b>' + esc(tx('检查需求详情')) + '</b><i>' + esc(tx('确认后才会创建')) + '</i></span>' +
+          '<button class="cp-card-close" id="cpCancel" title="' + esc(tx('继续对话')) + '" aria-label="' + esc(tx('继续对话')) + '">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' : '') +
-        (_opts.variant === 'sheet' ? '<div class="cp-sec-h cp-content-heading">' + (global.RequirementFields?.sectionIcon?.('content') || '') + '需求内容</div><label class="cp-field-label" for="cpTitle">需求标题</label>' : '') +
+        (_opts.variant === 'sheet' ? '<div class="cp-sec-h cp-content-heading">' + (global.RequirementFields?.sectionIcon?.('content') || '') + esc(tx('需求内容')) + '</div><label class="cp-field-label" for="cpTitle">' + esc(tx('需求标题')) + '</label>' : '') +
         _titleHtml(d.title) +
-        (_opts.variant === 'sheet' ? '<label class="cp-field-label" for="cpNote">背景与说明</label>' : '') +
-        '<textarea class="cp-note" id="cpNote" rows="3" placeholder="要说清楚的细节">' + esc(d.note) + '</textarea>' +
+        (_opts.variant === 'sheet' ? '<label class="cp-field-label" for="cpNote">' + esc(tx('背景与说明')) + '</label>' : '') +
+        '<textarea class="cp-note" id="cpNote" rows="3" placeholder="' + esc(tx('要说清楚的细节')) + '">' + esc(d.note) + '</textarea>' +
         _sourceHtml() +
         '<div id="cpCheck">' + _checkHtml() + '</div>' +
         '<div id="cpRows">' + _rowsHtml() + '</div>' +
         (fixedActions ? '<div class="cp-form-materials"></div></div>' : '') +
         '<div class="cp-acts">' +
           '<button class="cp-primary" id="cpCreate">' + esc(_goLabel()) + '</button>' +
-          (inChat ? '<button class="cp-ghost cp-cancel" data-cp-cancel>取消</button><button class="cp-ghost" id="cpCollapse">收起详情</button>' :
-            '<button class="cp-ghost" id="cpCancel">' + (_opts.requirement ? '取消' : '再想想') + '</button>') +
+          (inChat ? '<button class="cp-ghost cp-cancel" data-cp-cancel>' + esc(tx('取消')) + '</button><button class="cp-ghost" id="cpCollapse">' + esc(tx('收起详情')) + '</button>' :
+            '<button class="cp-ghost" id="cpCancel">' + esc(tx(_opts.requirement ? '取消' : '再想想')) + '</button>') +
         '</div>' +
       '</div>';
     box.classList.add('show');
@@ -472,14 +476,14 @@
   }
 
   function _sourceHtml() {
-    const parseWarning = String(_d.parseWarning || '').replace(/^(需求解析超时)（\d+(?:\.\d+)?\s*秒）/, '$1');
+    const parseWarning = tx(String(_d.parseWarning || '').replace(/^(需求解析超时)（\d+(?:\.\d+)?\s*秒）/, '$1'));
     const warning = (parseWarning ? '<div class="cp-warn cp-parse-warning"><span role="status">' + esc(parseWarning) + '</span></div>' : '') +
       (_card?.error ? '<div class="cp-warn" role="status">' + esc(_card.error) + '</div>' : '');
     if (typeof _d.sourceNote !== 'string') return warning;
     return warning +
-      '<details class="cp-source-note"><summary>查看与编辑参考原文</summary>' +
-      '<p>完整保留引用内容，随需求保存；执行目标以以上说明和验收要点为准。</p>' +
-      '<textarea class="cp-note" id="cpSourceNote" rows="5" aria-label="参考原文">' + esc(_d.sourceNote) + '</textarea></details>';
+      '<details class="cp-source-note"><summary>' + esc(tx('查看与编辑参考原文')) + '</summary>' +
+      '<p>' + esc(tx('完整保留引用内容，随需求保存；执行目标以以上说明和验收要点为准。')) + '</p>' +
+      '<textarea class="cp-note" id="cpSourceNote" rows="5" aria-label="' + esc(tx('参考原文')) + '">' + esc(_d.sourceNote) + '</textarea></details>';
   }
 
   /*
@@ -490,16 +494,16 @@
   function _quickHtml() {
     const d = _d;
     const w = _whoLabel();
-    const meta = [global.Requirements?.kinds?.[d.kind] || ({ requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' })[d.kind], w.name].filter(Boolean);
-    if ((d.check || []).length) meta.push((d.check || []).length + ' 条验收要点');
+    const meta = [tx(global.Requirements?.kinds?.[d.kind] || ({ requirement: '需求', bug: 'Bug', ticket: '工单', improvement: '优化', other: '其它' })[d.kind]), w.name].filter(Boolean);
+    if ((d.check || []).length) meta.push(txf('{value} 条验收要点', { value: d.check.length }));
     const materialCount = ((_opts.atts && _opts.atts()) || []).length;
-    if (materialCount) meta.push(materialCount + ' 份输入材料');
-    if (d.due) meta.push('期望 ' + d.due);
+    if (materialCount) meta.push(txf('{value} 份输入材料', { value: materialCount }));
+    if (d.due) meta.push(tx('期望') + ' ' + d.due);
     return '<div class="cp-card cp-card-quick">' +
       '<div class="cp-card-head cp-quick-head">' +
         '<svg viewBox="0 0 24 24"><path d="M9 11l2.5 2.5L16 8"/><rect x="4" y="4" width="16" height="16" rx="4"/></svg>' +
-        '<span><b>加入需求池</b><i>可选，不创建也能继续对话</i></span>' +
-        '<button class="cp-card-close" id="cpCancel" title="继续对话" aria-label="继续对话">' +
+        '<span><b>' + esc(tx('加入需求池')) + '</b><i>' + esc(tx('可选，不创建也能继续对话')) + '</i></span>' +
+        '<button class="cp-card-close" id="cpCancel" title="' + esc(tx('继续对话')) + '" aria-label="' + esc(tx('继续对话')) + '">' +
           '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
       '</div>' +
       _titleHtml(d.title) +
@@ -508,23 +512,23 @@
       '<div class="cp-quick-meta">' + meta.map((s) => '<span>' + esc(s) + '</span>').join('') + '</div>' +
       '<div class="cp-acts">' +
         '<button class="cp-primary" id="cpCreate">' + esc(_goLabel()) + '</button>' +
-        '<button class="cp-ghost cp-cancel" data-cp-cancel>取消</button>' +
-        '<button class="cp-ghost" id="cpExpand">检查详情</button>' +
+        '<button class="cp-ghost cp-cancel" data-cp-cancel>' + esc(tx('取消')) + '</button>' +
+        '<button class="cp-ghost" id="cpExpand">' + esc(tx('检查详情')) + '</button>' +
       '</div>' +
     '</div>';
   }
 
   function _titleHtml(title) {
     return '<input class="cp-title" id="cpTitle" value="' + esc(title) +
-      '" placeholder="需求标题" aria-describedby="cpTitleLimit">' +
-      '<small class="cp-title-limit" id="cpTitleLimit">需求标题最多 200 个字符</small>';
+      '" placeholder="' + esc(tx('需求标题')) + '" aria-describedby="cpTitleLimit">' +
+      '<small class="cp-title-limit" id="cpTitleLimit">' + esc(tx('需求标题最多 200 个字符')) + '</small>';
   }
 
   function _goLabel() {
-    if (_opts.saveOnly) return '保存到需求池';
+    if (_opts.saveOnly) return tx('保存到需求池');
     const w = _d.who || {};
-    if (w.kind === 'mate') return '创建并转给他';
-    return '创建需求';
+    if (w.kind === 'mate') return tx('创建并转给他');
+    return tx('创建需求');
   }
 
   /*
@@ -534,29 +538,29 @@
   function _checkHtml() {
     const items = _d.check || [];
     return '<div class="cp-sec">' +
-      '<div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('criteria') || '') + '完成标准<i>明确完成这项需求的标准</i></div>' +
+      '<div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('criteria') || '') + esc(tx('完成标准')) + '<i>' + esc(tx('明确完成这项需求的标准')) + '</i></div>' +
       (items.length
         ? '<div class="cp-cks">' + items.map((s, i) =>
             '<div class="cp-ck"><span class="cp-ck-n">' + (i + 1) + '</span>' +
-            '<input class="cp-ck-t" data-ck="' + i + '" value="' + esc(s) + '" placeholder="做到什么算完">' +
-            '<button class="cp-ck-x" data-ckrm="' + i + '" title="去掉这条">' +
+            '<input class="cp-ck-t" data-ck="' + i + '" value="' + esc(s) + '" placeholder="' + esc(tx('做到什么算完')) + '">' +
+            '<button class="cp-ck-x" data-ckrm="' + i + '" title="' + esc(tx('去掉这条')) + '">' +
               '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>').join('') +
           '</div>'
-        : '<div class="cp-sec-empty">还没有验收要点——写上一两条，交回来的时候好判"这算不算做完"</div>') +
-      '<button class="cp-add" id="cpCkAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>加一条</button>' +
+        : '<div class="cp-sec-empty">' + esc(tx('还没有验收要点——写上一两条，交回来的时候好判"这算不算做完"')) + '</div>') +
+      '<button class="cp-add" id="cpCkAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>' + esc(tx('加一条')) + '</button>' +
     '</div>';
   }
 
   /* Project, category, and owner are editable; repository associations never migrate here. */
   function _rowsHtml() {
     const wl = _whoLabel();
-    let html = '<div class="cp-sec"><div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('settings') || '') + '基本信息</div>';
-    if (_projectPicker) html += '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpProjectId">关联项目</label>' +
-      _projectPicker.html({id:'cpProjectId',hint:_d.repo ? '项目由已关联仓库确定，本次不迁移仓库' : ''}) + '</div>';
-    html += _row('负责人', _sel('who', wl.name, wl.sub));
-    if (_d.who?.hint) html += '<div class="cp-why">' + esc(_d.who.hint) + '</div>';
-    html += _row('优先级', _sel('prio', _PRIO[_d.priority] || '普通', '') +
-      '<span class="cp-k cp-k2">期望完成</span><input type="date" id="cpDue" value="' + esc(_d.due || '') + '">');
+    let html = '<div class="cp-sec"><div class="cp-sec-h">' + (global.RequirementFields?.sectionIcon?.('settings') || '') + esc(tx('基本信息')) + '</div>';
+    if (_projectPicker) html += '<div class="cp-row cp-requirement-fields"><label class="cp-k" for="cpProjectId">' + esc(tx('关联项目')) + '</label>' +
+      _projectPicker.html({id:'cpProjectId',hint:_d.repo ? tx('项目由已关联仓库确定，本次不迁移仓库') : ''}) + '</div>';
+    html += _row(tx('负责人'), _sel('who', wl.name, wl.sub));
+    if (_d.who?.hint) html += '<div class="cp-why">' + esc(tx(_d.who.hint)) + '</div>';
+    html += _row(tx('优先级'), _sel('prio', tx(_PRIO[_d.priority] || '普通'), '') +
+      '<span class="cp-k cp-k2">' + esc(tx('期望完成')) + '</span><input type="date" id="cpDue" lang="' + esc(locale()) + '" value="' + esc(_d.due || '') + '">');
     if (global.RequirementFields) html += RequirementFields.html(_d, _opts);
     return html + '</div>';
   }
@@ -598,12 +602,12 @@
     const readyMates = (_mates || []).filter((item) => item.hasBox).length;
     const totalMates = (_mates || []).length;
     return '<div class="cp-seltoolbar">' +
-      '<div class="cp-seltoolbar-head"><b>选择负责人</b><span data-sel-summary>' +
-        esc(readyMates + '/' + totalMates + ' 位同事可接收') + '</span></div>' +
+      '<div class="cp-seltoolbar-head"><b>' + esc(tx('选择负责人')) + '</b><span data-sel-summary>' +
+        esc(txf('{value1}/{value2} 位同事可接收', { value1: readyMates, value2: totalMates })) + '</span></div>' +
       '<label class="cp-selsearch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 4.2 4.2"></path></svg>' +
         '<input type="search" data-selsearch maxlength="80" autocomplete="off" value="' + esc(_whoQuery) +
-        '" placeholder="搜索同事或部门"></label>' +
-      '<button type="button" class="cp-selclear" data-selclear' + (_whoQuery ? '' : ' hidden') + '>清空搜索</button>' +
+        '" placeholder="' + esc(tx('搜索同事或部门')) + '"></label>' +
+      '<button type="button" class="cp-selclear" data-selclear' + (_whoQuery ? '' : ' hidden') + '>' + esc(tx('清空搜索')) + '</button>' +
       '</div>';
   }
 
@@ -611,14 +615,14 @@
     const cur = kind === 'who' ? _whoValue() : _d.priority;
     const rows = kind === 'who' ? _whoRows()
                : Object.keys(_PRIO).map((key) => ({
-                   v: key, b: _PRIO[key], i: _PRIO_SUB[key]
+                   v: key, b: tx(_PRIO[key]), i: tx(_PRIO_SUB[key])
                  }));
     return rows.map((row) => {
       if (row.grp) return '<div class="cp-selgrp">' + esc(row.grp) + '</div>';
       if (row.notice) return '<div class="cp-selnotice' + (row.tone ? ' is-' + esc(row.tone) : '') + '">' +
         '<b>' + esc(row.notice) + '</b>' + (row.i ? '<span>' + esc(row.i) + '</span>' : '') +
-        (row.retry ? '<button type="button" data-sel-mate-retry>重试</button>' : '') +
-        (row.clear ? '<button type="button" data-selclear>清空搜索</button>' : '') + '</div>';
+        (row.retry ? '<button type="button" data-sel-mate-retry>' + esc(tx('重试')) + '</button>' : '') +
+        (row.clear ? '<button type="button" data-selclear>' + esc(tx('清空搜索')) + '</button>' : '') + '</div>';
       const selected = _sameId(row.v, cur);
       const state = row.state ? '<em class="cp-selstate' + (row.stateCls ? ' ' + esc(row.stateCls) : '') + '">' +
         esc(row.state) + '</em>' : '';
@@ -646,31 +650,31 @@
   function _whoRows() {
     const query = String(_whoQuery || '').trim().toLocaleLowerCase();
     const rows = [];
-    const self = { v: 'me', b: '自己', i: '需求会留在我的需求中心，稍后自己处理',
-      tag: '自己', state: '可用', stateCls: 'is-ready' };
+    const self = { v: 'me', b: tx('自己'), i: tx('需求会留在我的需求中心，稍后自己处理'),
+      tag: tx('自己'), state: tx('可用'), stateCls: 'is-ready' };
     if (_whoMatches(self, query)) rows.push(self);
 
     const mates = (_mates || []).map((m) => ({
-      v: 'mate:' + m.id, b: m.name || '未命名同事', tag: m.org || '未分组',
-      i: m.hasBox ? (m.deviceCount > 1 ? m.deviceCount + ' 台设备可接收需求' : '可接收需求')
-        : '尚未启用 SoduWork，暂时无法转交',
-      state: _mateLoading ? '正在刷新' : (m.hasBox ? '可接收' : '不可用'),
+      v: 'mate:' + m.id, b: m.name || tx('未命名同事'), tag: m.org || tx('未分组'),
+      i: m.hasBox ? (m.deviceCount > 1 ? txf('{value} 台设备可接收需求', { value: m.deviceCount }) : tx('可接收需求'))
+        : tx('尚未启用 SoduWork，暂时无法转交'),
+      state: _mateLoading ? tx('正在刷新') : (m.hasBox ? tx('可接收') : tx('不可用')),
       stateCls: _mateLoading ? 'is-loading' : (m.hasBox ? 'is-ready' : 'is-off'),
       dis: _mateLoading || !m.hasBox,
     })).filter((row) => _whoMatches(row, query));
     if (mates.length) {
-      rows.push({ grp: '同事 · ' + mates.length + ' 位' });
+      rows.push({ grp: txf('同事 · {value} 位', { value: mates.length }) });
       rows.push(...mates);
     }
     if (!mates.length && _mateLoading) {
-      rows.push({ notice: '正在刷新同事清单…', tone: 'loading', i: '请稍候，列表会自动更新' });
+      rows.push({ notice: tx('正在刷新同事清单…'), tone: 'loading', i: tx('请稍候，列表会自动更新') });
     } else if (!mates.length && _mateLoadReason && !query) {
       rows.push({
-        notice: _mateLoadFailed ? '同事清单没有加载成功' : '暂无可接收的同事',
+        notice: _mateLoadFailed ? tx('同事清单没有加载成功') : tx('暂无可接收的同事'),
         i: _mateLoadReason, retry: _mateLoadFailed, tone: _mateLoadFailed ? 'error' : 'loading'
       });
     } else if (!rows.some((row) => row.v)) {
-      rows.push({ notice: '没有匹配的人', i: '试试姓名或部门名称', clear: Boolean(query) });
+      rows.push({ notice: tx('没有匹配的人'), i: tx('试试姓名或部门名称'), clear: Boolean(query) });
     }
     return rows;
   }
@@ -686,7 +690,7 @@
       const summary = box.querySelector('[data-sel-summary]');
       if (summary) {
         const readyMates = (_mates || []).filter((item) => item.hasBox).length;
-        summary.textContent = readyMates + '/' + (_mates || []).length + ' 位同事可接收';
+        summary.textContent = txf('{value1}/{value2} 位同事可接收', { value1: readyMates, value2: (_mates || []).length });
       }
     }
   }
@@ -908,4 +912,9 @@
     // Repaint current card state directly for first-frame recovery without clearing/restoring it.
     repaint: () => { if (!_card) return false; paintCard(_card); return true; } };
   global.addEventListener?.('soduwork-data-scope-changed', clear);
+  global.addEventListener?.('soduwork-locale-change', () => {
+    if (!_card) return;
+    _sync();
+    paintCard(_card);
+  });
 })(window);
