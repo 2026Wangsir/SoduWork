@@ -267,7 +267,7 @@ def prepare(state: Path, log: Path) -> tuple[Path, Path]:
     npm_stamp = state / "node-dependencies.sha256"
     wanted = hashlib.sha256((source / "package-lock.json").read_bytes()).hexdigest()
     if read_stamp(npm_stamp) != wanted or not (frontend / "node_modules/vite").is_dir():
-        run([npm, "ci", "--no-audit", "--no-fund"], cwd=frontend, log=log,
+        run([npm, "ci", "--include=dev", "--no-audit", "--no-fund"], cwd=frontend, log=log,
             label="[3/4] 安装页面依赖 / Installing management UI dependencies")
         npm_stamp.write_text(wanted, encoding="utf-8")
     build_stamp = state / "frontend.sha256"
@@ -299,7 +299,7 @@ def prepare_desktop(state: Path, log: Path) -> Path:
     stamp = state / 'desktop-dependencies.sha256'
     wanted = hashlib.sha256((client / 'package-lock.json').read_bytes()).hexdigest()
     if read_stamp(stamp) != wanted or not electron_binary(client).is_file():
-        run([npm, 'ci', '--no-audit', '--no-fund', '--ignore-scripts'], cwd=client, log=log,
+        run([npm, 'ci', '--include=dev', '--no-audit', '--no-fund', '--ignore-scripts'], cwd=client, log=log,
             label='[Desktop] 安装桌面端 / Installing the desktop application (first run needs internet)')
         # npm versions differ in install-script policy. Download the locked Electron
         # runtime explicitly without enabling unrelated dependencies' lifecycle scripts.
