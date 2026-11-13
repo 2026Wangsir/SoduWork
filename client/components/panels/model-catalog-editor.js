@@ -104,7 +104,7 @@ function _mdBindModels(box) {
   }));
 }
 function _mdApplyModel(editor) {
-  if (editor.isConnected === false) return;
+  if (_mdSaveFlight || editor.isConnected === false) return;
   const pid = editor.dataset.mdeditor, draft = _mdDrafts.get(pid), original = draft?.original;
   const old = _mdMyModels.find(row => row.providerId === pid && row.name === original);
   // A removed edit target must not become an implicit new model.

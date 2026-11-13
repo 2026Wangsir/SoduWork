@@ -31,13 +31,22 @@ if (typeof electron === 'string') {
     modelNames: ['shared-model'], modelDefs: [{ name: 'shared-model', label: 'Shared model', modality: 'chat' }],
   })), myModels: [], usable: ['company-first', 'company-second'].map(providerId => ({
     providerId, name: 'shared-model', label: 'Shared model', keyFrom: 'org' })), mediaUsable: {} };
-  let win, server, hub, localId;
+  let win, server, hub, localId, holdLocalSaves = false, failedHubWrites = 0;
+  const pendingLocalSaves = [];
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const js = code => win.webContents.executeJavaScript(code, true);
   const record = name => { report.cases.push(name); console.log('PASS ' + name); };
   async function until(expression) {
     for (let i = 0; i < 200; i++) { if (await js(expression)) return; await delay(40); }
     throw Error('Timed out: ' + expression);
+  }
+  async function waitForLocalSave() {
+    for (let i = 0; i < 200; i++) { if (pendingLocalSaves.length) return; await delay(40); }
+    throw Error('Timed out waiting for the held local save');
+  }
+  function releaseLocalSaves() {
+    holdLocalSaves = false;
+    for (const resolve of pendingLocalSaves.splice(0)) resolve();
   }
   async function click(selector) {
     await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
@@ -80,8 +89,18 @@ if (typeof electron === 'string') {
       if (request.url !== '/api/v1/my-models') { response.writeHead(404); response.end('{}'); return; }
       if (request.method === 'PUT') {
         let data = ''; for await (const chunk of request) data += chunk;
-        hubWrites.push(JSON.parse(data));
-        response.end('{"ok":true}'); return;
+        const body = JSON.parse(data); hubWrites.push(body);
+        if (failedHubWrites) {
+          failedHubWrites--; response.writeHead(503); response.end('{"detail":"Synthetic Hub outage"}'); return;
+        }
+        assert.equal(body.expectedRevision, managed.revision, 'managed retries must retain the last acknowledged revision');
+        for (const provider of body.providers || []) {
+          const old = managed.providers.find(row => row.id === provider.id);
+          if (old) Object.assign(old, provider);
+        }
+        if (Array.isArray(body.models)) managed.myModels = body.models;
+        managed.revision = 'fixture-' + (Number(managed.revision.split('-')[1]) + 1);
+        response.end(JSON.stringify({ ok: true, revision: managed.revision })); return;
       }
       response.end(JSON.stringify(managed));
     });
@@ -92,12 +111,17 @@ if (typeof electron === 'string') {
     assert.equal(safeStorage.isEncryptionAvailable(), true, 'Encryption must be available; no plaintext fallback');
     await startHub();
     require('../main/local-model-ipc.cjs').install({ app, ipcMain, safeStorage });
+    // Hold the transport before the production handler to prove deletion safety
+    // while encryption and persistence are still pending, without replacing either.
+    ipcMain.handle('fixture-before-local-save', () => holdLocalSaves
+      ? new Promise(resolve => pendingLocalSaves.push(resolve)) : undefined);
     const store = require('../main/local-model-store.cjs');
     const preload = path.join(temp, 'preload.cjs');
     fs.writeFileSync(preload, `const {contextBridge,ipcRenderer}=require('electron'); let closeDeskWindowCalls=0;
       contextBridge.exposeInMainWorld('soduWorkAPI',{
         getHubConnection:async()=>({hub:${JSON.stringify(hub)},internalTest:true}),
-        localModels:{get:()=>ipcRenderer.invoke('local-models-get'),save:input=>ipcRenderer.invoke('local-models-save',input),
+        localModels:{get:()=>ipcRenderer.invoke('local-models-get'),save:async input=>{
+          await ipcRenderer.invoke('fixture-before-local-save');return ipcRenderer.invoke('local-models-save',input)},
           test:(id,name)=>ipcRenderer.invoke('local-models-test',id,name)},
         closeDeskWindow:()=>{closeDeskWindowCalls++},
         getCloseDeskWindowCalls:()=>closeDeskWindowCalls});`);
@@ -172,11 +196,17 @@ if (typeof electron === 'string') {
     await click('[data-mdselect="' + localId + '"]'); await click('[data-mdedit]');
     await fill('[data-mdlabel]', 'Draft for removed model');
     await js('window.removedEditor=document.querySelector("[data-mdeditor]");window.removedApply=removedEditor.querySelector("[data-madd]");');
-    await click('[data-mdel]');
+    holdLocalSaves = true; await click('[data-mdel]'); await waitForLocalSave();
+    assert.equal(store.get().revision, 3, 'the deletion has not reached the production store');
+    assert.equal(store.get().myModels.length, 1);
+    assert.equal(await js('document.getElementById("mdSave").disabled'), true);
+    assert.equal(await js('_mdSave(false)===_mdSave(false)'), true, 'reentrant saves share the pending operation');
+    assert.equal(pendingLocalSaves.length, 1, 'reentrant saves must not create another local write');
     assert.equal(await js('removedEditor.isConnected'), false);
     assert.equal(await js('_mdDrafts.size'), 0);
     await js('removedApply.click();removedEditor.querySelector("[data-padd]").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true}));');
     assert.equal(await js('_mdMyModels.length'), 0, 'detached callbacks cannot reinsert a removed model during save');
+    releaseLocalSaves();
     await until('_mdLoadState==="ready"&&!_mdDirty&&_mdData.localRevision>=4'); await assertLocalCount(0);
     assert.equal(store.get().myModels.length, 0);
     assert.equal(store.get().providers.length, 1);
@@ -205,28 +235,58 @@ if (typeof electron === 'string') {
     await click('[data-mdedit]'); await fill('[data-mdlabel]', 'Draft for removed provider');
     await click('[data-pdelete]');
     await js('window.providerEditor=document.querySelector("[data-mdeditor]");window.providerApply=providerEditor.querySelector("[data-madd]");');
-    await click('[data-pdelete]');
+    holdLocalSaves = true; await click('[data-pdelete]'); await waitForLocalSave();
+    assert.equal(store.get().revision, 7, 'provider deletion is inspected before persistence');
+    assert.equal(store.get().providers.length, 1);
     assert.equal(await js('providerEditor.isConnected'), false);
     assert.equal(await js(`_mdDrafts.has(${JSON.stringify(localId)})`), false);
     await js('providerApply.click()');
     assert.equal(await js('_mdMyModels.length'), 0);
+    releaseLocalSaves();
     await until('_mdLoadState==="ready"&&!_mdDirty&&_mdData.localRevision>=8');
     assert.equal(store.get().providers.length, 0); assert.equal(store.get().myModels.length, 0);
     assert.equal(await js(`!!document.querySelector('[data-mdselect="${localId}"]')`), false);
     assert.equal(await js('window.soduWorkAPI.getCloseDeskWindowCalls()'), 0, 'confirmed provider removal must not close the workspace window');
-    record('Confirmed provider removal clears its editor and credentials before persistence completes');
+    record('Confirmed provider removal rejects detached callbacks before persistence and keeps the workspace open');
 
     assert.equal(hubWrites.length, 0, 'local-only changes must not write the Hub catalog');
+    record('Production API keeps local-only records out of Hub requests');
+
+    await click('#mdAddInline');
+    const mixedLocalId = await js('document.querySelector("[data-pname]").dataset.pname');
+    await fill('[data-pname]', 'Mixed local service'); await fill('[data-purl]', 'http://127.0.0.1:2/v1');
+    await fill('[data-pkey]', key);
+    await click('[data-mdselect="company-first"]'); await fill('[data-purl]', 'https://managed-retry.invalid/v1');
+    failedHubWrites = 1; await js('notices.length=0'); await click('#mdSave');
+    await until('!_mdSaveFlight&&_mdManagedDirty&&!_mdLocalDirty');
+    assert.equal(hubWrites.length, 1);
+    assert.equal(store.get().revision, 9);
+    assert.equal(store.get().providers[0].name, 'Mixed local service');
+    assert.equal(store.get().providers[0].keySet, true);
+    assert.equal(await js('_mdData.localRevision'), 9);
+    assert.equal(await js('notices.includes("本地模型配置已保存，Hub 模型配置未保存，请重试。")'), true);
+    assert.equal(await js('document.getElementById("mdSave").disabled'), false);
+    await click('#mdSave'); await until('!_mdSaveFlight&&_mdLoadState==="ready"&&!_mdDirty');
+    assert.equal(hubWrites.length, 2);
+    assert.equal(store.get().revision, 9, 'retry must not replay the already committed local save');
+    assert.equal(managed.providers[0].baseUrl, 'https://managed-retry.invalid/v1');
+    await win.loadURL(desk); await until('_mdLoadState==="ready"');
+    assert.equal(await js(`_mdData.providers.find(row=>row.id===${JSON.stringify(mixedLocalId)}).name`), 'Mixed local service');
+    assert.equal(await js('_mdData.providers.find(row=>row.id==="company-first").baseUrl'), 'https://managed-retry.invalid/v1');
+    record('Mixed local and managed edits report partial success and retry only the uncommitted Hub save');
+
     for (const body of hubWrites) {
       assert.equal(JSON.stringify(body).includes(key), false);
       assert.equal(JSON.stringify(body).includes(localId), false);
+      assert.equal(JSON.stringify(body).includes(mixedLocalId), false);
+      assert.equal(JSON.stringify(body).includes('Mixed local service'), false);
+      assert.equal(JSON.stringify(body).includes('127.0.0.1'), false);
       assert.deepEqual(body.models, []); assert.deepEqual(body.keys, {});
       assert.deepEqual(body.providers.map(provider => provider.id), ['company-first', 'company-second']);
       assert.ok(!Object.keys(body).some(name => name.startsWith('local')));
     }
     assert.deepEqual(blocked, []); assert.deepEqual(await js('errors'), []);
     assert.ok(requests.every(request => request.path === '/api/v1/my-models'));
-    record('Production API keeps local-only records out of Hub requests');
     report.ok = true; report.hubRequests = requests; report.hubWrites = hubWrites.length;
   }).catch(async error => {
     report.error = String(error.stack || error);
@@ -235,6 +295,7 @@ if (typeof electron === 'string') {
       await shot('failure').catch(() => {});
     }
   }).finally(async () => {
+    releaseLocalSaves();
     win?.destroy();
     if (server) await new Promise(resolve => server.close(resolve));
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
