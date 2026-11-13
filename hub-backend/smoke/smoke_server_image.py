@@ -6,8 +6,8 @@ database. Keep the release image small, deterministic and self-contained at the 
 
 Expensive, rarely-changing dependency layers (OS packages, global npm tooling, pinned Python
 requirements) live in the `deps` stage so they can be published once as a dependency base image
-at an operator-provided registry. ops/self-host/Dockerfile.server defaults to `deps` for a self-contained
-build; deployment can explicitly select a published base with SODUWORK_HUB_BASE_IMAGE. Release
+at an operator-provided registry. ops/self-host/Dockerfile defaults to `deps` for a self-contained
+build; operators can explicitly select a published base with the HUB_BASE_IMAGE build argument. Release
 builds reconcile the current Python requirements before copying application source.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCKERFILE = ROOT / "ops/self-host/Dockerfile.server"
-DOCKERIGNORE = ROOT / ".dockerignore"
+DOCKERFILE = ROOT / "ops/self-host/Dockerfile"
+DOCKERIGNORE = ROOT / "ops/self-host/Dockerfile.dockerignore"
 MAIN = ROOT / "hub-backend" / "app" / "main.py"
 checks = 0
 
@@ -60,7 +60,7 @@ ok("@anthropic-ai/claude-code" not in source,
 ok("opencode-ai" not in source and "fetch_opencode_assets" not in source,
    "server image must leave OpenCode installation to an explicit user action")
 
-for required_ignore in (".git", "scratchpad", "**/.env", "**/node_modules", "**/*.db"):
+for required_ignore in ("**", "**/.git", "**/.env*", "**/node_modules", "**/*.db*"):
     ok(required_ignore in ignored, f"docker context does not exclude {required_ignore}")
 
 ok("hub-frontend/package-lock.json" in source and "npm ci" in source,
@@ -76,7 +76,7 @@ ok('org.opencontainers.image.revision="${SODUWORK_VERSION}"' in source,
 ok(bool(re.search(r"(?m)^ARG HUB_BASE_IMAGE=deps\s*$", source)),
    "server image must default to the self-contained deps stage")
 ok("--build-arg HUB_BASE_IMAGE=deps" in source,
-   "self-contained build (--build-arg HUB_BASE_IMAGE=deps) is not documented in ops/self-host/Dockerfile.server")
+   "self-contained build (--build-arg HUB_BASE_IMAGE=deps) is not documented in ops/self-host/Dockerfile")
 RUNTIME_MARKER = "FROM ${HUB_BASE_IMAGE} AS runtime"
 ok(RUNTIME_MARKER in source,
    "runtime stage does not derive from the dependency base")
@@ -116,6 +116,12 @@ ok(source.index("COPY skills /srv/app/skills")
    "release metadata invalidates expensive dependency/source layers")
 ok('SODUWORK_DEPLOY_COMMIT="${SODUWORK_VERSION}"' in source,
    "image cannot identify itself without an external environment file")
+ok("USER 10001:10001" in runtime_stage,
+   "shared Hub image must retain its non-root runtime user")
+ok('SODUWORK_DATA_ROOT=/srv/runtime' in runtime_stage,
+   "shared Hub image must retain its writable data root")
+ok(not (ROOT / "ops/self-host/Dockerfile.server").exists(),
+   "Hub builds must use one shared Dockerfile")
 
 main_source = MAIN.read_text(encoding="utf-8")
 ok('mobile-web-dist' not in source and '_mount_mobile' not in main_source,

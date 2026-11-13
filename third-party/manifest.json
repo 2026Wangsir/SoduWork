@@ -130,6 +130,33 @@
       "source": "https://raw.githubusercontent.com/rthalley/dnspython/e790c8f20a67ad439c7aafef2321e161c6028eee/LICENSE",
       "path": "third-party/licenses/dnspython-LICENSE.txt",
       "sha256": "c3ea3ff5654b329c19d3bc5f7481af623c3dded4a6145585499f843ad3d741cd"
+    },
+    {
+      "id": "pi-hub",
+      "name": "Hub CLI: earendil-works/pi",
+      "version": "0.83.0",
+      "license": "MIT",
+      "source": "https://raw.githubusercontent.com/earendil-works/pi/845d6ff1f6643aba440341cce877ce1c43ebbc39/LICENSE",
+      "path": "third-party/licenses/pi-LICENSE.txt",
+      "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+    },
+    {
+      "id": "codex-hub",
+      "name": "Hub CLI: openai/codex",
+      "version": "0.147.0",
+      "license": "Apache-2.0",
+      "source": "https://raw.githubusercontent.com/openai/codex/be6e8eac029b183056b7e4402879f15d2c85f61b/LICENSE",
+      "path": "third-party/licenses/codex-hub-LICENSE.txt",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+    },
+    {
+      "id": "codex-hub-notice",
+      "name": "Hub CLI: OpenAI Codex NOTICE",
+      "version": "0.147.0",
+      "license": "Apache-2.0",
+      "source": "https://raw.githubusercontent.com/openai/codex/be6e8eac029b183056b7e4402879f15d2c85f61b/NOTICE",
+      "path": "third-party/licenses/codex-hub-NOTICE.txt",
+      "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
     }
   ],
   "piVersion": "1.4.0",

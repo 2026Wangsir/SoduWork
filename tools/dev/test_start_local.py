@@ -567,7 +567,7 @@ class LocalStartupTests(unittest.TestCase):
             self.assertTrue(True)
 
     def test_server_image_does_not_install_optional_opencode(self):
-        dockerfile = (build.ROOT / "ops/self-host/Dockerfile.server").read_text(encoding="utf-8")
+        dockerfile = (build.ROOT / "ops/self-host/Dockerfile").read_text(encoding="utf-8")
         self.assertNotIn("opencode-ai@", dockerfile)
         self.assertIn("COPY hub-backend/requirements-runner.txt", dockerfile)
 

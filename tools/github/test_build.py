@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -24,7 +25,7 @@ class BuildTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.ctx = {'component': 'hub', 'version': '1.2.3', 'commit': 'a' * 40, 'runId': '123'}
+        self.ctx = {'component': 'hub', 'version': '1.2.3', 'tag': 'v1.2.3', 'commit': 'a' * 40, 'runId': '123'}
 
     def test_download_rejects_a_replaced_dependency(self):
         with patch.object(build.urllib.request, 'urlopen', return_value=io.BytesIO(b'replaced')):
@@ -76,12 +77,21 @@ class BuildTests(unittest.TestCase):
                 return 'sha256:' + 'a' * 64
             if args[0] == 'port':
                 return '127.0.0.1:12345'
+            if args[0] == 'exec' and args[2:4] in [('pi', '--version'), ('codex', '--version')]:
+                if fault == args[2]:
+                    raise subprocess.CalledProcessError(127, args)
+                return '' if fault == 'empty-version' else args[2] + ' fixture-version'
+            if args[0] == 'exec' and args[2:4] == ('python', 'runner_main.py') and fault == 'runner':
+                raise subprocess.CalledProcessError(1, args)
+            if args[0] == 'exec' and args[2:4] == ('python', '-c') and fault == 'permissions':
+                raise subprocess.CalledProcessError(1, args)
             return ''
         def response(url, **kwargs):
             if url.endswith('/readyz'):
                 return Response(b'{"ready":true}', 'application/json')
             if url.endswith('/healthz'):
                 return Response(json.dumps({'ok': True, 'version': '1.2.3',
+                    'releaseTag': 'bad' if fault == 'tag' else self.ctx['tag'],
                     'commit': 'bad' if fault == 'identity' else self.ctx['commit']}).encode(), 'application/json')
             if url.endswith('/assets/index.js'):
                 return Response(b'fixture JS' if fault != 'asset' else b'<html>',
@@ -101,10 +111,25 @@ class BuildTests(unittest.TestCase):
         result, calls = self.exercise_hub()
         self.assertTrue(result['ok'])
         self.assertIn('image-export-load', result['checks'])
+        self.assertEqual(result['runtimes'], {'pi': 'pi fixture-version', 'codex': 'codex fixture-version'})
+        build_command = next(c for c in calls if c[0] == 'build')
+        for value in ['ops/self-host/Dockerfile', 'HUB_BASE_IMAGE=deps',
+                      'SODUWORK_VERSION=' + self.ctx['commit'],
+                      'SODUWORK_HUB_VERSION=1.2.3', 'SODUWORK_RELEASE_TAG=v1.2.3']:
+            self.assertIn(value, build_command)
+        hub_command = next(c for c in calls if c[0] == 'run' and 'HUB_LOCAL_EXECUTION_ENABLED=false' in c)
+        self.assertFalse(any(c.startswith(('SODUWORK_HUB_VERSION=', 'SODUWORK_DEPLOY_COMMIT=',
+                                          'SODUWORK_RELEASE_TAG=')) for c in hub_command))
         self.assertTrue(any(c[0] == 'restart' for c in calls))
         self.assertTrue((self.root / 'SoduWork-1.2.3-hub-image.tar.gz').exists())
 
     def test_wrong_health_identity_missing_script_and_replaced_export_fail(self):
-        for fault in ['identity', 'asset', 'export']:
+        for fault in ['identity', 'tag', 'asset', 'export', 'empty-version']:
             with self.subTest(fault=fault), self.assertRaises(ValueError):
                 self.exercise_hub(fault)
+
+    def test_missing_runtime_or_unwritable_data_prevents_export(self):
+        for fault in ['pi', 'codex', 'runner', 'permissions']:
+            with self.subTest(fault=fault), self.assertRaises(subprocess.CalledProcessError):
+                self.exercise_hub(fault)
+            self.assertFalse((self.root / 'SoduWork-1.2.3-hub-image.tar.gz').exists())

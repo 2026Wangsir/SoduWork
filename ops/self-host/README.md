@@ -8,6 +8,23 @@ For a new single-host deployment with one Hub, its same-origin management UI, an
 
 Images build from current source using Docker Hub, npm, PyPI, and official PostgreSQL sources by default. This path manages an independent instance without modifying existing clusters or clients. It has no Redis/Valkey dependency. Multi-node storage and coordination require separate design.
 
+Compose and GitHub releases use the same `ops/self-host/Dockerfile`; it replaces
+the separate `Dockerfile.server`. The image includes Pi 0.83.0, Codex 0.147.0,
+Runner source and the backup, client-release import and built-in plugin publication
+tools. It runs as UID/GID 10001 and starts only the Hub. Existing mounted directories
+must allow that user to write; installing the CLIs does not register or start a Runner.
+Original Pi/Codex license snapshots are included in `/srv/app/third-party/licenses`;
+their source references and digests are recorded in `third-party/manifest.json`.
+
+The default `HUB_BASE_IMAGE=deps` builds dependencies from official sources. For
+repeated operator builds, `docker build --target deps -f ops/self-host/Dockerfile .`
+can produce a reusable dependency image. Pass its reviewed immutable reference as
+`--build-arg HUB_BASE_IMAGE=<image@sha256:digest>` to a later build; it must retain
+the CLI versions, Node.js, OS tools and license material from the `deps` stage.
+Python requirements are reconciled with the current source. Release builds also
+set `SODUWORK_VERSION` (full commit), `SODUWORK_HUB_VERSION` and
+`SODUWORK_RELEASE_TAG` through build arguments; local builds default to `dev`.
+
 ## Start
 
 Install and start Docker, then run from the source root:
