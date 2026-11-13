@@ -179,7 +179,13 @@ def sync_source(source: Path, target: Path, *, preserve: frozenset[str] = frozen
         relative = path.relative_to(source)
         wanted.add(relative)
         dest = target / relative
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        for parent in reversed(relative.parents):
+            directory = target / parent
+            if directory.is_file():
+                directory.unlink()
+            directory.mkdir(exist_ok=True)
+        if dest.is_dir():
+            shutil.rmtree(dest)
         if not dest.exists() or path.read_bytes() != dest.read_bytes():
             shutil.copyfile(path, dest)
     for directory, dirs, files in os.walk(target, followlinks=False):

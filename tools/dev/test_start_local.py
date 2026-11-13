@@ -234,6 +234,47 @@ class LocalStartupTests(unittest.TestCase):
         with patch.object(build, "ROOT", source), patch.object(build, "checkout_files", return_value={trusted}):
             self.assertEqual(list(build.source_files(source)), [trusted])
 
+    def test_source_sync_replaces_a_generated_file_with_a_package(self):
+        source = Path(self.temp.name) / 'source'
+        source.mkdir()
+        module = source / 'module'
+        module.write_text('old module', encoding='utf-8')
+        target = self.state / 'application/client'
+        dependency = target / 'node_modules/fixture'
+        dependency.parent.mkdir(parents=True)
+        dependency.write_text('installed dependency', encoding='utf-8')
+        preserve = frozenset({'node_modules'})
+        build.sync_source(source, target, preserve=preserve)
+        module.unlink()
+        package = module / 'nested'
+        package.mkdir(parents=True)
+        (package / '__init__.py').write_text('new package', encoding='utf-8')
+        build.sync_source(source, target, preserve=preserve)
+        self.assertEqual((target / 'module/nested/__init__.py').read_text(encoding='utf-8'), 'new package')
+        self.assertEqual(dependency.read_text(encoding='utf-8'), 'installed dependency')
+        build.sync_source(source, target, preserve=preserve)
+        self.assertEqual((target / 'module/nested/__init__.py').read_text(encoding='utf-8'), 'new package')
+
+    def test_source_sync_replaces_a_generated_package_with_a_file(self):
+        source = Path(self.temp.name) / 'source'
+        package = source / 'nested/module'
+        package.mkdir(parents=True)
+        original = package / 'old.py'
+        original.write_text('old package', encoding='utf-8')
+        target = self.state / 'application/hub-backend/app'
+        upload = target.parent / 'uploads/document.txt'
+        upload.parent.mkdir(parents=True)
+        upload.write_text('user document', encoding='utf-8')
+        build.sync_source(source, target)
+        original.unlink()
+        package.rmdir()
+        package.write_text('new module', encoding='utf-8')
+        build.sync_source(source, target)
+        self.assertEqual((target / 'nested/module').read_text(encoding='utf-8'), 'new module')
+        self.assertEqual(upload.read_text(encoding='utf-8'), 'user document')
+        build.sync_source(source, target)
+        self.assertEqual((target / 'nested/module').read_text(encoding='utf-8'), 'new module')
+
     def test_cancelled_dependency_command_reaps_its_child(self):
         seen = []
 
