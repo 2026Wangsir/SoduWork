@@ -19,8 +19,13 @@ SoduWork 通过各目录的 `SKILL.md` 发现技能。Hub 技能目录、源码�
 
 ## 加载与部署
 
-- 更新 Hub 源码或镜像并重启后加载此目录。实际可用性仍遵循管理员的技能配置；本次
-  变更不修改已有组织偏好，也不授予额外工具权限。
+- 更新 Hub 源码或镜像并重启后加载此目录。所有内置技能默认向组织开放；首次策略升级
+  也会重新开放已有内置技能。此后管理员关闭的项会保留，重启不会再次打开；后来新增
+  的内置技能默认开放。
+- Browser Use、Computer Use、Office 保留原有基础可用规则，个人开关仍独立于组织默认策略。
+- 技能正文仍保存在文件中，数据库保存版本化开放策略，不逐条复制技能内容。组织默认
+  策略不覆盖已保存的个人选择，也不授予额外工具权限。公司导入包和外部目录技能仍需
+  明确开放；导入包不会继承同名内置技能的默认权限。
 - 源码客户端读取当前检出目录的技能。已打包的客户端和 Runner 需要重新构建并更新
   才能获得新增资源；只更新 Hub 不会升级已安装客户端的内置文件。
 - 技能是操作说明和配套资源，不会安装模型服务、浏览器、外部命令行工具或子代理能力。
@@ -32,6 +37,7 @@ SoduWork 通过各目录的 `SKILL.md` 发现技能。Hub 技能目录、源码�
 
 ```sh
 python3 -m unittest discover -s hub-backend -p test_bundled_development_skills.py
+python3 -m unittest discover -s hub-backend -p test_skill_policy_defaults.py
 node tools/check-public-source.cjs
 node tools/check-third-party.cjs
 ```

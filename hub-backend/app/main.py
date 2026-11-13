@@ -80,6 +80,9 @@ async def lifespan(app: FastAPI):
         async with SessionLocal() as session:  # Initialize approval policies and declarative legacy environment configuration idempotently.
             from .services import release_control
             await release_control.bootstrap(session)
+        async with SessionLocal() as session:  # Migrate built-in Skill defaults once, preserving later administrator opt-outs.
+            from .services import skills
+            await skills.bootstrap(session)
         async with SessionLocal() as session:  # Import sample plugins into quarantine; administrators must review them before enabling.
             from .services import plugin_service
             await plugin_service.bootstrap_example(session)

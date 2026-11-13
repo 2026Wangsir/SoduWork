@@ -3,6 +3,7 @@
 native-argument and prompt-context injection checks.
 """
 import io
+import json
 import os
 import shutil
 import stat
@@ -102,21 +103,39 @@ asyncio.run(init_db())
 
 
 async def _cfg_round():
+    from sqlalchemy import select
     from app.db import SessionLocal
+    from app.models import AppSetting
     async with SessionLocal() as s:
         before = await SK.load_cfg(s)
         clean = await SK.save_cfg(s, {"allowed": ["a" * 200, "alpha-skill"],
                                       "byRepo": {"repo-x": ["beta-skill"]},
                                       "roots": [tmp], "垃圾键": 1})
         old = await SK.save_cfg(s, {"enabled": ["alpha-skill"]})   # Accept the legacy frontend key.
+        stored = json.loads((await s.execute(select(AppSetting.value).where(
+            AppSetting.key == SK.SETTING_KEY))).scalar_one())
         await s.rollback()          # Do not persist changes to business settings during this test.
-        return before, clean, old
+        return before, clean, old, stored
 
-before, clean, old = asyncio.run(_cfg_round())
+before, clean, old, stored = asyncio.run(_cfg_round())
 chk("名字超长被截断", all(len(x) <= 64 for x in clean["allowed"]), clean)
-chk("不认识的键被丢掉", set(clean) == {"allowed", "byRepo", "roots"}, list(clean))
+chk("不认识的键被丢掉", set(clean) == {
+    "allowed", "byRepo", "roots", "policyVersion", "builtinDisabled",
+    "policyRevision", "builtinCatalog",
+}, list(clean))
 chk("工程级覆盖存得下", clean["byRepo"].get("repo-x") == ["beta-skill"], clean)
-chk("老库/老前端的 enabled 当作 allowed 读", old["allowed"] == ["alpha-skill"], old)
+# Effective availability retains the existing baseline; storage keeps explicit grants separate.
+baseline = {"browser-use", "computer-use", "office"}
+chk("老库/老前端的 enabled 当作 allowed 读",
+    stored["allowed"] == ["alpha-skill"] and
+    set(old["allowed"]) == {"alpha-skill"} | baseline, old)
+chk("Legacy selection closes all other bundled skills",
+    set(old["builtinDisabled"]) == set(old["builtinCatalog"]) - baseline,
+    old["builtinDisabled"])
+chk("Stored policy excludes derived catalog and revision metadata",
+    set(stored) == {"allowed", "byRepo", "roots", "policyVersion", "builtinDisabled"} and
+    stored["policyVersion"] == old["policyVersion"] == clean["policyVersion"] == 1,
+    stored)
 chk("冒烟没有改真库", isinstance(before, dict))
 
 # Verify administrator availability, client selection, and repository precedence.

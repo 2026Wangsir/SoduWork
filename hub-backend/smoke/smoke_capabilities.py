@@ -87,12 +87,12 @@ async def runtime_bundle_checks(temp: str) -> None:
         "name": "local-only", "description": "Local",
         "path": local_dir, "root": temp, "bundled": False, "scope": "company",
     }
-    original_cfg, original_scan = skills.load_cfg, skills.scan
+    original_cfg, original_scan = skills._read_cfg, skills.scan
 
     async def fake_cfg(_session):
         return {"allowed": ["portable-skill", "local-only"], "roots": []}
 
-    skills.load_cfg = fake_cfg
+    skills._read_cfg = fake_cfg
     skills.scan = lambda *_args, **_kwargs: [portable, local_only]
     try:
         public = skills.public_view(portable, enabled=True)
@@ -125,7 +125,7 @@ async def runtime_bundle_checks(temp: str) -> None:
         else:
             raise AssertionError("unauthorized Skill was distributed")
     finally:
-        skills.load_cfg, skills.scan = original_cfg, original_scan
+        skills._read_cfg, skills.scan = original_cfg, original_scan
 
 
 async def async_checks() -> None:

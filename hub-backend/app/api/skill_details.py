@@ -24,6 +24,8 @@ def errors():
         yield
     except skill_sharing.Conflict as exc:
         raise HTTPException(409, str(exc)) from exc
+    except skills.PolicyChanged as exc:
+        raise HTTPException(409, str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(404, "Skill 或文件不存在，或当前无权查看") from exc
     except PermissionError as exc:
@@ -33,8 +35,7 @@ def errors():
 
 
 async def package(session, name, client=None):
-    cfg = await skills.load_cfg(session)
-    rows = await skills.scan_async(cfg.get("roots"), owner_client_id=client.id if client else "")
+    cfg, rows = await skills.catalog_with_policy(session, client, include_runner=False)
     allowed = set(cfg["allowed"]) | set(skills.BASELINE_SKILLS)
     row = next((x for x in rows if x["name"] == name and (
         client is None or name in allowed or
@@ -146,7 +147,8 @@ async def share(name: str, body: dict = Body(default_factory=dict),
 @admin_router.get("/skill-submissions")
 async def submissions(user: User = Depends(admin), session: AsyncSession = Depends(get_session)):
     rows = await asyncio.to_thread(skill_sharing.submissions)
-    cfg = await skills.load_cfg(session)
+    with errors():
+        cfg = await skills.load_cfg(session)
     active = {x["name"]: x for x in await asyncio.to_thread(skill_packages.active)}
     for row in rows:
         row["published"] = (row["status"] == "approved" and row["name"] in cfg["allowed"] and

@@ -83,6 +83,14 @@ Set `DATABASE_URL` in private configuration when overriding the SQLite default:
 
 The PostgreSQL value is a placeholder. Use a dedicated database and a minimally privileged account. Never commit environment files or credentials. See [self-hosting](../ops/self-host/README.md) for backups and deployment.
 
+Bundled skill instructions are discovered from the deployed `skills/` directory.
+Hub startup initializes a versioned policy in the existing `app_setting` record
+`skills_cfg`. New installations and the first upgrade of a legacy policy make all
+bundled skills available, including ones previously closed by administrators.
+Later administrator opt-outs persist across restarts, and new bundled skills
+default to available. Personal choices and imported-package approval remain
+independent. See the [skill loading guide](../skills/README.md).
+
 ## OpenCode turn completion
 
 Native and ACP OpenCode executions preserve the current turn's provider finish reason. An output-token limit is reported as incomplete even when partial text exists and the native process exits successfully; existing progress and the session remain available for manual continuation. The ACP adapter observes only native session/turn identifiers and stop reasons through an invocation-local plugin, and rejects missing completion evidence without retrying tools or changing permissions. Run `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode` for isolated loopback-provider acceptance using an explicitly selected installed binary.

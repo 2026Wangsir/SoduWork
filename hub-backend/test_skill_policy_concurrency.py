@@ -122,7 +122,7 @@ class ScanConcurrency(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(threads[-1], loop_thread)
             return "revision"
         async def cfg(_): return {"allowed": [], "roots": []}
-        with patch.object(skill_packages, "index_revision", revision), patch.object(skills, "load_cfg", cfg), \
+        with patch.object(skill_packages, "index_revision", revision), patch.object(skills, "_read_cfg", cfg), \
                 patch.object(skills, "scan", return_value=[]) as scan:
             await skills.catalog_with_policy(None)
             await skills.catalog_with_policy(None)
@@ -144,7 +144,7 @@ class ScanConcurrency(unittest.IsolatedAsyncioTestCase):
             if roots == ["old-root"]:
                 started.set(); release.wait(3)
             return [{"name": "same-name", "path": roots[0]}]
-        with patch.object(skills, "load_cfg", cfg), patch.object(skills, "scan", scan):
+        with patch.object(skills, "_read_cfg", cfg), patch.object(skills, "scan", scan):
             pending = asyncio.create_task(skills.catalog_with_policy(None))
             try:
                 await until(started.is_set)
@@ -160,7 +160,7 @@ class ScanConcurrency(unittest.IsolatedAsyncioTestCase):
         def invalidated_scan(*args):
             skills.clear_scan_cache()
             return [{"name": "stale"}]
-        with patch.object(skills, "load_cfg", cfg), patch.object(skills, "scan", side_effect=invalidated_scan) as scan:
+        with patch.object(skills, "_read_cfg", cfg), patch.object(skills, "scan", side_effect=invalidated_scan) as scan:
             with self.assertRaises(skills.PolicyChanged):
                 await skills.catalog_with_policy(None)
         self.assertEqual(scan.call_count, 3, "directory churn must never cause an unbounded retry loop")
@@ -177,7 +177,7 @@ class ScanConcurrency(unittest.IsolatedAsyncioTestCase):
             started.set(); release.wait(3)
             return [{"name": "company", "description": "fixture", "scope": "company"}]
         async def cfg(_session): return {"allowed": ["company"], "roots": []}
-        with patch.object(skills, "scan", slow), patch.object(skills, "load_cfg", cfg), \
+        with patch.object(skills, "scan", slow), patch.object(skills, "_read_cfg", cfg), \
                 patch.object(skills, "runner_items", return_value=[]):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture") as http:
                 pending = asyncio.create_task(http.get("/api/v1/skills"))
@@ -215,7 +215,7 @@ class ScanConcurrency(unittest.IsolatedAsyncioTestCase):
             ping_elapsed = time.perf_counter() - start
             await pending
             return ping_elapsed
-        with patch.object(skills, "scan", slow), patch.object(skills, "load_cfg", cfg), \
+        with patch.object(skills, "scan", slow), patch.object(skills, "_read_cfg", cfg), \
                 patch.object(skills, "runner_items", return_value=[]):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture") as http:
                 with patch.object(skills, "available_for_client_async", old_scan):

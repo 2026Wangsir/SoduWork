@@ -157,7 +157,7 @@ class BundledDevelopmentSkillTests(unittest.TestCase):
 
 
 class BundledDevelopmentSkillPolicyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_new_company_skills_still_require_administrator_availability(self):
+    async def test_explicit_administrator_revocation_still_blocks_bundled_skills(self):
         rows = catalog(self)
         cfg = {"allowed": [], "roots": [], "byRepo": {}}
         with patch.object(skills, "catalog_with_policy", AsyncMock(return_value=(cfg, list(rows.values())))):

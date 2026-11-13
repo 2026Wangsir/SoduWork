@@ -294,11 +294,11 @@ async def plugin_skills(session: AsyncSession, version: am.PluginVersion,
         required &= selected
     if not required:
         return bundled
-    cfg = await skills.load_cfg(session)
+    cfg, rows = await skills.catalog_with_policy(session, include_runner=False)
     denied = required - set(cfg.get("allowed") or [])
     if denied:
         raise ValueError("插件需要但组织尚未开放的技能：" + "、".join(sorted(denied)))
-    found = {x["name"]: x for x in await skills.scan_async(cfg.get("roots"))}
+    found = {x["name"]: x for x in rows}
     missing = required - set(found)
     if missing:
         raise ValueError("执行环境缺少技能：" + "、".join(sorted(missing)))

@@ -47,7 +47,10 @@ async def select_mcp_servers(body: dict = Body(default_factory=dict),
     client.mcp_enabled = sorted(selected)
     warning = ""
     if any(item["enabled"] for item in changes):
-        cfg = await skills.load_cfg(session)
+        try:
+            cfg = await skills.load_cfg(session)
+        except skills.PolicyChanged as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
         if "mcp-tools" in set(cfg.get("allowed") or []):
             skill_preferences.enable(client, "mcp-tools")
         else:

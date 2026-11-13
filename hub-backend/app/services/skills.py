@@ -12,6 +12,7 @@ import threading
 import time
 
 from .local_base import _data_root
+from . import skill_policy
 
 log = logging.getLogger("uvicorn.error")
 
@@ -381,7 +382,7 @@ async def catalog_with_policy(session, client=None, *, include_runner=True) -> t
     Administrators can revoke access while slow file I/O is pending. Roots are
     also policy: a same-named file from a removed root must not remain usable.
     """
-    cfg = await load_cfg(session)
+    cfg = await _read_cfg(session)
     for _ in range(3):
         roots = cfg.get("roots") or []
         revision = await asyncio.to_thread(_package_revision)
@@ -393,11 +394,11 @@ async def catalog_with_policy(session, client=None, *, include_runner=True) -> t
         # Other Hub workers only change the shared index, not our generation.
         current_revision = await asyncio.to_thread(_package_revision)
         # Authorization is read after all potentially slow filesystem awaits.
-        fresh = await load_cfg(session)
+        fresh = await _read_cfg(session)
         with _SCAN_CACHE_LOCK:
             if (_SCAN_GENERATION == generation and current_revision == revision
                     and (fresh.get("roots") or []) == roots):
-                return fresh, rows
+                return skill_policy.effective(fresh, rows, bundled_root(), BASELINE_SKILLS), rows
         cfg = fresh
     raise PolicyChanged("企业能力目录配置正在变化，请刷新后重试")
 
@@ -428,40 +429,108 @@ def _with_runner_items(rows: list[dict], client) -> list[dict]:
 
 
 # Skill availability and selection.
-async def load_cfg(session) -> dict:
-    """Technical contract for load cfg."""
+async def _read_cfg(session) -> dict:
+    """Read explicit grants and defaults without scanning or mutating settings."""
     from .. import models
-    empty = {"allowed": [], "byRepo": {}, "roots": []}
     row = await session.get(models.AppSetting, SETTING_KEY, populate_existing=True)
-    if row is None or not (row.value or "").strip():
-        return empty
-    try:
-        d = json.loads(row.value)
-        allowed = d.get("allowed")
-        if allowed is None:                 # Interpret the legacy enabled setting as administrator-approved availability.
-            allowed = d.get("enabled") or []
-        return {"allowed": [str(x) for x in allowed],
-                "byRepo": {str(k): [str(x) for x in (v or [])] for k, v in (d.get("byRepo") or {}).items()},
-                "roots": [str(x) for x in (d.get("roots") or [])]}
-    except Exception:                       # noqa: BLE001 - Invalid settings must not fail dispatch.
-        return empty
+    raw = row.value if row is not None else None
+    return {**skill_policy.decode(raw)[0], "policyRevision": skill_policy.revision(raw)}
+
+
+async def bootstrap(session) -> bool:
+    """Reopen existing built-ins once; subsequent starts retain explicit opt-outs."""
+    from sqlalchemy import select, update
+    from sqlalchemy.exc import IntegrityError
+    from ..models import AppSetting
+    for _ in range(3):
+        raw = (await session.execute(select(AppSetting.value).where(
+            AppSetting.key == SETTING_KEY))).scalar_one_or_none()
+        cfg, migrate = skill_policy.decode(raw)
+        if not migrate:
+            if cfg["policyVersion"] is None:
+                log.warning("Skill policy is invalid; built-in defaults remain unavailable")
+            return False
+        value = json.dumps(cfg, ensure_ascii=False)
+        if raw is None:
+            session.add(AppSetting(key=SETTING_KEY, value=value))
+            try:
+                await session.commit()
+                return True
+            except IntegrityError:
+                await session.rollback()
+        else:
+            result = await session.execute(update(AppSetting).where(
+                AppSetting.key == SETTING_KEY, AppSetting.value == raw).values(value=value))
+            if result.rowcount:
+                await session.commit()
+                return True
+            await session.rollback()
+    raise PolicyChanged("企业能力开放策略正在更新，请稍后重试")
+
+
+async def load_cfg(session) -> dict:
+    """Use the same post-scan authorization for every policy consumer."""
+    cfg, _ = await catalog_with_policy(session, include_runner=False)
+    return cfg
 
 
 async def save_cfg(session, cfg: dict) -> dict:
+    from sqlalchemy import select, update
     from .. import models
-    allowed = cfg.get("allowed")
-    if allowed is None:
-        allowed = cfg.get("enabled") or []          # Accept the older frontend field name.
-    clean = {"allowed": [str(x)[:64] for x in allowed][:_MAX_SKILLS],
-             "byRepo": {str(k)[:64]: [str(x)[:64] for x in (v or [])][:_MAX_SKILLS]
-                        for k, v in (cfg.get("byRepo") or {}).items()},
-             "roots": [str(x)[:400] for x in (cfg.get("roots") or [])][:10]}
-    row = await session.get(models.AppSetting, SETTING_KEY)
-    if row is None:
-        row = models.AppSetting(key=SETTING_KEY, value="")
-        session.add(row)
-    row.value = json.dumps(clean, ensure_ascii=False)
-    return clean
+    if not isinstance(cfg, dict):
+        raise PolicyChanged("企业能力开放策略格式无效，请刷新后重试")
+    allowed = cfg.get("allowed", cfg.get("enabled", []))
+    by_repo, roots = cfg.get("byRepo", {}), cfg.get("roots", [])
+    def names(value):
+        return isinstance(value, list) and all(isinstance(name, str) for name in value)
+    if (not names(allowed) or not names(roots) or not isinstance(by_repo, dict) or
+            any(not isinstance(key, str) or not names(value) for key, value in by_repo.items())):
+        raise PolicyChanged("企业能力开放清单、目录或项目选择格式无效，请刷新后重试")
+    current, rows = await catalog_with_policy(session, include_runner=False)
+    if current.get("policyVersion") != skill_policy.VERSION:
+        raise PolicyChanged("企业能力开放策略无效或版本不受支持，请先修复配置")
+    if "policyRevision" in cfg and cfg["policyRevision"] != current.get("policyRevision"):
+        raise PolicyChanged("企业能力开放策略已更新，请刷新后重新确认改动")
+    desired = {name[:64] for name in allowed[:_MAX_SKILLS]}
+    builtins = skill_policy.builtin_names(rows, bundled_root())
+    snapshot = cfg.get("builtinCatalog", sorted(builtins))
+    if not isinstance(snapshot, list) or any(not isinstance(name, str) for name in snapshot):
+        raise PolicyChanged("企业能力目录快照无效，请刷新后重试")
+    reviewed = set(snapshot)
+    if reviewed - builtins:
+        # A removed built-in or imported same-name row must not inherit a stale grant.
+        raise PolicyChanged("企业内置能力目录已变化，请刷新后重试")
+    disabled = ((set(current.get("builtinDisabled") or []) - reviewed) |
+                (reviewed - desired)) - BASELINE_SKILLS
+    clean = {"allowed": sorted(desired - builtins),
+             "byRepo": {key[:64]: [name[:64] for name in value[:_MAX_SKILLS]]
+                        for key, value in by_repo.items()},
+             "roots": [root[:400] for root in roots[:10]],
+             "policyVersion": skill_policy.VERSION, "builtinDisabled": sorted(disabled)}
+    raw = (await session.execute(select(models.AppSetting.value).where(
+        models.AppSetting.key == SETTING_KEY))).scalar_one_or_none()
+    if skill_policy.revision(raw) != current["policyRevision"]:
+        raise PolicyChanged("企业能力开放策略已更新，请刷新后重新确认改动")
+    value = json.dumps(clean, ensure_ascii=False)
+    if raw is None:
+        # Both supported databases can reject a concurrent insert without
+        # aborting the caller's transaction or prematurely releasing a savepoint.
+        if session.get_bind().dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+        result = await session.execute(insert(models.AppSetting).values(
+            key=SETTING_KEY, value=value).on_conflict_do_nothing(index_elements=["key"]))
+        if not result.rowcount:
+            raise PolicyChanged("企业能力开放策略已更新，请刷新后重新确认改动")
+    else:
+        result = await session.execute(update(models.AppSetting).where(
+            models.AppSetting.key == SETTING_KEY,
+            models.AppSetting.value == raw).values(value=value))
+        if not result.rowcount:
+            raise PolicyChanged("企业能力开放策略已更新，请刷新后重新确认改动")
+    return skill_policy.effective({**clean, "policyRevision": skill_policy.revision(value)},
+                                  rows, bundled_root(), BASELINE_SKILLS)
 
 
 
@@ -474,8 +543,10 @@ async def allow_shared_skill(session, name: str) -> None:
     for _ in range(6):
         raw = (await session.execute(select(AppSetting.value).where(
             AppSetting.key == SETTING_KEY))).scalar_one_or_none()
-        cfg = json.loads(raw) if raw else {}
-        allowed = list(dict.fromkeys(cfg.get("allowed", cfg.get("enabled", []))))
+        cfg, _ = skill_policy.decode(raw)
+        if cfg["policyVersion"] != skill_policy.VERSION:
+            raise PolicyChanged("企业能力开放策略无效或版本不受支持，请先修复配置")
+        allowed = list(cfg["allowed"])
         if name in allowed:
             return
         allowed.append(name)

@@ -1153,8 +1153,10 @@ async def list_skills(user: User = Depends(require_perm("task.dispatch")),
 
     from ..models import Client as _C
     from ..services import skills as sk
-    cfg = await sk.load_cfg(session)
-    found = sk.scan(cfg.get("roots"))
+    try:
+        cfg, found = await sk.catalog_with_policy(session, include_runner=False)
+    except sk.PolicyChanged as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     en = set(cfg["allowed"])
     users: dict[str, int] = {}
     for c in (await session.execute(_sel(_C))).scalars().all():
@@ -1172,7 +1174,12 @@ async def put_skills(body: dict = Body(default_factory=dict),
                      user: User = Depends(require_perm("task.dispatch")),
                      session: AsyncSession = Depends(get_session)):
     from ..services import skills as sk
-    cfg = await sk.save_cfg(session, body.get("cfg") if isinstance(body.get("cfg"), dict) else body)
+    if "cfg" in body and not isinstance(body["cfg"], dict):
+        raise HTTPException(400, detail="企业能力开放策略必须是对象")
+    try:
+        cfg = await sk.save_cfg(session, body.get("cfg") if isinstance(body.get("cfg"), dict) else body)
+    except sk.PolicyChanged as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     await session.commit()
     # Audit the allowed key, which replaced cfg["enabled"] when the allowlist was introduced.
     # Reading the old key raises KeyError after saving the allowlist.
