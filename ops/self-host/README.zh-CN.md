@@ -8,6 +8,20 @@
 
 这条入口不会修改既有集群配置、NFS、当前数据库或客户端。没有 Redis/Valkey 依赖；多节点部署需要单独设计共享存储与协调配置。
 
+Compose 和 GitHub 发布统一使用 `ops/self-host/Dockerfile`，原来的
+`Dockerfile.server` 已合并删除。镜像包含 Pi 0.83.0、Codex 0.147.0、Runner
+源码，以及备份、客户端发布包导入和内置插件发布工具。镜像使用 UID/GID 10001
+运行，默认只启动 Hub；已有挂载目录必须允许该用户写入，安装 CLI 不等于注册或启动 Runner。
+Pi/Codex 的原始许可快照随镜像保存在 `/srv/app/third-party/licenses`，来源和摘要登记在
+`third-party/manifest.json`。
+
+默认 `HUB_BASE_IMAGE=deps` 从官方源构建依赖。重复构建时，可用
+`docker build --target deps -f ops/self-host/Dockerfile .` 制作依赖基础镜像，
+再通过 `--build-arg HUB_BASE_IMAGE=<image@sha256:digest>` 指定经过审核的不可变引用。
+基础镜像必须保留 `deps` 阶段的 CLI 版本、Node.js、系统工具和许可材料；Python
+依赖会按当前源码重新核对安装。发布构建还通过构建参数设置 `SODUWORK_VERSION`
+（完整提交）、`SODUWORK_HUB_VERSION` 和 `SODUWORK_RELEASE_TAG`，本地构建默认版本为 `dev`。
+
 ## 一条命令启动
 
 安装并启动 Docker 后，在源码根目录执行：

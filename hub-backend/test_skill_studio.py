@@ -84,7 +84,7 @@ class SkillStudioTests(unittest.TestCase):
         bootstrap = (ROOT / "hub-backend/app/services/plugin_bootstrap.py").read_text(encoding="utf8")
         self.assertIn('"skill-studio.json"', bootstrap)
         self.assertIn('trust_state="quarantined", enabled=False', bootstrap)
-        self.assertIn("COPY skills", (ROOT / "ops/self-host/Dockerfile.server").read_text(encoding="utf8"))
+        self.assertIn("COPY skills", (ROOT / "ops/self-host/Dockerfile").read_text(encoding="utf8"))
 
     def test_folded_description_remains_readable_in_soduwork_import(self):
         file = self.source / "SKILL.md"

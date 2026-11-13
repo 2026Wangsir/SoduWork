@@ -10,7 +10,18 @@
 | --- | --- | --- |
 | source | Export the committed tree; verify the file inventory, public boundary and shared quality gates | Source ZIP without Git history |
 | client | Windows fresh installation, repair, upgrade and compatibility; Mac DMG, signature, restart and upgrade; installation, startup, upgrade and removal in Ubuntu 22/24 and Rocky 9 containers | Windows x64 EXE, Linux x64 DEB/RPM/tar.gz, Mac ARM64/x64 DMG |
-| hub | Public self-hosting Dockerfile; disposable PostgreSQL, migrations, health/readiness, frontend assets, restart, image export and reload | Linux amd64 Docker image tar.gz |
+| hub | Shared self-hosting Dockerfile; disposable PostgreSQL, migrations, baked release identity, health/readiness, frontend assets, Pi/Codex versions, Runner entrypoint, non-root writable directories, restart, image export and reload | Linux amd64 Docker image tar.gz |
+
+Hub release and Compose builds share `ops/self-host/Dockerfile`; the former
+`Dockerfile.server` has been consolidated into it. GitHub builds the inline `deps`
+stage and supplies the commit, version and intended tag as build arguments. Acceptance
+checks the image's own identity without overriding it at startup. Original Pi and
+Codex license snapshots are shipped under `/srv/app/third-party/licenses`, with
+version-specific source references and digests in `third-party/manifest.json`.
+The receipt records the CLI versions and verifies the notices are present.
+These probes do not authenticate providers, enroll a Runner or execute model tasks.
+The image still starts only the Hub and runs as UID/GID 10001. Existing clusters
+need separate data-volume permission, database and Runner compatibility checks.
 
 Automated acceptance does not cover interactive Windows UAC or customer filesystem filters. Public macOS builds require a Developer ID Application identity, hardened runtime, notarization and a real login Keychain smoke test. The manual package-validation workflow intentionally keeps ad-hoc signatures and mock Keychain isolation; those artifacts are never eligible for publication. Hub acceptance uses one isolated node, without production deployment, real-model calls or browser interaction certification. Receipts record these limitations.
 

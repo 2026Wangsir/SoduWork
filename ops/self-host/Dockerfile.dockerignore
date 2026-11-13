@@ -18,6 +18,8 @@
 !hub-backend/full_backup.py
 !hub-backend/runner_main.py
 !hub-backend/pack_plugin.py
+!hub-backend/import_client_release.py
+!hub-backend/ops_publish_builtin_plugins.py
 !hub-backend/client-update-trust.json
 !hub-backend/app/**
 !hub-backend/migrations/**
@@ -29,6 +31,9 @@
 !client/components/
 !client/components/panels/
 !client/components/panels/connector-config.js
+!client/components/client-auth/
+!client/components/client-auth/legal-html.js
+!client/components/client-auth/legal-html.css
 !client/assets/
 !client/assets/connector-brands/**
 !skills/**
