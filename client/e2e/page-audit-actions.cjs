@@ -112,6 +112,17 @@ module.exports = async function ({js, click, type, navigate, until, report, win,
     for (const tab of ['token','ssh','gerrit','test','identity']) await click(`[data-caopen="${tab}"]`);
     await js('fixtureFailures.add("myGit");_caLoad();void 0;'); await until('document.querySelector("#caRetry")');
     await js('fixtureFailures.delete("myGit");void 0;'); await click('#caRetry'); await until('document.querySelector("[data-cf=name]")');
+    await click('[data-caopen="token"]');
+    const placeholders = {
+      'en-US': 'GitLab username (optional for GitHub)',
+      'ja-JP': 'GitLab ログイン名（GitHub は空欄可）',
+      'ko-KR': 'GitLab 로그인 이름(GitHub은 비워도 됨)',
+      'zh-CN': 'GitLab 登录名（GitHub 可留空）',
+    };
+    for (const [locale, expected] of Object.entries(placeholders)) {
+      await js(`SoduWorkI18n.setLocale(${JSON.stringify(locale)});void 0;`); await delay(60);
+      assert.equal(await js('document.querySelector("[data-cf=user]").placeholder'), expected, locale);
+    }
   });
   await scenario('archive', 'chat/project tabs and search/sort', async () => {
     await click('#archiveProjectsTab'); await click('#archiveChatsTab');

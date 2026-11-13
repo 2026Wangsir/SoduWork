@@ -311,6 +311,7 @@
     "自定义仓库": "Custom repository",
     "已配": "Configured",
     "登录名（gerrit 多半要，GitHub 可留空）": "Username (usually required for Gerrit; optional for GitHub)",
+    "GitLab 登录名（GitHub 可留空）": "GitLab username (optional for GitHub)",
     "粘贴访问令牌": "Paste access token",
     "删掉它": "Delete it",
     "Gerrit 登录名": "Gerrit username",

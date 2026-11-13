@@ -41,7 +41,7 @@
     status(message, tone);
     if (!root?.classList.contains('show')) {
       const say = host.petSay || (typeof petSay === 'function' ? petSay : null);
-      say?.(message);
+      say?.(t(message));
     }
   }
   function syncMenu() {
