@@ -18,7 +18,7 @@ test('manual-only fixed deliveries keep analysis and manual confirmation while d
 });
 
 function fixture(approval = {}, decide = async () => ({ok: true, request: {status: 'approved'}})) {
-  const notices = [], handlers = {}, calls = [];
+  const notices = [], handlers = {}, calls = [], events = {};
   const item = {id: 'gate-1', status: 'pending', action: 'baseline', ...approval};
   const state = {trace: {approvals: [item]}, refresh: async () => {}};
   const note = {value: '', focus() { this.focused = true; }}, details = {open: false};
@@ -39,11 +39,12 @@ function fixture(approval = {}, decide = async () => ({ok: true, request: {statu
     decideApproval: (...args) => { calls.push(args); return decide(...args); },
     getAcceptanceContext: async () => ({artifactVersionId:'fixed-v1', criteria:[{id:'c1', label:'Reviewable result'}]}),
   };
-  const context = {window: {petSay: text => notices.push(text), SoduWorkAPI: apiImpl, SoduWorkAPI: apiImpl}};
+  const context = {window: {petSay: text => notices.push(text), SoduWorkAPI: apiImpl,
+    addEventListener: (name, handler) => { events[name] = handler; }}};
   vm.runInNewContext(source, context);
   const api = context.window.TaskTraceApproval;
   api.bind(root, state);
-  return {api, item, state, block, note, details, proof, proofBody, error, approve, reject, verify, calls, notices, root, window: context.window,
+  return {api, item, state, block, note, details, proof, proofBody, error, approve, reject, verify, calls, notices, root, events, window: context.window,
     click(target) { handlers.click({target, preventDefault() {}, stopPropagation() {}}); },
     selectMode(value, disabled = false) { handlers.change({target: {value, disabled,
       matches: s => s === '[data-tfd-acceptance-mode]', closest: () => block}}); },
@@ -373,6 +374,58 @@ test('permission lookup keeps decisions disabled until authoritative assignment 
   assert.equal(f.approve.disabled,true);assert.equal(f.reject.disabled,true);
   resolve({item:{...f.item,assignment:{userId:'me',reasons:[]}}});await settle();
   assert.equal(f.approve.disabled,false);assert.equal(f.block.dataset.approvalAccess,'allowed');
+});
+
+test('detail hydration shares verified identity with its current card binding without another request', async () => {
+  const f = fixture({action: 'review'}), seen = [];
+  let calls = 0;
+  const detail = {...f.item, taskId: 'task-1', assignment: {userId: 'me'}};
+  f.root.querySelectorAll = () => [f.block];
+  f.window.SoduWorkAPI.approvalDetail = async () => { calls++; return {item: detail}; };
+  f.state.opts = {onApprovalDetails: (id, item) => seen.push([id, item])};
+  f.api.bind(f.root, f.state); await settle();
+  assert.deepEqual(seen, [[f.item.id, detail]]);
+  f.api.bind(f.root, f.state);
+  assert.equal(seen.length, 2);
+  assert.equal(calls, 1);
+  f.events['soduwork-data-scope-changed']();
+  f.api.bind(f.root, f.state);
+  assert.equal(seen.length, 2, 'cached details from the prior account must not be shared');
+});
+
+test('late detail hydration never shares a detached card or a prior account response', async () => {
+  for (const change of ['detached', 'account']) {
+    const f = fixture(), seen = [];
+    let finish;
+    f.root.querySelectorAll = () => [f.block];
+    f.window.SoduWorkAPI.approvalDetail = () => new Promise(resolve => { finish = resolve; });
+    f.state.opts = {onApprovalDetails: (...args) => seen.push(args)};
+    f.api.bind(f.root, f.state);
+    if (change === 'detached') f.block.isConnected = false;
+    else f.events['soduwork-data-scope-changed']();
+    finish({item: {...f.item, taskId: 'task-1', assignment: {userId: 'me'}}});
+    await settle();
+    assert.equal(seen.length, 0, change);
+  }
+});
+
+test('detail callbacks distinguish denied access from transient or mismatched responses', async () => {
+  for (const failure of ['ineligible', 'forbidden', 'offline', 'mismatched']) {
+    const f = fixture(), seen = [];
+    f.root.querySelectorAll = () => [f.block];
+    f.state.opts = {onApprovalDetails: (...args) => seen.push(args)};
+    if (failure === 'ineligible') f.window.SoduWorkAPI.listApprovals = async () => ({pendingTasks: []});
+    f.window.SoduWorkAPI.approvalDetail = async () => {
+      if (failure === 'mismatched') return {item: {...f.item, id: 'another'}};
+      const error = new Error('Isolated evidence failure');
+      if (failure === 'forbidden') error.status = 403;
+      throw error;
+    };
+    f.api.bind(f.root, f.state); await settle();
+    const denied = ['ineligible', 'forbidden'].includes(failure);
+    assert.deepEqual(seen, denied ? [[f.item.id, null]] : [], failure);
+    assert.equal(f.block.dataset.approvalAccess, denied ? 'denied' : 'error', failure);
+  }
 });
 
 test('executor trace facts do not request private approval details without a pending assignment', async () => {

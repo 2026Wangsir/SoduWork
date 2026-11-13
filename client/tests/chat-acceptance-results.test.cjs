@@ -387,3 +387,264 @@ test('a stale acceptance session cannot apply its analysis to a different approv
   f.ctx._collaborationTrace = {approvals:[{id:'new-review',action:'review',status:'pending'}]};
   assert.doesNotMatch(f.create().html('【验收分析结果】\nOld conclusion','1:0'),/data-acceptance-result-action/);
 });
+
+function nativeTurnMessages(submissionId = 'native-turn') {
+  const stream = require('../main/pi-session/event-stream');
+  const times = require('../main/conversation/message-time');
+  const provenance = require('../main/conversation/native-agent-source.cjs');
+  const accumulator = stream.create();
+  const user = { role: 'user', content: 'Write the requested essay', timestamp: 5 };
+  const userEvent = { type: 'message_end', message: user };
+  times.stampPiEvent(userEvent, 5, submissionId);
+  accumulator.push(provenance.event(userEvent, 'pi'));
+  accumulator.push(provenance.event({ type: 'message_start', message: { role: 'assistant' } }, 'pi'));
+  accumulator.push({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Delivery completed.' } });
+  const answer = { role: 'assistant', completedAt: 20, stopReason: 'stop',
+    content: [{ type: 'text', text: 'Delivery completed.' }] };
+  const answerEvent = { type: 'message_end', message: answer };
+  times.stampPiEvent(answerEvent, 5, submissionId);
+  accumulator.push(provenance.event(answerEvent, 'pi'));
+  accumulator.push({ type: 'agent_end' });
+  return accumulator.snapshot().messages;
+}
+
+function selfReviewFixture() {
+  const f = fixture();
+  f.window.__teamCap = { meId: 'self' };
+  f.window.TaskTraceApproval = { html: () => 'Pending' };
+  f.ctx._sessionId = 'native-chat';
+  f.ctx._collabEntryStatus = () => 'completed';
+  const scope = { conversationId: 'native-chat', turnId: 'native-turn', executor: 'native' };
+  const entry = { taskId: 'task', nativeTurn: true,
+    task: { createdBy: 'self', assigneeUserId: 'self', workRouting: { conversationTurn: { ...scope, state: 'completed' } } },
+    trace: { approvals: [{ id: 'review', action: 'review', status: 'pending', createdAt: 10, assignment: { userId: 'self' } }],
+      timeline: [{ kind: 'conversation.turn', at: 4, detail: { ...scope, state: 'queued' } },
+        { kind: 'conversation.turn', at: 6, detail: { ...scope, state: 'running' } },
+        { kind: 'conversation.turn', at: 21, detail: { ...scope, state: 'completed' } }] } };
+  return { ...f, entry };
+}
+
+test('native Pi review follows its final answer without treating native messages as projected task outputs', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages();
+  assert.equal(messages[0].submissionId, 'native-turn');
+  assert.equal(messages[1].taskId, undefined);
+  assert.equal(messages[1].taskOutputKey, undefined);
+  assert.equal(messages[1].sourceAgent.agentId, 'pi');
+  f.ctx._snap = { messages };
+  const helper = f.create();
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2);
+  helper.reset();
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2, 'reopening restores the same turn boundary');
+});
+
+test('a native review stays before later unrelated turns and follows only its matching submission', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages();
+  messages.push({ role: 'user', text: 'Unrelated follow-up', sentAt: 30, submissionId: 'follow-up' },
+    { role: 'assistant', done: true, completedAt: 40, blocks: [{ kind: 'text', text: 'Unrelated reply', done: true }] });
+  f.ctx._snap = { messages };
+  assert.equal(f.create().timeline([f.entry], messages)[0].index, 2);
+  for (const change of ['foreign-session', 'missing-submission', 'recovery-receipt']) {
+    const copy = JSON.parse(JSON.stringify(f.entry));
+    const transcript = JSON.parse(JSON.stringify(messages));
+    if (change === 'foreign-session') copy.trace.timeline.forEach(row => { row.detail.conversationId = 'other-chat'; });
+    if (change === 'missing-submission') delete transcript[0].submissionId;
+    if (change === 'recovery-receipt') copy.trace.timeline.forEach(row => { row.detail.turnId = 'recovery-unmatched'; });
+    assert.equal(f.create().timeline([copy], transcript)[0].index, 1, change + ' must not guess a native turn');
+  }
+});
+
+test('a previous projected delivery cannot prevent a later review from following its own delivery', () => {
+  const f = selfReviewFixture();
+  f.entry.trace.timeline = [];
+  f.entry.trace.approvals = [
+    { id: 'first', action: 'review', status: 'rejected', createdAt: 10, myDecision: { decision: 'reject' }, assignment: { userId: 'self' } },
+    { id: 'second', action: 'review', status: 'pending', createdAt: 40, assignment: { userId: 'self' } },
+  ];
+  const messages = [{ role: 'user', sentAt: 5 },
+    { role: 'assistant', taskId: 'task', taskOutputKey: 'first-result', done: true, completedAt: 20 },
+    { role: 'user', sentAt: 30 },
+    { role: 'assistant', taskId: 'task', taskOutputKey: 'second-result', done: true, completedAt: 50 }];
+  const helper = f.create();
+  assert.deepEqual(Array.from(helper.timeline([f.entry], messages), row => row.index), [2, 4]);
+  helper.reset();
+  assert.deepEqual(Array.from(helper.timeline([f.entry], messages), row => row.index), [2, 4]);
+});
+
+test('native review association uses the gate round even when later receipt events arrive out of order', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages();
+  messages.push({ role: 'user', sentAt: 30, submissionId: 'second-turn', text: 'Revise the essay' },
+    { role: 'assistant', done: true, completedAt: 50, blocks: [{ kind: 'text', done: true, text: 'Revised delivery' }] });
+  const second = { conversationId: 'native-chat', turnId: 'second-turn', executor: 'native' };
+  f.entry.trace.timeline.push({ kind: 'conversation.turn', at: 29, detail: { ...second, state: 'queued' } },
+    { kind: 'conversation.turn', at: 31, detail: { ...second, state: 'running' } },
+    { kind: 'conversation.turn', at: 51, detail: { ...second, state: 'completed' } });
+  f.entry.trace.timeline.reverse();
+  f.entry.task.workRouting.conversationTurn = { ...second, state: 'completed' };
+  f.entry.trace.approvals.push({ id: 'second-review', action: 'review', status: 'pending', createdAt: 40,
+    assignment: { userId: 'self' } });
+  const helper = f.create();
+  assert.deepEqual(Array.from(helper.timeline([f.entry], messages), row => row.index), [2, 4]);
+  helper.reset();
+  assert.deepEqual(Array.from(helper.timeline([f.entry], messages), row => row.index), [2, 4]);
+});
+
+test('native review association waits for its exact user row in an older history page', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  f.ctx._snap.history = { messageStart: 1, messageIndices: [1] };
+  assert.equal(helper.timeline([f.entry], messages.slice(1)).length, 0);
+  f.ctx._snap.history = { messageStart: 0, messageIndices: [0, 1] };
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2);
+});
+
+test('failed or cancelled native receipt history cannot make a stale review claim a later answer', () => {
+  for (const state of ['failed', 'cancelled']) {
+    const f = selfReviewFixture(), messages = nativeTurnMessages();
+    f.entry.trace.timeline.at(-1).detail.state = state;
+    f.entry.task.workRouting.conversationTurn.state = state;
+    assert.equal(f.create().timeline([f.entry], messages)[0].index, 1, state);
+  }
+});
+
+test('a review gate with ambiguous same-millisecond turn starts does not guess a native delivery', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages();
+  f.entry.trace.timeline = [{ kind: 'conversation.turn', at: 10,
+    detail: { conversationId: 'native-chat', turnId: 'native-turn', executor: 'native', state: 'queued' } },
+    { kind: 'conversation.turn', at: 10,
+      detail: { conversationId: 'native-chat', turnId: 'another-turn', executor: 'native', state: 'queued' } }];
+  assert.equal(f.create().timeline([f.entry], messages)[0].index, 1);
+});
+
+test('same-millisecond events of one native turn still identify its submitted user row', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages();
+  f.entry.trace.timeline[0].at = 10;
+  f.entry.trace.timeline[1].at = 10;
+  assert.equal(f.create().timeline([f.entry], messages)[0].index, 2);
+});
+
+test('only a genuinely streaming matching turn defers its review card until the answer is complete', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  messages[1].done = false;
+  messages[1].blocks[0].done = false;
+  f.ctx._snap = { messages, status: 'streaming', execution: { turnQueue: { activeTaskId: 'task' } } };
+  assert.equal(helper.timeline([f.entry], messages).length, 0);
+  f.ctx._snap.status = 'waiting-user';
+  assert.equal(helper.timeline([f.entry], messages).length, 1, 'a human gate must remain reachable');
+  messages[1].done = true;
+  messages[1].blocks[0].done = true;
+  f.ctx._snap.status = 'idle';
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2);
+  messages.push({ role: 'user', sentAt: 30, submissionId: 'ordinary-follow-up' },
+    { role: 'assistant', done: false, blocks: [{ kind: 'text', text: 'A later answer', done: false }] });
+  f.ctx._snap.status = 'streaming';
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2, 'a later streaming turn cannot hide an older review');
+});
+
+test('an exact native receipt corrects cached clock-based placement when its trace arrives later', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  const events = f.entry.trace.timeline;
+  f.entry.trace.timeline = [];
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 1);
+  f.entry.trace.timeline = events;
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2);
+});
+
+test('native submission identity wins over unsynchronized client timestamps in either direction', () => {
+  for (const offset of [-4, 2000]) {
+    const f = selfReviewFixture(), messages = nativeTurnMessages();
+    messages[0].sentAt = 5 + offset;
+    messages[1].completedAt = 6 + offset;
+    messages.push({ role: 'user', text: 'Another topic', sentAt: 7 + offset, submissionId: 'ordinary' },
+      { role: 'assistant', done: true, completedAt: 8 + offset, blocks: [{ kind: 'text', done: true, text: 'Another answer' }] });
+    assert.equal(f.create().timeline([f.entry], messages)[0].index, 2, String(offset));
+  }
+});
+
+test('native review waits through intermediate text and tools but never hides a human permission gate', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  messages.push({ role: 'assistant', done: true, stopReason: 'toolUse', completedAt: 25,
+    blocks: [{ kind: 'toolcall', toolCall: { id: 'check' } }] });
+  f.ctx._snap = { messages, status: 'streaming', tools: [{ id: 'check', after: 2, state: 'running' }] };
+  assert.equal(helper.timeline([f.entry], messages).length, 0);
+  f.ctx._snap.pendingUi = { type: 'permission' };
+  assert.equal(helper.timeline([f.entry], messages).length, 1);
+  delete f.ctx._snap.pendingUi;
+  f.ctx._snap.status = 'idle';
+  f.ctx._snap.tools[0].state = 'done';
+  messages.push({ role: 'assistant', done: true, completedAt: 30, stopReason: 'stop',
+    blocks: [{ kind: 'text', done: true, text: 'The final checked answer.' }] });
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 4);
+});
+
+test('a native turn without a final answer leaves its original review reachable', () => {
+  for (const status of ['idle', 'error', 'waiting-user']) {
+    const f = selfReviewFixture(), messages = nativeTurnMessages();
+    messages[1] = { role: 'assistant', done: true, completedAt: 20, stopReason: 'toolUse',
+      blocks: [{ kind: 'toolcall', toolCall: { id: 'last-tool' } }] };
+    f.ctx._snap = { messages, status, tools: [{ id: 'last-tool', after: 1, state: 'done' }] };
+    assert.equal(f.create().timeline([f.entry], messages).length, 1, status);
+  }
+});
+
+test('native review reordering never applies to another reviewer or a non-review gate', () => {
+  for (const change of ['reviewer', 'executor', 'identity', 'action']) {
+    const f = selfReviewFixture(), messages = nativeTurnMessages();
+    if (change === 'reviewer') f.entry.trace.approvals[0].assignment.userId = 'another';
+    if (change === 'executor') f.entry.task.assigneeUserId = 'another';
+    if (change === 'identity') f.window.__teamCap.meId = 'another';
+    if (change === 'action') f.entry.trace.approvals[0].action = 'baseline';
+    assert.equal(f.create().timeline([f.entry], messages)[0].index, 1, change);
+  }
+});
+
+test('real trace rows reorder only after scoped approval details identify the reviewer', async () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  delete f.entry.trace.approvals[0].assignment;
+  let callback;
+  f.window.TaskTraceApproval.bind = (_root, state) => { callback = state.opts.onApprovalDetails; };
+  helper.bindApproval({}, 'task', f.entry);
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 1);
+  callback('review', { id: 'review', taskId: 'task', assignment: { userId: 'self' } });
+  await Promise.resolve();
+  assert.equal(f.invalidations(), 1);
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 2);
+  assert.equal(f.entry.trace.approvals[0].assignment, undefined, 'detail identity never mutates shared trace facts');
+  helper.reset();
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 1);
+  callback('review', { id: 'review', taskId: 'task', assignment: { userId: 'self' } });
+  await Promise.resolve();
+  assert.equal(helper.timeline([f.entry], messages)[0].index, 1, 'an old view callback cannot refill a reset cache');
+});
+
+test('late approval details cannot cross users, Hubs, tasks, approvals or conversations', async () => {
+  for (const change of ['user', 'hub', 'task', 'approval', 'conversation']) {
+    const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+    delete f.entry.trace.approvals[0].assignment;
+    let callback, scope = 'hub-one';
+    f.window.SoduWorkAPI = { taskStorageKey: () => scope };
+    f.window.TaskTraceApproval.bind = (_root, state) => { callback = state.opts.onApprovalDetails; };
+    helper.bindApproval({}, 'task', f.entry);
+    const item = { id: 'review', taskId: 'task', assignment: { userId: 'self' } };
+    if (change === 'user') f.window.__teamCap.meId = 'another';
+    if (change === 'hub') scope = 'hub-two';
+    if (change === 'task') item.taskId = 'another';
+    if (change === 'approval') item.id = 'another';
+    if (change === 'conversation') f.ctx._sessionId = 'another';
+    callback('review', item);
+    await Promise.resolve();
+    assert.equal(f.invalidations(), 0, change);
+    f.window.__teamCap.meId = 'self'; scope = 'hub-one'; f.ctx._sessionId = 'native-chat';
+    assert.equal(helper.timeline([f.entry], messages)[0].index, 1, change);
+  }
+});
+
+test('persisted personal decisions identify historical review positions without granting controls', () => {
+  const f = selfReviewFixture(), messages = nativeTurnMessages(), helper = f.create();
+  const approval = f.entry.trace.approvals[0];
+  delete approval.assignment;
+  approval.status = 'rejected';
+  approval.decisions = [{ userId: 'self', decision: 'reject', at: 22 }];
+  const result = helper.timeline([f.entry], messages)[0];
+  assert.equal(result.index, 2);
+  assert.match(result.html, /data-acceptance-operation/);
+  assert.doesNotMatch(result.html, /data-tfd-approval-action/);
+});

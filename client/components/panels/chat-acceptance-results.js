@@ -24,14 +24,17 @@
     const resultOutcomes = new Map();
     const pendingActions = new Set();
     const approvalAnchors = new Map();
+    const approvalReviewers = new Map();
     const errorFields = new WeakMap();
     let epoch = 0;
     const acceptanceKey = (taskId, approvalId) => String(taskId || '') + ':' + String(approvalId || '');
+    const reviewerKey = (taskId, approvalId) => JSON.stringify([ctx._ref, ctx._sessionId,
+      global.__teamCap?.meId || '', global.SoduWorkAPI?.taskStorageKey?.('acceptance-position') || '', taskId, approvalId]);
     function reset() {
       epoch++;
       acceptanceHandoffs.clear(); acceptanceResultActions.clear(); resultApprovals.clear();
       approvalResults.clear(); resultOutcomes.clear(); pendingActions.clear();
-      approvalAnchors.clear();
+      approvalAnchors.clear(); approvalReviewers.clear();
     }
     function outcomeLabel(outcome) {
       if (outcome.decision === 'analyze') return '已填入对话框，请按需选择插件后发送。';
@@ -112,10 +115,42 @@
       return [...operationResults(entry)].map(([id, result]) => operationHtml(entry, id, result)).join('');
     }
 
+    const timestamp = value => Number(value) || Date.parse(value || '') || 0;
+    function nativeReviewTurn(entry, at, messages) {
+      if (!at || !ctx._sessionId) return null;
+      const turns = new Map();
+      for (const event of entry.trace.timeline || []) {
+        const detail = event.detail || {}, time = timestamp(event.at);
+        if (event.kind !== 'conversation.turn' || !time || !detail.turnId || !detail.conversationId) continue;
+        const key = JSON.stringify([detail.conversationId, detail.turnId]);
+        const turn = turns.get(key) || { ...detail, at: time, failed: false };
+        turn.at = Math.min(turn.at, time);
+        turn.failed ||= ['failed', 'cancelled', 'canceled'].includes(detail.state);
+        turns.set(key, turn);
+      }
+      // Compare Hub timestamps only. A late state update cannot make an older
+      // turn own a newer gate; equal starts for distinct turns are ambiguous.
+      const candidates = [...turns.values()].filter(turn => turn.at <= at).sort((a, b) => b.at - a.at);
+      const turn = candidates[0];
+      if (!turn || turn.at === candidates[1]?.at || turn.failed || turn.executor !== 'native' ||
+          turn.conversationId !== ctx._sessionId) return null;
+      const users = messages.flatMap((message, index) => message.role === 'user' &&
+        message.submissionId === turn.turnId ? [index] : []);
+      if (users.length !== 1) return null;
+      const from = users[0];
+      const next = messages.findIndex((message, index) => index > from && message.role === 'user');
+      return { from, until: next < 0 ? messages.length : next };
+    }
+    function completedReply(message) {
+      if (message?.role !== 'assistant' || message.done === false || message.errorMessage ||
+          /^(tool_?use|tool_?calls?|error|aborted|cancelled|canceled|length|max_tokens)$/i.test(message.stopReason || '')) return false;
+      const last = (message.blocks || []).findLast(block => block.kind === 'toolcall' || String(block.text || '').trim());
+      return last?.kind === 'text' && last.done !== false;
+    }
+
     function timeline(entries, messages = [], start = 0) {
       const owner = index => ctx._snap?.history?.messageIndices?.[index] ??
         ((Number(ctx._snap?.history?.messageStart) || 0) + index);
-      const timestamp = value => Number(value) || Date.parse(value || '') || 0;
       const positions = [];
       for (const entry of entries) {
         if (entry.executionElsewhere || !entry.trace || !global.TaskTraceApproval) continue;
@@ -137,20 +172,24 @@
           // Pool reviews need an explicit assignment (or reviewer field) from
           // the server. Only direct reviews may fall back to the creator; a
           // namesake pool task must not gain a self-review position by guesswork.
-          const reviewer = String(approval?.assignment?.userId || entry.task?.reviewerUserId ||
+          const ownDecision = approval?.decisions?.some(row => String(row.userId || '') === me &&
+            ['approve', 'reject'].includes(row.decision));
+          const reviewer = String(approval?.assignment?.userId || approvalReviewers.get(reviewerKey(taskId, id)) ||
+            (ownDecision ? me : '') || entry.task?.reviewerUserId ||
             (direct ? entry.task?.createdBy : '') || '').trim();
           const executor = String(entry.task?.assigneeUserId || entry.task?.executorUserId ||
             entry.task?.executionContext?.assigneeUserId || (direct ? entry.task?.createdBy : '') || '').trim();
           const samePerson = Boolean(me && reviewer && executor && me === reviewer && me === executor);
+          const approvalAt = timestamp(approval?.createdAt) || timestamp(approval?.gate?.createdAt);
+          const native = samePerson && approval?.action === 'review' ? nativeReviewTurn(entry, approvalAt, messages) : null;
           let anchor = approvalAnchors.get(key);
           if (!anchor) {
             // Approval creation is immutable; resolution and task updates must not move its slot.
-            const at = timestamp(approval?.createdAt) || timestamp(approval?.gate?.createdAt) ||
-              timestamp(approval?.myDecision?.at) || timestamp(approval?.resolvedAt);
+            const at = approvalAt || timestamp(approval?.myDecision?.at) || timestamp(approval?.resolvedAt);
             let index = at ? messages.findIndex(message => timestamp(message.sentAt || message.completedAt) > at) : -1;
             if (index < 0) index = messages.length;
             // A partially loaded archive cannot locate a preceding card until older history arrives.
-            if (index === 0 && owner(0) > 0) continue;
+            if (index === 0 && owner(0) > 0 && !native) continue;
             anchor = { after: index ? owner(index - 1) : -1, at, order: approvalAnchors.size,
               messageKey: index ? String(messages[index - 1]?.taskOutputKey || '') : '' };
             if (messages.length || !at) approvalAnchors.set(key, anchor);
@@ -158,23 +197,33 @@
           const matched = anchor.messageKey ? messages.findIndex(message => message.taskOutputKey === anchor.messageKey) : -1;
           let index = matched >= 0 ? matched + 1 : messages.findIndex((_, at) => owner(at) > anchor.after);
           if (index < 0) index = messages.length;
-          /*
-           * A review gate can be created before its executor publishes the
-           * native task output. This is common when the executor and reviewer
-           * are the same person: the approval timestamp then points before
-           * the answer, so a timestamp-only anchor renders the card above the
-           * delivery. For an explicitly self-assigned review only, prefer the
-           * first completed output for this task when no matching output
-           * already precedes the slot. The task output key is retained by the
-           * renderer anchor, so the corrected slot remains stable while
-           * history pages and streaming snapshots are reconciled.
-           */
-          if (samePerson && outputIndices.length && !outputIndices.some(outputIndex => outputIndex < index)) {
-            const outputIndex = outputIndices.find(outputIndex => outputIndex >= index);
-            if (outputIndex !== undefined) {
-              const output = messages[outputIndex];
-              const outputKey = String(output?.taskOutputKey || '');
-              anchor = { ...anchor, after: owner(outputIndex), messageKey: outputKey };
+          if (samePerson && approval?.action === 'review') {
+            let outputIndex = -1;
+            if (native) {
+              const last = messages[native.until - 1];
+              // Only a still-generating matching turn defers controls. A human
+              // gate, failed turn or later chat must leave its review reachable.
+              const runningTool = (ctx._snap?.tools || []).some(tool => tool.state === 'running' &&
+                Number(tool.after) >= native.from && Number(tool.after) < native.until);
+              if (pending.has(id) && ctx._snap?.status === 'streaming' && !ctx._snap.pendingUi &&
+                  !ctx._snap.execution?.limitRequest && native.until === messages.length &&
+                  (last?.role === 'assistant' && last.done === false || runningTool)) continue;
+              const candidate = messages.findLastIndex((message, at) => at > native.from && at < native.until &&
+                message.role === 'assistant' && (message.blocks || []).some(block =>
+                  block.kind === 'toolcall' || String(block.text || '').trim()));
+              const output = messages[candidate];
+              if (completedReply(output) && (!output.taskId || String(output.taskId) === taskId)) outputIndex = candidate;
+            } else if (outputIndices.length) {
+              // Imported task streams already carry their source identity.
+              // Restrict correction to this user turn so an older output cannot
+              // pin a rework review above its own answer or move it to a later turn.
+              const from = messages.findLastIndex((message, at) => at < index && message.role === 'user');
+              const next = messages.findIndex((message, at) => at > from && message.role === 'user');
+              const until = next < 0 ? messages.length : next;
+              outputIndex = outputIndices.findLast(at => at > from && at < until) ?? -1;
+            }
+            if (outputIndex >= 0 && (native || outputIndex >= index)) {
+              anchor = { ...anchor, after: owner(outputIndex), messageKey: String(messages[outputIndex]?.taskOutputKey || '') };
               approvalAnchors.set(key, anchor);
               index = outputIndex + 1;
             }
@@ -407,9 +456,25 @@
     }
 
     function bindApproval(root, id, entry) {
-      const boundEpoch = epoch;
+      const boundEpoch = epoch, boundMe = String(global.__teamCap?.meId || '');
+      const boundRef = ctx._ref, boundSession = ctx._sessionId;
+      const scope = () => global.SoduWorkAPI?.taskStorageKey?.('acceptance-position') || '';
+      const boundScope = scope();
+      const current = () => boundEpoch === epoch && boundMe && boundMe === String(global.__teamCap?.meId || '') &&
+        boundRef === ctx._ref && boundSession === ctx._sessionId && boundScope === scope();
       TaskTraceApproval.bind(root, { trace: entry.trace, opts: {
         taskId: id,
+        onApprovalDetails: (approvalId, item) => {
+          if (!current() || !entry.trace?.approvals?.some(row => row.id === approvalId)) return;
+          if (item && (String(item.taskId || item.task?.id || '') !== String(id) || item.id !== approvalId)) return;
+          const key = reviewerKey(id, approvalId), reviewer = String(item?.assignment?.userId || '');
+          if ((approvalReviewers.get(key) || '') === reviewer) return;
+          if (reviewer) approvalReviewers.set(key, reviewer);
+          else approvalReviewers.delete(key);
+          // Detail hydration may run while cards are being bound. Reorder only
+          // after that render completes, and never apply a late account response.
+          Promise.resolve().then(() => { if (current()) invalidate(); });
+        },
         onAcceptanceOpened: (approvalId, mode) => {
           if (boundEpoch !== epoch) return;
           const key = acceptanceKey(id, approvalId);
