@@ -91,7 +91,7 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
   const source = require('node:fs').readFileSync(path.join(__dirname, '../../tools/ci/accept-windows.cjs'), 'utf8');
   const root = path.join(os.tmpdir(), 'soduwork-install-acceptance-fixture');
   const version = '9.9.1';
-  for (const failCleanup of [false, true]) {
+  for (const firstRelease of [false, true]) for (const failCleanup of [false, true]) {
     let completedChecks;
     const calls = [], errors = [], state = { platform: 'win32', execPath: process.execPath, env: {} };
     const contract = {
@@ -113,7 +113,7 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
       'node:fs/promises': fakeFs, 'node:path': path, 'node:os': os, 'node:assert/strict': assert,
       'node:child_process': { spawnSync: () => { throw Error('Unexpected native call'); } },
       './release-artifacts.cjs': contract,
-      './acceptance-common.cjs': { run: async () => {}, soduworkBaseline: async () => ({ productName: 'SoduWork',
+      './acceptance-common.cjs': { run: async () => {}, soduworkBaseline: async () => firstRelease ? null : ({ productName: 'SoduWork',
         path: 'old.exe', version: '1.12.80', sha256: 'old-sha' }) },
       './windows-acceptance-support.cjs': { ...support, stopOwnedProcesses: () => {} },
     };
@@ -128,8 +128,8 @@ test('acceptance receipt is written only after every owned cleanup succeeds', as
       assert.equal(state.exitCode, undefined);
       assert.equal(calls.at(-1), 'receipt');
       assert.equal(errors.length, 0);
-      assert.deepEqual(Array.from(completedChecks, row => row.name), ['fresh-repair', 'soduwork-upgrade', 'compatibility']);
-      assert.equal(completedChecks.find(row => row.name === 'soduwork-upgrade').oldVersion, '1.12.80');
+      assert.deepEqual(Array.from(completedChecks, row => row.name), firstRelease ? ['fresh-repair', 'compatibility'] : ['fresh-repair', 'soduwork-upgrade', 'compatibility']);
+      if (!firstRelease) assert.equal(completedChecks.find(row => row.name === 'soduwork-upgrade').oldVersion, '1.12.80');
     }
   }
 });
@@ -158,4 +158,20 @@ test('public Windows acceptance reaches artifact validation without private dist
     },
   }), /Provide the immutable build artifact SHA-256/);
   assert.equal(sideEffects, 0);
+});
+
+test('failed child acceptance exposes its diagnostic tail and preserves failure', t => {
+  const fs = require('node:fs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-log-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, 'acceptance.log');
+  const helper = require.resolve('../../tools/ci/acceptance-common.cjs');
+  const script = `require(${JSON.stringify(helper)}).run(process.execPath,
+    ['-e', 'process.stderr.write("actual installation failure"); process.exitCode=7'],
+    {log:${JSON.stringify(log)}}).catch(e => {console.error(e.message);process.exitCode=1})`;
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /actual installation failure/);
+  assert.match(result.stderr, /exited 7/);
+  assert.match(fs.readFileSync(log, 'utf8'), /actual installation failure/);
 });

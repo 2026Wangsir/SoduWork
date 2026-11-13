@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "key": "project-validation-release",
   "name": "缺陷闭环 · 修复发布与验证",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "category": "dev",
   "description": "面向已有工程的缺陷闭环：先形成稳定复现和可执行性结论，再在隔离分支修复，经过固定提交真实自测、AI 独立审查和自动合并；最后按项目环境链发布，并核对部署版本、健康检查与发布后验证证据。",
   "author": "SoduWork",

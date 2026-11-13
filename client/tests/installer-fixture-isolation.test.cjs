@@ -261,6 +261,28 @@ test('real NSIS resolves isolated definitions when production file-open macros a
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
+test('first-install preparation replaces the generic launcher with the isolated executable identity', async t => {
+  const f = await fixture(t), guid = f.createFixtureGuid(), names = f.fixtureNames(guid);
+  const entry = path.resolve(__dirname, '../e2e/fixtures/installer-prepare.cjs');
+  const source = await fs.readFile(entry, 'utf8'), fixtureRequire = createRequire(entry), calls = [];
+  const context = { packager: { projectDir: f.root, config: { productName: names.productName,
+    win: { executableName: names.executableName }, nsis: { guid, shortcutName: names.shortcutName } } } };
+  const module = { exports: {} };
+  vm.runInNewContext(source, { module, Buffer, require(name) {
+    if (name === '../../scripts/prepare-installer.cjs') return async value => {
+      assert.equal(value, context); calls.push('generic launcher');
+    };
+    if (name === './isolated-installer-build.cjs') return { prepareFixtureLauncher: async (root, identity) => {
+      assert.equal(root, f.root);
+      assert.deepEqual(JSON.parse(JSON.stringify(identity)), { guid, ...names });
+      calls.push('isolated launcher');
+    } };
+    return fixtureRequire(name);
+  } });
+  await module.exports(context);
+  assert.deepEqual(calls, ['generic launcher', 'isolated launcher']);
+});
+
 test('real NSIS compiles the unique prepackaged launcher and legacy gap only targets its declared executable', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t), guid = f.createFixtureGuid(), names = f.fixtureNames(guid);
   await fs.mkdir(path.join(f.root, 'build'));

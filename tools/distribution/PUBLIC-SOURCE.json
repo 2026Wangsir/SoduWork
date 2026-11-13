@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "opensource-v1",
-  "sourceOnly": true,
+  "sourceOnly": false,
   "copyright": "MDiRi",
   "skills": [
     "agent-product-design",

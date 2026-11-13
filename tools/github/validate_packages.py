@@ -6,15 +6,13 @@ uses build.py, reviewed signing credentials and the full installation gates.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import os
 from pathlib import Path
 import re
-import secrets
 import tempfile
 
-from build import android, package_native, run
+from build import package_native
 from release import ROOT, SHARDS, expected, read, require, write
 
 
@@ -47,27 +45,10 @@ def main():
     ctx = validation_context()
     with tempfile.TemporaryDirectory(prefix="soduwork-package-validation-") as temporary:
         scratch = Path(temporary)
-        if args.shard == "android":
-            key = scratch / "test-signing.jks"
-            password = secrets.token_hex(24)
-            key_env = {**os.environ, "SODUWORK_TEST_KEY_PASSWORD": password}
-            run("keytool", "-genkeypair", "-keystore", key, "-storetype", "JKS",
-                "-storepass:env", "SODUWORK_TEST_KEY_PASSWORD", "-keypass:env", "SODUWORK_TEST_KEY_PASSWORD",
-                "-alias", "soduwork-validation", "-keyalg", "RSA", "-keysize", "2048",
-                "-validity", "7", "-dname", "CN=SoduWork CI Validation", "-noprompt", env=key_env)
-            packages = scratch / "packages"
-            packages.mkdir()
-            checks = android(ctx, packages, scratch, signing_env={
-                "SODUWORK_ANDROID_KEYSTORE_B64": base64.b64encode(key.read_bytes()).decode(),
-                "SODUWORK_ANDROID_KEYSTORE_PASSWORD": password,
-                "SODUWORK_ANDROID_KEY_ALIAS": "soduwork-validation",
-            })
-            signing = "ephemeral-test-key; not compatible with production updates"
-        else:
-            package_native(ctx, args.shard, scratch, validation=True)
-            packages = ROOT / "client/dist"
-            checks = {"ok": True, "checks": ["native-package-build", "packaged-runtime-verification"]}
-            signing = "ad-hoc" if args.shard.startswith("macos-") else "unsigned"
+        package_native(ctx, args.shard, scratch, validation=True)
+        packages = ROOT / "client/dist"
+        checks = {"ok": True, "checks": ["native-package-build", "packaged-runtime-verification"]}
+        signing = "ad-hoc" if args.shard.startswith("macos-") else "unsigned"
         files = [fingerprint(packages / name) for name in expected(ctx, args.shard)]
         report = {**ctx, "shard": args.shard, "validationOnly": True,
                   "publicDistributionAllowed": False, "signing": signing,

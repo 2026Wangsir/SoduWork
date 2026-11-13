@@ -86,8 +86,8 @@ function collect(packageDirs, root, output, manifest) {
   return rows;
 }
 async function prepare(context) {
-  if (context?.packager) require('./client-build-version.cjs').prepareVersionFile(context);
   const distribution = distributionReview(ROOT, process.env.SODUWORK_INTERNAL_BUILD === '1');
+  if (context?.packager) require('./client-build-version.cjs').prepareVersionFile(context);
   const result = check();
   if (!result.ok) throw new Error(result.errors.join('\n'));
   await require('./prepare-client-runtime.cjs')(context);

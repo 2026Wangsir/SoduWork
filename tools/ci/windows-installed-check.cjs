@@ -192,11 +192,11 @@ try {
   assert.ok(rows[0].name.startsWith(oldInstaller ? oldBrand : productName));
   if (!oldInstaller) assert.equal(rows[0].key.toLowerCase().replace(/[{}]/g, ''), nsisGuid.toLowerCase());
   assert.equal(typeof rows[0].location, 'string', 'Installation GUID key must contain InstallLocation');
-  assert.equal(path.resolve(rows[0].location).toLowerCase(), path.resolve(installed).toLowerCase());
+  assert.equal(fs.realpathSync.native(rows[0].location).toLowerCase(), fs.realpathSync.native(installed).toLowerCase());
   for (const link of links) {
     assert.ok(fs.existsSync(link), 'Installer did not create shortcut: ' + link);
     const target = ps('(New-Object -ComObject WScript.Shell).CreateShortcut($env:SODUWORK_CHECK_LINK).TargetPath', { SODUWORK_CHECK_LINK: link });
-    assert.equal(target.toLowerCase(), path.join(installed, oldInstaller ? oldExecutableName : executableName).toLowerCase());
+    assert.equal(fs.realpathSync.native(target).toLowerCase(), fs.realpathSync.native(path.join(installed, oldInstaller ? oldExecutableName : executableName)).toLowerCase());
   }
   run(path.join(first, oldInstaller ? oldExecutableName : executableName), [path.join(first, '.soduwork-verify.cjs'), first, path.join(output, 'payload-verification.json')],
     { env: { ...env, ELECTRON_RUN_AS_NODE: '1' } });
@@ -215,7 +215,7 @@ try {
     assert.ok(report.upgradedRegistrations[0].name.startsWith(productName));
     assert.equal(report.upgradedRegistrations[0].key.toLowerCase().replace(/[{}]/g, ''), nsisGuid.toLowerCase());
     assert.equal(typeof report.upgradedRegistrations[0].location, 'string', 'Upgraded installation GUID key must contain InstallLocation');
-    assert.equal(path.resolve(report.upgradedRegistrations[0].location).toLowerCase(), path.resolve(installed).toLowerCase());
+    assert.equal(fs.realpathSync.native(report.upgradedRegistrations[0].location).toLowerCase(), fs.realpathSync.native(installed).toLowerCase());
     assert.equal(fs.existsSync(path.join(installed, 'Uninstall SoduWork.exe')), true);
   }
   uninstall();

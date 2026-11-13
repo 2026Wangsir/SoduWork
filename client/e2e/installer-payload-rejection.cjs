@@ -6,12 +6,13 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
+const { installerSpawnOptions } = require('./fixtures/installer-spawn-options.cjs');
 const { build, validateFixtureGuid, validateFixtureIdentity, prepareFixtureLauncher, Platform, Arch } = require('./fixtures/isolated-installer-build.cjs');
 function run(file, args, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(file, args, { env, windowsHide: true, stdio: 'ignore', ...installerSpawnOptions(file, args) });
     child.once('error', reject);
     child.once('exit', resolve);
   });

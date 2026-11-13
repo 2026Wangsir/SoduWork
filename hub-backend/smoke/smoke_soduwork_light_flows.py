@@ -42,7 +42,7 @@ def main() -> int:
     fast_nodes = by_key(fast_flow)
 
     ok(fast["key"] == "soduwork-fast-change", "fast key")
-    ok(fast["version"] == "1.0.2", "fast version")
+    ok(fast["version"] == "1.0.3", "fast version")
     ok(list(fast_nodes) == ["change", "receipt"], "fast has two nodes",
        list(fast_nodes))
     ok([x["type"] for x in fast_flow["nodes"]] == ["ai", "publish"],

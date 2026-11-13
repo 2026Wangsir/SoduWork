@@ -20,6 +20,10 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from app.services.runner_stdio import configure_output_streams  # noqa: E402
+
+configure_output_streams()
+
 import websockets  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

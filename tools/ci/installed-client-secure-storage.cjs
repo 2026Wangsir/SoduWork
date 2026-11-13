@@ -36,7 +36,7 @@ function secureStorageProbe(profile, mode) {
   requireStrongCipher(cipher);
   if (safeStorage.decryptString(cipher) !== marker)
     throw Error('Electron safeStorage did not preserve the earlier ciphertext');
-  return { available: true, roundTrip: true, persisted: true, mode, ...(backend ? { backend } : {}),
+  return { available: true, backend, roundTrip: true, persisted: true, mode,
     ciphertextSha256: crypto.createHash('sha256').update(cipher).digest('hex') };
 }
 

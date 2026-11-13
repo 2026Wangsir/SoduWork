@@ -52,7 +52,7 @@ def plugin_contracts() -> None:
     bugfix_by = {node["key"]: node for node in bugfix_nodes}
 
     check("需求到发布插件升级为不可变新版本",
-          software["version"] == "1.7.6")
+          software["version"] == "1.7.7")
     check("需求到发布节点顺序完整",
           [node["key"] for node in software_nodes] == [
               "analyze", "baseline", "implement", "quality", "review",
@@ -84,7 +84,7 @@ def plugin_contracts() -> None:
           and "关键路径可复核证据" in software_by["implement"]["config"]["prompt"])
 
     check("Bug 闭环升级为不可变新版本",
-          bugfix["version"] == "1.5.6")
+          bugfix["version"] == "1.5.7")
     check("Bug 到发布后验证节点顺序完整",
           [node["key"] for node in bugfix_nodes] == [
               "scope", "implement", "quality", "review", "merge",

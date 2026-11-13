@@ -107,7 +107,8 @@ def main():
             checkout = root / "checkout"
             for name in ["tools/sign-client-release.mjs", "client/scripts/installer-compatibility-report.cjs",
                          "client/main/client-update-contract.js", "tools/ci/verify-client-publication.cjs",
-                         "tools/ci/release-artifacts.cjs", "tools/ci/publish-client.cjs", "tools/ci/release-transfer.cjs"]:
+                         "tools/ci/release-artifacts.cjs", "tools/ci/soduwork-acceptance-baselines.json",
+                         "tools/ci/publish-client.cjs", "tools/ci/release-transfer.cjs"]:
                 target = checkout / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repo / name, target)
