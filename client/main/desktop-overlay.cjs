@@ -12,7 +12,7 @@ const NATIVE_SHAPE = process.platform === 'win32' || process.platform === 'linux
 // Owns only the desktop pet/dock overlay. Work windows remain independent.
 function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notification,
   powerMonitor, getRendererRoot: rendererRoot, getIcon: _appIcon, translate: _nativeText,
-  timers = globalThis, now = Date.now }) {
+  getWorkWindows = () => [], timers = globalThis, now = Date.now }) {
   const setTimeout = timers.setTimeout.bind(timers), clearTimeout = timers.clearTimeout.bind(timers);
   const setInterval = timers.setInterval.bind(timers), clearInterval = timers.clearInterval.bind(timers);
   let mainWindow = null;
@@ -65,10 +65,31 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
     if (_started || _disposed) return;
     _started = true;
     const focusChanged = (_event, win) => {
-      if (mainWindow && win !== mainWindow) notifyOverlayBlur();
+      if (!mainWindow) return;
+      if (win === mainWindow) {
+        setWorkWindowFocused(false);
+        return;
+      }
+      setWorkWindowFocused(true);
+      notifyOverlayBlur();
     };
     app.on('browser-window-focus', focusChanged);
     _lifecycleDisposers.push(() => app.removeListener('browser-window-focus', focusChanged));
+    const blurChanged = (_event, win) => {
+      /* Overlay blur is an intentional passthrough transition, not a work-window hand-off. */
+      if (win && win === mainWindow) return;
+      /*
+       * A work window can lose focus to another application without a corresponding
+       * browser-window-focus event. Restore the desktop layer in that case, while leaving
+       * it underneath another SoduWork window during an internal focus hand-off.
+       */
+      const focused = typeof BrowserWindow.getFocusedWindow === 'function'
+        ? BrowserWindow.getFocusedWindow() : null;
+      if (focused && focused !== mainWindow) return;
+      setWorkWindowFocused(false);
+    };
+    app.on('browser-window-blur', blurChanged);
+    _lifecycleDisposers.push(() => app.removeListener('browser-window-blur', blurChanged));
     if (powerMonitor && typeof powerMonitor.on === 'function') {
       for (const event of ['suspend', 'resume']) {
         powerMonitor.on(event, resetRendererHealth);
@@ -165,6 +186,16 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
     try {
       const point = screen.getCursorScreenPoint();
       const bounds = mainWindow.getContentBounds();
+      /*
+       * The desktop overlay is a full-screen transparent window. If a normal SoduWork
+       * window is under the cursor, its controls must win even when the pet or dock happens
+       * to overlap that point. This closes the first-click race before the work window emits
+       * its native focus event and applies on Windows, Linux and macOS alike.
+       */
+      if (_isPointOverWorkWindow(point)) {
+        _setOverlayInputIgnored(true);
+        return;
+      }
       const inside = _overlayShape.containsPoint(
         _overlayInputRects, point.x - bounds.x, point.y - bounds.y);
       _setOverlayInputIgnored(!inside);
@@ -172,6 +203,21 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
       /* Enable passthrough when global cursor position is unavailable rather than blocking other applications. */
       _setOverlayInputIgnored(true);
     }
+  }
+
+  function _isPointOverWorkWindow(point) {
+    let windows = [];
+    try { windows = getWorkWindows() || []; } catch (_) { return false; }
+    return windows.some((win) => {
+      if (!win || win === mainWindow || typeof win.isDestroyed !== 'function' || win.isDestroyed()) return false;
+      if (typeof win.isVisible === 'function' && !win.isVisible()) return false;
+      if (typeof win.isMinimized === 'function' && win.isMinimized()) return false;
+      let bounds;
+      try { bounds = typeof win.getBounds === 'function' ? win.getBounds() : win.getContentBounds?.(); }
+      catch (_) { return false; }
+      return !!bounds && point.x >= bounds.x && point.y >= bounds.y &&
+        point.x < bounds.x + bounds.width && point.y < bounds.y + bounds.height;
+    });
   }
 
   function _startOverlayInputGuard() {
@@ -251,6 +297,25 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
 
 
   let _overlayHiddenByWorkspace = false;
+  let _workWindowFocused = false;
+  function _setOverlayTopmost(flag) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setAlwaysOnTop(_workWindowFocused ? false : !!flag, overlayTopLevel());
+  }
+  function setWorkWindowFocused(focused) {
+    const next = !!focused;
+    if (_workWindowFocused === next) return;
+    _workWindowFocused = next;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (next) {
+      /* Keep the workspace above the transparent desktop layer while it owns focus. */
+      _setOverlayInputIgnored(true);
+      _setOverlayTopmost(false);
+    } else if (!_overlayHiddenByWorkspace && !_emergencyMode) {
+      _setOverlayTopmost(true);
+      _syncOverlayInputNow();
+    }
+  }
   function setWorkspaceMaximized(maximized) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (maximized) {
@@ -266,7 +331,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
     if (_initialRevealPending) { revealInitialOverlay(); return; }
     mainWindow.showInactive();
     /* Reapply stacking and passthrough state after hide/show cycles. */
-    mainWindow.setAlwaysOnTop(true, overlayTopLevel());
+    _setOverlayTopmost(true);
     if (_overlayShapeEnabled && NATIVE_SHAPE && typeof mainWindow.setShape === 'function') {
       try { mainWindow.setShape(_appliedOverlayShape); } catch (_e) { /* The next renderer report can retry synchronization. */ }
     }
@@ -352,7 +417,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
     mainWindow.reload();
     mainWindow.show();
     if (focus) mainWindow.focus();
-    mainWindow.setAlwaysOnTop(true, overlayTopLevel());
+    _setOverlayTopmost(true);
     startHeartbeatWatchdog();
   }
 
@@ -596,7 +661,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
 
     // Always on top: use screen-saver on Windows to stay above the taskbar, and floating on macOS, for overlay and main windows.
 
-    mainWindow.setAlwaysOnTop(true, overlayTopLevel());
+    _setOverlayTopmost(true);
 
     mainWindow.on('blur', () => {
       if (!isCurrent(owner)) return;
@@ -655,6 +720,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
       _overlayShapeReported = false;
       _overlayShapeRevision = 0;
       _overlayAwaitingShape = false;
+      _workWindowFocused = false;
     });
 
     /*
@@ -734,7 +800,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
      * must not become always-on-top.
      */
     if (event.sender !== (mainWindow && mainWindow.webContents)) return;
-    if (mainWindow) mainWindow.setAlwaysOnTop(flag, overlayTopLevel());
+    _setOverlayTopmost(flag);
   });
 
   onIpc('window-move', (event, x, y) => {
@@ -826,7 +892,7 @@ function create({ app, BrowserWindow, ipcMain, screen, globalShortcut, Notificat
     get window() { return mainWindow; },
     get emergency() { return _emergencyMode; },
     start, createWindow, reload, emergencyPassthrough, recoverFromEmergency,
-    notifyBlur: notifyOverlayBlur, setWorkspaceMaximized, dispose,
+    notifyBlur: notifyOverlayBlur, setWorkspaceMaximized, setWorkWindowFocused, dispose,
   });
 }
 

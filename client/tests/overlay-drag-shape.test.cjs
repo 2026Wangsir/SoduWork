@@ -115,7 +115,7 @@ test('静止时不产生多余 IPC；新元素在拖动中出现也会进形状'
   // Show a notification bubble during dragging.
   const bubble = makeEl('bubble', 900, 900, 200, 60);
   const origQS = sandbox.document.querySelector;
-  sandbox.document.querySelector = (sel) => (sel === '.pet-bubble.show' ? bubble : origQS(sel));
+  sandbox.document.querySelector = (sel) => (sel === '.pet-bubble.show.undoable' ? bubble : origQS(sel));
   sandbox.window.requestOverlayShapeSync(0);
   frame();
   assert.ok(contains(shapeCalls.at(-1), bubble), '拖动中新出现的元素也要有形状（否则隐形）');

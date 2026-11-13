@@ -61,6 +61,7 @@ function harness(t, { readyDuringLoad = false, synchronousBlur = false } = {}) {
     show() {}
   }
   const windows = [];
+  const workWindows = [];
   class BrowserWindow extends EventEmitter {
     constructor(options) {
       super();
@@ -113,7 +114,8 @@ function harness(t, { readyDuringLoad = false, synchronousBlur = false } = {}) {
   }
   const controller = create({ app, screen, ipcMain, BrowserWindow, globalShortcut, Notification,
     powerMonitor, timers, now: () => timers.time, getRendererRoot: () => 'C:/SoduWork/client',
-    getIcon: () => 'icon', translate: (value) => value });
+    getIcon: () => 'icon', translate: (value) => value,
+    getWorkWindows: () => workWindows });
   t.after(() => controller.dispose());
   function send(channel, win, ...args) { ipcMain.emit(channel, { sender: win.webContents }, ...args); }
   function ready(win) {
@@ -123,7 +125,8 @@ function harness(t, { readyDuringLoad = false, synchronousBlur = false } = {}) {
     send('window-set-overlay-shape', win, [{ x: 100, y: 100, width: 60, height: 180 }], info?.revision);
   }
   function query(channel, win) { return ipcMain.handlers.get(channel)({ sender: win.webContents }); }
-  return { controller, timers, screen, ipcMain, powerMonitor, app, shortcuts, notices, windows, send, ready, query };
+  return { controller, timers, screen, ipcMain, powerMonitor, app, shortcuts, notices, windows,
+    workWindows, send, ready, query };
 }
 
 test('blur keeps visible native regions while every input path waits for a fresh renderer revision', (t) => {
@@ -338,6 +341,47 @@ test('passive overlay avoids Windows cursor forwarding and recovers entry withou
   assert.equal(win.ignored, true);
   assert.equal(win.focusable, false);
   assert.equal(win.forwardMouse, process.platform !== 'win32');
+});
+
+test('a visible work window wins hit-testing when its bounds overlap a pet or dock', (t) => {
+  const h = harness(t), win = h.controller.createWindow();
+  h.ready(win);
+  h.workWindows.push({
+    isDestroyed: () => false,
+    isVisible: () => true,
+    isMinimized: () => false,
+    getBounds: () => ({ x: 80, y: 80, width: 640, height: 480 }),
+  });
+  h.screen.cursor = { x: 110, y: 110 };
+  h.timers.tick(40);
+  assert.equal(win.ignored, true, 'a composer under the pet must receive the first click');
+  assert.equal(win.focusable, false, 'the overlay must leave the keyboard focus chain over work content');
+  h.workWindows.length = 0;
+  h.timers.tick(40);
+  assert.equal(win.ignored, false, 'the desktop widget remains available outside work windows');
+});
+
+test('work-window focus lowers the overlay and restores it after focus returns to the desktop', (t) => {
+  const h = harness(t), win = h.controller.createWindow();
+  h.ready(win);
+  win.calls.length = 0;
+  h.controller.setWorkWindowFocused(true);
+  assert.deepEqual(win.calls.at(-1), ['top', false, process.platform === 'darwin' ? 'floating' : 'screen-saver']);
+  assert.equal(win.ignored, true);
+  h.controller.setWorkWindowFocused(false);
+  assert.deepEqual(win.calls.at(-1), ['top', true, process.platform === 'darwin' ? 'floating' : 'screen-saver']);
+});
+
+test('browser-window focus events apply the same stacking guard as direct work-window state', (t) => {
+  const h = harness(t), win = h.controller.createWindow();
+  h.ready(win);
+  h.controller.start();
+  const work = { isDestroyed: () => false };
+  h.app.emit('browser-window-focus', {}, work);
+  assert.equal(win.focusable, false);
+  assert.ok(win.calls.some(call => call[0] === 'top' && call[1] === false));
+  h.app.emit('browser-window-blur', {}, work);
+  assert.deepEqual(win.calls.at(-1), ['top', true, process.platform === 'darwin' ? 'floating' : 'screen-saver']);
 });
 
 test('foreign windows cannot change overlay input before or after region registration', (t) => {

@@ -93,7 +93,8 @@ const interactiveEls=()=>{
     ...document.querySelectorAll('.pet.ring-open .ring-btn'),
     document.querySelector('.panel.show'),
     document.querySelector('.ctx-menu.show'),
-    document.querySelector('.pet-bubble.show'),
+    /* Non-undoable feedback bubbles are intentionally pointer-transparent. */
+    document.querySelector('.pet-bubble.show.undoable'),
     document.querySelector('.edge-dock.show')
     /*
      * Register every interactive surface hosted in this transparent overlay. Separate native

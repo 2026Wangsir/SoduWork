@@ -24,11 +24,12 @@ const venv = path.resolve(__dirname, '../../hub-backend/.venv/Scripts/python.exe
 const python = process.env.SODUWORK_TEST_PYTHON || (fs.existsSync(venv) ? venv : 'python');
 const report = { ok: false, isolated: true, realNativeWindows: true, nativeMouseVerified: false,
   electron: process.versions.electron, rounds: [],
-  note: 'Cursor coordinates, keyboard events and renderer busy time are injected fixture inputs, not physical mouse/IME or production latency.' };
+  note: 'Cursor coordinates, keyboard events and renderer busy time are injected fixture inputs, not physical mouse/IME or production latency.',
+  workWindowOverlapVerified: false };
 app.setPath('userData', path.join(root, 'profile'));
 app.on('window-all-closed', () => {});
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let controller, overlay, target, timeout;
+let controller, overlay, target, overlapWindow, timeout;
 let cursor = { x: -1000, y: -1000 };
 const fixtureScreen = { getPrimaryDisplay: () => screen.getPrimaryDisplay(),
   getCursorScreenPoint: () => cursor, on: (...args) => screen.on(...args), removeListener: (...args) => screen.removeListener(...args) };
@@ -104,7 +105,8 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(root, 'index.html'), rendererHTML());
   controller = require('../main/desktop-overlay.cjs').create({ app, BrowserWindow, ipcMain, screen: fixtureScreen,
     globalShortcut, Notification, powerMonitor, getRendererRoot: () => root,
-    getIcon: () => nativeImage.createEmpty(), translate: value => value });
+    getIcon: () => nativeImage.createEmpty(), translate: value => value,
+    getWorkWindows: () => [target, overlapWindow].filter(Boolean) });
   overlay = controller.createWindow();
   await new Promise(resolve => overlay.webContents.once('did-finish-load', resolve));
   const js = code => overlay.webContents.executeJavaScript(code);
@@ -165,6 +167,23 @@ app.whenReady().then(async () => {
     overlay.on('blur', onBlur);
     cursor = { x: bounds.x + 600, y: bounds.y + 300 };
     target.show(); target.focus();
+    cursor = { x: bounds.x + point.x, y: bounds.y + point.y };
+    /* Use a deterministic visible work-window adapter for the first-click guard. Native
+       focus is exercised by the composer window below, while this adapter avoids depending
+       on the desktop session's window manager to keep a hidden fixture foregrounded. */
+    overlapWindow = {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      isMinimized: () => false,
+      getBounds: () => ({ x: cursor.x - 40, y: cursor.y - 40, width: 80, height: 80 }),
+    };
+    await until(() => overlay.isFocusable() === false,
+      'overlapping work window takes the pet hit region');
+    report.workWindowOverlapVerified = true;
+    /* Continue the native region probe from a transparent gap; the overlap assertion above
+       already verifies that the work window wins while the cursor is over the dock. */
+    cursor = { x: bounds.x + 600, y: bounds.y + 300 };
+    overlapWindow = null;
     const native = await probe.done;
     overlay.setShape = original;
     overlay.removeListener('blur', onBlur);
