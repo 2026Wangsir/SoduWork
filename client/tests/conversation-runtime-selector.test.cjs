@@ -63,9 +63,7 @@ assert.match(runtime, /data-runtime=.*runtime\.id/,
   'runtime rows must be generated from the catalog rather than hard-coded');
 [
   "pi: 'PI'",
-  "'codex-harness': 'CX'",
   "opencode: 'OC'",
-  "codex: 'CX'",
   "qwen: 'QW'",
   "dsh: 'DS'",
 ].forEach((entry) => assert.ok(brand.includes(entry), 'missing Agent monogram: ' + entry));

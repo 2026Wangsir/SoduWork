@@ -798,7 +798,7 @@ test('workflow nodes share one turn stack with actual Agent labels, including to
   assert.ok(list.innerHTML.indexOf('data-output-agent="pi"')<list.innerHTML.indexOf('First result'));
   assert.ok(list.innerHTML.indexOf('agent-brand-qwen crew-sub')<list.innerHTML.indexOf('<span>qwen-tool-start'));
   assert.ok(list.innerHTML.includes('aria-label="Qwen Code"'));
-  assert.ok(list.innerHTML.includes('>QW</span>'));
+  assert.ok(list.innerHTML.includes('assets/agent-brands/qwen.svg'));
   assert.match(list.innerHTML,/class="ntext"/);
   assert.match(list.innerHTML,/与 Qwen Code协作/);
 });
