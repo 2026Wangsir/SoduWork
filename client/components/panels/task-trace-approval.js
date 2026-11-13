@@ -587,7 +587,7 @@
     }
   }
 
-  const boundStates = new WeakMap();
+  const boundStates = new WeakMap(), detailsEpochs = new WeakMap();
   function eligibleApprovalIds() {
     if (pendingEligibility) return pendingEligibility;
     const request = Promise.resolve().then(() => global.SoduWorkAPI.listApprovals('pending')).then(result => {
@@ -618,6 +618,7 @@
         if (epoch !== acceptanceEpoch || !block.isConnected) return;
         if (!eligible.has(id)) {
           block.dataset.approvalAccess = 'denied';
+          state.opts?.onApprovalDetails?.(id, null);
           concealUnauthorized(block, revision);
           return;
         }
@@ -628,11 +629,13 @@
       if (!item || requestId(item) !== id) throw new Error('审批记录不匹配');
       if (!block.isConnected) return;
       detailsByCard.set(block, item);
+      detailsEpochs.set(block, epoch);
       /*
        * Assignments identify review participants. Users who already decided retain read-only
        * results while other reviewers are pending.
        */
       const allowed = Boolean(item.assignment);
+      state.opts?.onApprovalDetails?.(id, item);
       block.dataset.approvalAccess = allowed ? 'allowed' : 'denied';
       if (!allowed) {
         concealUnauthorized(block, revision);
@@ -654,6 +657,7 @@
          * Remove the entry point when the server confirms the current account is not a reviewer.
          */
         block.dataset.approvalAccess = 'denied';
+        state.opts?.onApprovalDetails?.(id, null);
         concealUnauthorized(block, revision);
         return;
       }
@@ -761,6 +765,8 @@
       cardRoots.set(block, root);
       syncActions(block, state);
       syncAcceptanceMode(block, block.dataset.tfdAcceptanceChoice || 'manual');
+      const details = detailsByCard.get(block);
+      if (details && detailsEpochs.get(block) === acceptanceEpoch) state.opts?.onApprovalDetails?.(block.getAttribute('data-tfd-approval-id'), details);
       /* Creator-direct cards have no Hub approval details endpoint; treat them as available without a permission lookup. */
       if (String(block.getAttribute('data-tfd-approval-id') || '').startsWith('direct:')) {
         if (!block.dataset.approvalAccess) block.dataset.approvalAccess = 'allowed';
