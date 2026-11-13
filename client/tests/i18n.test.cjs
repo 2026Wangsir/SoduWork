@@ -87,6 +87,65 @@ test('model save outcomes and retry guidance follow every supported locale', () 
   }
 });
 
+test('requirement parsing warnings, tag controls, and built-in model names follow every supported locale', () => {
+  const c = client();
+  const phrases = [
+    '本地模型不能用于后台解析；原文已保留，请选择托管模型或手动填写',
+    '输入标签后按回车',
+    '添加标签',
+    '字节跳动 · 火山引擎方舟',
+    '阿里云百炼（通义）',
+    '智谱 GLM',
+    '月之暗面 Kimi',
+  ];
+  const expected = {
+    'en-US': [
+      'Local models cannot be used for server-side parsing. The original text is preserved; choose a hosted model or fill it in manually.',
+      'Press Enter after entering a tag', 'Add tag', 'Volcano Ark (Volcengine)',
+      'Alibaba Cloud Model Studio (Bailian)', 'Z.ai GLM', 'Moonshot AI (Kimi)',
+    ],
+    'ja-JP': [
+      'ローカルモデルはサーバー側の解析に使用できません。元のテキストは保持されています。ホスト型モデルを選択するか、手動で入力してください。',
+      'タグを入力して Enter キーを押してください', 'タグを追加', 'Volcano Ark (Volcengine)',
+      'Alibaba Cloud Model Studio (Bailian)', 'Z.ai GLM', 'Moonshot AI (Kimi)',
+    ],
+    'ko-KR': [
+      '로컬 모델은 서버 측 파싱에 사용할 수 없습니다. 원문은 보존되어 있으므로 호스팅 모델을 선택하거나 직접 입력하세요.',
+      '태그를 입력한 후 Enter를 누르세요', '태그 추가', 'Volcano Ark (Volcengine)',
+      'Alibaba Cloud Model Studio (Bailian)', 'Z.ai GLM', 'Moonshot AI (Kimi)',
+    ],
+  };
+  for (const [locale, values] of Object.entries(expected)) {
+    c.api.setLocale(locale);
+    assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), values, locale);
+  }
+  c.api.setLocale('zh-CN');
+  assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), phrases);
+});
+
+test('requirement creation card controls follow locale changes without translating user content', () => {
+  const c = client();
+  const phrases = ['加入需求池', '检查需求详情', '需求内容', '背景与说明', '完成标准', '基本信息',
+    '负责人', '优先级', '期望完成', '类型', '可见范围', '仅相关人', '标签', '创建需求',
+    '继续对话'];
+  const expected = {
+    'en-US': ['Add to Issues', 'Review issue details', 'Issue content', 'Context and description',
+      'Acceptance criteria', 'Basic information', 'Owner', 'Priority', 'Expected completion', 'Type',
+      'Visibility', 'Related people', 'Tags', 'Create issue', 'Continue chatting'],
+    'ja-JP': ['課題プールに追加', '課題の詳細を確認', '課題の内容', '背景と説明', '受け入れ基準',
+      '基本情報', '担当者', '優先度', '完了予定', '種類', '公開範囲', '関係者のみ', 'タグ',
+      '課題を作成', '会話を続ける'],
+    'ko-KR': ['이슈 풀에 추가', '이슈 세부 정보 검토', '이슈 내용', '배경 및 설명', '완료 기준',
+      '기본 정보', '담당자', '우선순위', '완료 예정', '유형', '공개 범위', '관련자만', '태그',
+      '이슈 생성', '대화 계속하기'],
+  };
+  for (const [locale, values] of Object.entries(expected)) {
+    c.api.setLocale(locale);
+    assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), values, locale);
+  }
+  c.api.setLocale('zh-CN');
+  assert.deepEqual(phrases.map(phrase => c.api.translateText(phrase)), phrases);
+});
 test('company visibility copy distinguishes related people in all supported locales', () => {
   const c = client();
   const phrases = ['同公司可见', '同公司成员可查看需求内容；执行会话和日志仍按原有权限访问。',

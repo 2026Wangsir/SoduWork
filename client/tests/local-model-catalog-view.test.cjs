@@ -62,6 +62,19 @@ test('a saved local model is counted once and remains editable despite its catal
   assert.equal(JSON.stringify(catalog), before, 'presentation does not rewrite persisted or execution catalogs');
 });
 
+test('canonical built-in provider names are localizable while renamed providers remain user content', () => {
+  const f = fixture();
+  f.evaluate(`_mdData.providers.push(
+    {id:'volcengine', name:'字节跳动 · 火山引擎方舟', builtin:true, baseUrl:'https://ark.example/v1', modelNames:[]},
+    {id:'company-gateway', name:'公司网关', builtin:true, baseUrl:'https://gateway.example/v1', modelNames:[]}
+  ); _mdOpen = 'volcengine';`);
+  assert.match(f.nav('volcengine'), /data-i18n="字节跳动 · 火山引擎方舟"/);
+  assert.doesNotMatch(f.nav('volcengine'), /data-user-content/);
+  assert.match(f.detail('volcengine'), /data-i18n="字节跳动 · 火山引擎方舟"/);
+  assert.match(f.nav('company-gateway'), /data-user-content/);
+  assert.doesNotMatch(f.nav('company-gateway'), /data-i18n=/);
+});
+
 test('editing a local model without changing its ID does not collide with its saved mirror', () => {
   const f = fixture();
   f.apply({ original: 'shared-model', name: 'shared-model', label: 'Edited local label' });
