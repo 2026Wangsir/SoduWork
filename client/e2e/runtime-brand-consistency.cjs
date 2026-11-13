@@ -40,18 +40,20 @@ if (typeof electron === 'string') {
       const id=AgentBrand.canonical(${JSON.stringify(id)}),template=document.createElement('template');
       template.innerHTML=AgentBrand.html(id);
       const expected=template.content.firstElementChild;
-      const signature=el=>({id:el.dataset.agentBrand,label:el.getAttribute('aria-label'),role:el.getAttribute('role'),
-        mark:el.textContent.trim(),paths:[...el.querySelectorAll('path')].map(p=>p.getAttribute('d'))});
-      const mark=icon.querySelector('.agent-monogram,svg'),bounds=icon.getBoundingClientRect(),m=mark?.getBoundingClientRect();
+      const signature=el=>{const mark=el.querySelector('.agent-monogram,img,svg');return {id:el.dataset.agentBrand,
+        label:el.getAttribute('aria-label'),role:el.getAttribute('role'),mark:el.textContent.trim(),kind:mark?.tagName.toLowerCase() || '',
+        src:mark?.tagName==='IMG'?mark.getAttribute('src') || '':'',paths:[...el.querySelectorAll('path')].map(p=>p.getAttribute('d'))};};
+      const mark=icon.querySelector('.agent-monogram,img,svg'),bounds=icon.getBoundingClientRect(),m=mark?.getBoundingClientRect();
       const range=document.createRange();if(mark)range.selectNodeContents(mark);const text=mark?.tagName==='SPAN'?range.getBoundingClientRect():m;
+      const loaded=!mark||mark.tagName!=='IMG'||(mark.complete&&mark.naturalWidth>0);
       return {actual:signature(icon),expected:signature(expected),visible:icon.checkVisibility(),
         unobscured:[1,bounds.width/2,bounds.width-1].every(x=>icon.contains(document.elementFromPoint(bounds.x+x,bounds.y+bounds.height/2))),
-        bounds:{width:bounds.width,height:bounds.height},fits:!!text&&text.left>=bounds.left-1&&text.right<=bounds.right+1&&text.top>=bounds.top-1&&text.bottom<=bounds.bottom+1};
+        bounds:{width:bounds.width,height:bounds.height},loaded,fits:!!text&&text.left>=bounds.left-1&&text.right<=bounds.right+1&&text.top>=bounds.top-1&&text.bottom<=bounds.bottom+1};
     })()`);
     report.checks.push({ surface, selector, id, ...result });
     try {
       assert.equal(result.error, undefined); assert.deepEqual(result.actual, result.expected);
-      assert.equal(result.visible, true); assert.equal(result.fits, true); assert.equal(result.unobscured, true);
+      assert.equal(result.visible, true); assert.equal(result.loaded, true); assert.equal(result.fits, true); assert.equal(result.unobscured, true);
       assert.notEqual(result.actual.mark, '•');
     } catch (_) { report.failures.push({ surface, selector, id, result }); }
   }

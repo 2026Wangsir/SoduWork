@@ -81,8 +81,6 @@
     "docs/releases/hub-1.0.15.md",
     "docs/releases/internal-1.13.12-hub-1.0.14.md",
     "docs/releases/internal-hub-1.0.13-client-1.13.11.md",
-    "client/assets/agent-brands/kimi.png",
-    "client/assets/agent-brands/kimi-LICENSE.txt",
     "hub-backend/test_mobile_download.py",
     "docs/operations/macos-packaging-improvement-20261106.md",
     "docs/operations/macos-packaging-stability-plan.md",

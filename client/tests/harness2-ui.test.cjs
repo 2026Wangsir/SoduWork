@@ -17,7 +17,7 @@ test('Harness² aliases identify the same runtime in cards and response attribut
   brand.transcript().before(parts, { agentId: 'harness2', runId: 'run-1' }, 'answer');
   assert.match(parts.join(''), /data-output-agent="harness2"/);
   assert.match(parts.join(''), /Google Harness²/);
-  assert.match(brand.html('harness2'), />H2<\/span>/);
+  assert.match(brand.html('harness2'), /<img src="assets\/agent-brands\/google\.svg"/);
 });
 
 test('plugin routes normalize Harness² spellings only when the runtime is in the catalog', () => {

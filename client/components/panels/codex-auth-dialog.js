@@ -60,7 +60,8 @@
     const card = node('section', 'codex-auth-card');
     const head = node('header', 'codex-auth-head');
     const brand = node('span', 'codex-auth-brand');
-    const logo = node('img'); logo.src = 'assets/agent-brands/chatgpt.svg'; logo.alt = ''; brand.append(logo);
+    const logo = node('img'); logo.src = 'assets/agent-brands/codex.svg'; logo.alt = '';
+    logo.setAttribute('aria-hidden', 'true'); brand.append(logo);
     const heading = node('div', 'codex-auth-heading');
     const title = node('h2', '', '连接 Codex'); title.id = 'codexAuthTitle';
     const machine = node('p', 'codex-auth-machine'); machine.textContent = String(opts.machine || tr('本机'));

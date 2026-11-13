@@ -113,16 +113,18 @@ function fixture(t, initial = {}) {
   };
 }
 
-test('available and missing runtime marks share the Agent management identity without an image map', async t => {
+test('available and missing runtime marks share the Agent management identity', async t => {
   const f = fixture(t), pending = f.click(); await settle();
   f.calls[0].resolve(inventory('harness2', { missing: [{ id: 'codex', displayName: 'Codex' }] }));
   await pending;
-  assert.deepEqual(f.pop.querySelectorAll('[data-runtime]').map(row =>
-    row.querySelector('.agent-monogram').textContent), ['PI', 'H2']);
+  assert.deepEqual(f.pop.querySelectorAll('[data-runtime]').map(row => {
+    const mark = row.querySelector('img') || row.querySelector('.agent-monogram');
+    return mark.tagName.toLowerCase() === 'img' ? mark.attributes.src : mark.textContent;
+  }), ['assets/agent-brands/pi.svg', 'assets/agent-brands/google.svg']);
   const missing = f.pop.querySelector('#nchatRuntimeMissing');
-  assert.equal(missing.querySelector('.agent-monogram').textContent, 'CX');
+  assert.equal(missing.querySelector('img').attributes.src, 'assets/agent-brands/codex.svg');
   assert.equal(missing.querySelector('.agent-brand').attributes['aria-label'], 'Codex');
-  assert.equal(f.pop.querySelectorAll('img').length, 0);
+  assert.equal(f.pop.querySelectorAll('img').length, 3);
   assert.doesNotMatch(missing.textContent, /•/);
 });
 
@@ -137,7 +139,7 @@ test('unknown runtime marks use the generic shared vector in available and missi
   assert.equal(custom.querySelectorAll('svg').length, 1);
   const missing = f.pop.querySelector('#nchatRuntimeMissing');
   assert.equal(missing.querySelectorAll('svg').length, 1);
-  assert.equal(f.pop.querySelectorAll('img').length, 0);
+  assert.equal(f.pop.querySelectorAll('img').length, 1);
   assert.doesNotMatch(missing.textContent, /•/);
 });
 
