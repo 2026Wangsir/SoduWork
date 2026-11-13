@@ -25,6 +25,8 @@ let _mdMyModels = [];               /* Current custom-model edits. */
 let _mdOpen = '';                   /* Expand one provider at a time. */
 let _mdQuery = '';
 let _mdDirty = false;
+let _mdLocalDirty = false;
+let _mdManagedDirty = false;
 let _mdTest = {};                   /* providerId -> {state:'ing'|'ok'|'bad', detail} */
 let _mdEditor = '';                 /* A native child window edits one provider; empty selection indicates the overview. */
 let _mdNew = null;                  /* New-provider draft. */
@@ -105,7 +107,8 @@ async function _mdLoad() {
   const loadId = ++_mdLoadId;
   const current = () => loadId === _mdLoadId && document.getElementById('mdBody') === box;
   const previous = { data: _mdData, keys: _mdKeyEdits, models: _mdMyModels,
-    dirty: _mdDirty, editor: _mdEditor, draft: _mdNew };
+    dirty: _mdDirty, localDirty: _mdLocalDirty, managedDirty: _mdManagedDirty,
+    editor: _mdEditor, draft: _mdNew };
   let timer, rendering = false;
   _mdLoadState = 'loading';
   box.setAttribute('aria-busy', 'true');
@@ -134,14 +137,15 @@ async function _mdLoad() {
     }
     _mdKeyEdits = {};
     _mdMyModels = r.myModels.slice();
-    _mdDirty = false;
+    _mdDirty = false; _mdLocalDirty = false; _mdManagedDirty = false;
     _mdRender();
     _mdLoadState = 'ready';
     return true;
   } catch (error) {
     if (!current()) return false;
     _mdData = previous.data; _mdKeyEdits = previous.keys; _mdMyModels = previous.models;
-    _mdDirty = previous.dirty; _mdEditor = previous.editor; _mdNew = previous.draft;
+    _mdDirty = previous.dirty; _mdLocalDirty = previous.localDirty; _mdManagedDirty = previous.managedDirty;
+    _mdEditor = previous.editor; _mdNew = previous.draft;
     _mdLoadState = 'error';
     const message = rendering ? '页面显示遇到问题，请重试。已有模型配置未被修改。' :
       error?.code === 'MODEL_CATALOG_INVALID' ? '模型清单格式异常，请重试。已有模型配置未被修改。' :
@@ -349,6 +353,7 @@ function _mdAddService() {
     personal: true, localOnly: true, authMode: 'key', modelNames: [], note: '', myKeySet: false, keySet: false };
   _mdEditor = '__new__:' + id;
   _mdOpen = id;
+  _mdMarkOwnedDirty(_mdNew);
   _mdRender();
 }
 
@@ -364,6 +369,14 @@ function _mdTouchProvider(pid, patch) {
   Object.assign(p, patch || {});
   p._capStale = true;
   for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
+  _mdMarkOwnedDirty(p);
+}
+
+/* Track ownership so a local edit never becomes an implicit Hub replacement. */
+function _mdMarkOwnedDirty(providerOrId) {
+  const provider = typeof providerOrId === 'string' ? _mdProvider(providerOrId) : providerOrId;
+  if (provider?.localOnly === true) _mdLocalDirty = true;
+  else _mdManagedDirty = true;
   _mdDirty = true; _mdMark();
 }
 
@@ -395,7 +408,7 @@ function _mdBind(box) {
     for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
     if (el.value.trim()) _mdKeyEdits[pid] = el.value.trim();
     else delete _mdKeyEdits[pid];
-    _mdMark();
+    _mdMarkOwnedDirty(provider || pid);
   }));
   box.querySelectorAll('[data-pname]').forEach(el => el.addEventListener('input', () =>
     _mdTouchProvider(el.getAttribute('data-pname'), { name: el.value })));
@@ -418,7 +431,8 @@ function _mdBind(box) {
   box.querySelectorAll('[data-pdelete]').forEach(el => el.addEventListener('click', () => {
     if (el.isConnected === false) return;
     const pid = el.getAttribute('data-pdelete');
-    if (!_mdProvider(pid)) return;
+    const provider = _mdProvider(pid);
+    if (!provider) return;
     if (_mdDeletePending !== pid) { _mdDeletePending = pid; _mdRender(); return; }
     _mdDeletePending = '';
     _mdData.providers = (_mdData.providers || []).filter((p) => p.id !== pid);
@@ -426,9 +440,9 @@ function _mdBind(box) {
     _mdDrafts.delete(pid);
     if (_mdNew?.id === pid) _mdNew = null;
     for (const key of _mdChecks.keys()) if (JSON.parse(key)[0] === pid) _mdChecks.delete(key);
-    _mdKeyEdits[pid] = null; _mdDirty = true;
+    _mdKeyEdits[pid] = null; _mdMarkOwnedDirty(provider);
     _mdRender();
-    _mdSave(true);
+    _mdSave(false);
   }));
   box.querySelectorAll('[data-peye]').forEach(el => el.addEventListener('click', () => {
     const inp = box.querySelector('[data-pkey="' + el.getAttribute('data-peye') + '"]');
@@ -442,9 +456,9 @@ function _mdBind(box) {
     const pid = el.getAttribute('data-pclear');
     _mdKeyEdits[pid] = null;    /* null explicitly removes the personal key. */
     const p = _mdProvider(pid);
+    _mdMarkOwnedDirty(p || pid);
     el.textContent = p && p.addressOverridden ? '（保存后此地址将没有凭据）' : '（保存后回落到公司凭据）';
     el.disabled = true;
-    _mdMark();
     // Clearing a personal key is the removal action for built-in providers.
     // Persist it immediately so the provider leaves the usable/default list.
     const saved = await _mdSave(false);
@@ -461,7 +475,7 @@ function _mdBind(box) {
     _mdMyModels.splice(at, 1);
     if (_mdDrafts.get(pid)?.original === target.name) _mdDrafts.delete(pid);
     _mdChecks.delete(_mdCheckKey(pid, target.name));
-    _mdDirty = true; _mdRender();
+    _mdMarkOwnedDirty(_mdProvider(pid) || pid); _mdRender();
     // Removing a personal model is an explicit destructive action. Persist it
     // immediately so it does not reappear when the panel is reopened, and so a
     // stale model cannot remain selected in the conversation picker.
@@ -492,7 +506,7 @@ async function _mdDoTest(el) {
     if (_mdDirty || Object.keys(_mdKeyEdits).length) {
       const body = _mdPayload();
       await SoduWorkAPI.saveMyModels(body);
-      _mdKeyEdits = {}; _mdDirty = false;
+      _mdKeyEdits = {}; _mdDirty = false; _mdLocalDirty = false; _mdManagedDirty = false;
       _mdData = await SoduWorkAPI.myModels();
       if (_mdNew) {
         const added = (_mdData.providers || []).find((x) => x.personal && x.id === _mdNew.id);
@@ -523,7 +537,7 @@ async function _mdDoTest(el) {
 function _mdMark() {
   const btn = document.getElementById('mdSave');
   if (!btn) return;
-  const dirty = _mdDirty || Object.keys(_mdKeyEdits).length > 0;
+  const dirty = _mdDirty || _mdLocalDirty || _mdManagedDirty || Object.keys(_mdKeyEdits).length > 0;
   btn.disabled = !dirty || _mdLoadState !== 'ready';
   btn.textContent = dirty || _mdLoadState !== 'ready' ? '保存' : '已保存';
 }
@@ -538,15 +552,26 @@ function _mdPayload() {
     authMode: p.authMode || 'key', note: p.note || '', localOnly: p.localOnly === true }));
   const localProviders = all.filter(p => p.localOnly === true);
   const localIds = new Set(localProviders.map(p => p.id));
-  return { providers, models: _mdMyModels, keys: _mdKeyEdits, expectedRevision: _mdData && _mdData.revision,
-    localProviders, localModels: _mdMyModels.filter(m => m.localOnly === true || localIds.has(m.providerId)),
-    localKeys: Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => localIds.has(id))),
-    localRevision: _mdData && _mdData.localRevision };
+  const payload = {};
+  if (_mdManagedDirty) {
+    payload.providers = providers.filter(p => p.localOnly !== true);
+    payload.models = _mdMyModels.filter(m => m.localOnly !== true && !localIds.has(m.providerId));
+    payload.keys = Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => !localIds.has(id)));
+    payload.expectedRevision = _mdData && _mdData.revision;
+  }
+  if (_mdLocalDirty) {
+    payload.localProviders = localProviders;
+    payload.localModels = _mdMyModels.filter(m => m.localOnly === true || localIds.has(m.providerId));
+    payload.localKeys = Object.fromEntries(Object.entries(_mdKeyEdits).filter(([id]) => localIds.has(id)));
+    payload.localRevision = _mdData && _mdData.localRevision;
+  }
+  return payload;
 }
 
 async function _mdSave(closeAfter) {
   const btn = document.getElementById('mdSave');
   if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  let persisted = false;
   try {
     const p = _mdProvider(_mdOpen || _mdEditor);
     if (p && (!String(p.baseUrl || '').startsWith('http://') && !String(p.baseUrl || '').startsWith('https://'))) {
@@ -555,21 +580,30 @@ async function _mdSave(closeAfter) {
     if (p && p.personal && !String(p.name || '').trim()) throw new Error('请填写服务名称');
     const body = _mdPayload();
     await SoduWorkAPI.saveMyModels(body);
-    if (typeof petSay === 'function') petSay('模型配置存好了～');
-    await _mdLoad();
-    if (globalThis.ComposeModelPicker && typeof ComposeModelPicker.refresh === 'function') {
-      await ComposeModelPicker.refresh(true);
-    }
-    if (window.soduWorkAPI && soduWorkAPI.broadcast) {
-      soduWorkAPI.broadcast('models', { providerId: _mdEditor || '' });
-    }
-    if (closeAfter && window.soduWorkAPI && soduWorkAPI.closeDeskWindow) soduWorkAPI.closeDeskWindow();
-    return true;
+    persisted = true;
   } catch (e) {
     if (typeof petSay === 'function') petSay(_humanErr(e, '没存上'));
     if (btn) { btn.disabled = false; btn.textContent = '保存'; }
     return false;
   }
+  if (typeof petSay === 'function') petSay('模型配置存好了～');
+  try { await _mdLoad(); } catch (_) { /* Persistence already succeeded. */ }
+  try {
+    if (globalThis.ComposeModelPicker && typeof ComposeModelPicker.refresh === 'function') {
+      await ComposeModelPicker.refresh(true);
+    }
+  } catch (_) {
+    if (persisted && typeof petSay === 'function') petSay('模型配置已保存，但模型选择器刷新失败，请重新打开对话。');
+  }
+  try {
+    if (window.soduWorkAPI && soduWorkAPI.broadcast) {
+      soduWorkAPI.broadcast('models', { providerId: _mdEditor || '' });
+    }
+  } catch (_) { /* Do not turn a persisted change into a false failure. */ }
+  try {
+    if (closeAfter && window.soduWorkAPI && soduWorkAPI.closeDeskWindow) soduWorkAPI.closeDeskWindow();
+  } catch (_) { /* The workspace must remain usable after a provider save. */ }
+  return true;
 }
 
 // Source-owned messages keep count updates and language changes independent.

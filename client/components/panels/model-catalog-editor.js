@@ -138,7 +138,7 @@ function _mdApplyModel(editor) {
     if (old) _mdMyModels.splice(_mdMyModels.indexOf(old), 1, model); else _mdMyModels.push(model);
     _mdChecks.delete(_mdCheckKey(pid, name));
     if (original) _mdChecks.delete(_mdCheckKey(pid, original));
-    _mdDrafts.delete(pid); _mdDirty = true; _mdRender();
+    _mdDrafts.delete(pid); _mdMarkOwnedDirty(_mdProvider(pid) || pid); _mdRender();
   } catch (error) { petSay(error.message); }
 }
 async function _mdCheckModel(pid, name) {
