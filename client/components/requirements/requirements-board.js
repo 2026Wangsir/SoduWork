@@ -91,7 +91,7 @@
     if (!route) restoreCreateFocus();
     if (!route) { notify('对话入口尚未就绪，请稍后重试；也可以选择手动录入。'); return false; }
     const payload = {
-      tab: 'chat', newSession: true, pluginId: 'work.requirement.create', prefill: '/需求 ',
+      tab: 'chat', newSession: true, pluginId: 'work.requirement.create',
       triageStage: stage === 'ready' ? 'ready' : 'intake',
       contextPrompts: ['当前从需求池进入。请把这次对话整理成一条可协作的需求：明确目标、背景、完成标准和相关材料；信息不足时先询问，确认后再创建，不要直接开始执行。'],
     };

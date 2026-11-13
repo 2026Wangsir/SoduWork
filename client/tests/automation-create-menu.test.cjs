@@ -13,7 +13,7 @@ test('dialogue creation routes a fresh built-in automation action without dispat
  const routed=[],{c,calls}=setup({openCreateEntry:p=>routed.push(p)});
  assert.equal(await c._schCreateFromChat(),true);
  assert.equal(routed.length,1);assert.equal(routed[0].pluginId,'work.automation.create');assert.equal(routed[0].tab,'chat');assert.equal(routed[0].newSession,true);
- assert.equal(routed[0].prefill,'/自动化 ');assert.equal(routed[0].chatId,undefined);assert.equal(routed[0].taskId,undefined);
+ assert.equal(Object.hasOwn(routed[0],'prefill'),false);assert.equal(routed[0].chatId,undefined);assert.equal(routed[0].taskId,undefined);
  assert.match(routed[0].contextPrompts[0],/确认配置后才创建/);assert.equal(calls.filter(x=>x[0]==='close').length,1);
 });
 test('void shared routing result is success, not failure',async()=>{
