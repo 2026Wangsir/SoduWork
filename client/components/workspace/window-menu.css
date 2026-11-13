@@ -47,6 +47,8 @@ html[data-window-menu]:not([data-desk-panel="workspace"]) :is(#deskRoot,#setting
 html[data-window-sidebar-hidden][data-desk-panel="workspace"]{--ws-main-left:var(--ws-rail-w,52px)!important}
 html[data-window-sidebar-hidden] #workspaceShell{--ws-main-left:var(--ws-rail-w,52px);grid-template-columns:var(--ws-rail-w,52px) minmax(0,1fr)}
 html[data-window-sidebar-hidden] #workspaceShell .ws-side,html[data-window-sidebar-hidden] #wsResizer{display:none}
+/* macOS owns the application menu and exposes the same sidebar action there. */
+html[data-window-native-menu] .wm-sidebar{display:none}
 
 html[data-desk-panel="workspace"] .window-menu{
   background:var(--ws-side);

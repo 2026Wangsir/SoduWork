@@ -438,6 +438,33 @@ test('held, composed and already-handled shortcuts do not dispatch actions', asy
   await settle(); assert.equal(f.captures.length, 0);
 });
 
+test('AltGraph text input does not dispatch commands or prevent character entry', async () => {
+  const runtime = fixture();
+  for (const [combo, key] of [['Ctrl+Alt+S', 'ś'], ['Ctrl+Alt+N', 'ń'], ['Ctrl+Alt+C', 'ć']]) {
+    const event = runtime.press(combo, { key, getModifierState: modifier => modifier === 'AltGraph' });
+    assert.equal(event.defaultPrevented, false, key);
+    assert.equal(event.immediateStopped, false, key);
+  }
+  await settle();
+  assert.deepEqual(runtime.routes, []);
+  assert.deepEqual(runtime.screenEdits, []);
+  assert.deepEqual(runtime.captures, []);
+  assert.deepEqual(runtime.copies, []);
+});
+
+test('shortcut recording ignores AltGraph text input without changing the draft', () => {
+  const runtime = fixture();
+  runtime.api.open();
+  runtime.click('shortcutEdit', 'new-chat');
+  const event = runtime.press('Ctrl+Alt+L', { key: 'ł', target: runtime.recorder,
+    getModifierState: modifier => modifier === 'AltGraph' });
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(event.immediateStopped, false);
+  assert.equal(runtime.api.isRecording(), true);
+  runtime.click('shortcutSave', 'new-chat');
+  assert.equal(runtime.api.getBinding('new-chat'), 'Ctrl+N');
+});
+
 test('focus search skips hidden and disabled inputs and does not consume unavailable search', () => {
   const hidden = element('INPUT'), disabled = element('INPUT'), visible = element('INPUT'); hidden.hidden = true; disabled.disabled = true;
   const f = fixture({ searchInputs: [hidden, disabled, visible] });

@@ -78,6 +78,15 @@ test('uses letter key codes when macOS Option produces a composed symbol', () =>
   assert.equal(ShortcutSettings.comboFromKeyEvent({ metaKey: true, altKey: true, key: '˚', code: 'KeyK' }), 'Ctrl+Alt+K');
 });
 
+test('AltGraph character input is not normalized into a Ctrl+Alt shortcut', () => {
+  for (const [key, code] of [['ś', 'KeyS'], ['ń', 'KeyN'], ['ć', 'KeyC']]) {
+    const event = { key, code, ctrlKey: true, altKey: true,
+      getModifierState: modifier => modifier === 'AltGraph' };
+    assert.equal(ShortcutSettings.comboFromKeyEvent(event), '', key);
+    assert.equal(ShortcutSettings.comboFromKeyEvent({ ...event, getModifierState: () => false }), 'Ctrl+Alt+' + code.slice(3));
+  }
+});
+
 test('protects text entry and reserved application or operating-system actions', () => {
   for (const combo of ['A', 'Shift+N', 'Enter', 'Space', 'Escape', 'Tab', 'Backspace', 'Delete', 'Meta+N']) {
     assert.notEqual(ShortcutSettings.bindingError(combo), '', combo);

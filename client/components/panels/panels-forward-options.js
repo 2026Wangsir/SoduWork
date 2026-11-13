@@ -254,6 +254,7 @@ async function _fwdLoadLocalAgents(tid, task, box, seq) {
       if (window.ForwardSelect?.focus) window.ForwardSelect.focus(select); else select?.focus();
     }
   };
+  const localModels = _fwdLocalModelChoices();
   try {
     const result = await window.RequirementSessionChoice.localAgents(task, _fwdOptions, agent => {
       if (!current()) return;
@@ -265,6 +266,7 @@ async function _fwdLoadLocalAgents(tid, task, box, seq) {
     if (current()) _fwdLocalFailures = result?.failures || [];
   } catch (_) { /* The Hub directory remains usable when local detection fails. */ }
   if (!current()) return;
+  _fwdMergeLocalModelChoices(await localModels);
   _fwdLocalLoading = false;
   if (document.getElementById('fwdConfirm')?.dataset.idleLabel == null) paint();
   else _fwdLocalPaintPending = true;
@@ -355,6 +357,40 @@ function _fwdChoiceIsCurrent(choice) {
   return false;
 }
 
+function _fwdLocalModelAllowed(agent) {
+  if (agent?.remote === true || agent?.locationMode === 'remote') return false;
+  return agent?.localConversationAvailable === true || agent?.executionSource === 'conversation' ||
+    (agent?.local === true && agent?.remote !== true);
+}
+
+function _fwdCanPickModel(agent) {
+  if (!agent) return false;
+  return agent.modelPick !== false || (_fwdLocalModelAllowed(agent) && agent.localModelPick === true);
+}
+
+async function _fwdLocalModelChoices() {
+  const bridge = window.soduWorkAPI?.localModels;
+  if (!bridge || typeof bridge.get !== 'function') return [];
+  try {
+    const catalog = await bridge.get();
+    return (Array.isArray(catalog?.usable) ? catalog.usable : [])
+      .filter(row => row && row.localOnly === true && row.modality !== 'image' && row.modality !== 'video')
+      .map(row => ({ ...row, name: String(row.name || row.id || ''), source: 'local', localOnly: true }))
+      .filter(row => row.name);
+  } catch (_) {
+    // A secure-store failure must not hide the Hub catalog or make remote
+    // execution appear unavailable.
+    return [];
+  }
+}
+
+function _fwdMergeLocalModelChoices(rows) {
+  if (!rows.length || !_fwdOptions) return;
+  const current = Array.isArray(_fwdOptions.modelOptions) ? _fwdOptions.modelOptions : [];
+  const seen = new Set(current.map(row => String(row?.name || '')));
+  _fwdOptions.modelOptions = current.concat(rows.filter(row => !seen.has(row.name)));
+}
+
 function _fwdSyncConfirm(tid) {
   const decision = document.getElementById('fwdDecision');
   const button = document.getElementById('fwdConfirm');
@@ -384,9 +420,15 @@ function _fwdSyncConfirm(tid) {
   }
   const title = choice.name || '';
   const agent = choice.type === 'direct' ? _fwdSubstrateOf(choice.id) : null;
-  if (!agent || agent.modelPick === false) _fwdModel = '';
-  const modelState = _fwpModelState(_fwdOptions, _fwdModel);
-  const modelHtml = agent && agent.modelPick !== false && (modelState.models.length || modelState.stale)
+  const localAllowed = _fwdLocalModelAllowed(agent);
+  const canPickModel = _fwdCanPickModel(agent);
+  if (!canPickModel) _fwdModel = '';
+  if (!localAllowed && String(_fwdModel).startsWith('local:')) _fwdModel = '';
+  const modelOptions = localAllowed
+    ? _fwdOptions?.modelOptions
+    : (_fwdOptions?.modelOptions || []).filter(row => row?.localOnly !== true && !String(row?.name || '').startsWith('local:'));
+  const modelState = _fwpModelState({ ...(_fwdOptions || {}), modelOptions }, _fwdModel);
+  const modelHtml = canPickModel && (modelState.models.length || modelState.stale)
     ? '<label class="fwd-model"><span>本次模型</span><select id="fwdModel"' + (busy ? ' disabled' : '') + '>' +
       _fwpModelOptions(modelState, _fwpDefaultModelLabel(_fwdOptions, agent)) +
       '</select></label>' : '';
@@ -715,7 +757,7 @@ async function _fwdConfirm(tid) {
   if (_fwdTab === 'mate') return _handoffTo(tid, choice.id, choice.name);
   if (choice.type === 'native') return _dispatchNativeTo(tid);
   if (choice.type === 'direct') {
-    if (_fwdSubstrateOf(choice.id)?.modelPick !== false && _fwpModelState(_fwdOptions, _fwdModel).stale) {
+    if (_fwdCanPickModel(_fwdSubstrateOf(choice.id)) && _fwpModelState(_fwdOptions, _fwdModel).stale) {
       _fwdSyncConfirm(tid);
       _fwdSetStatus('原模型已不可用，请重新选择', true);
       document.getElementById('fwdModel')?.focus();

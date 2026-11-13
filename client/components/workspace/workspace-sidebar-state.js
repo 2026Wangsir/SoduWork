@@ -532,7 +532,7 @@
     function forgetMany(ids, { preserveArchivedProjects = false, preserveProjectIds = [] } = {}) {
       // Removing native history must retain organization of its independent account record.
       const removed = references(unique(ids), [], false);
-      if (!removed.size) return;
+      if (!removed.size) return true;
       const preserved = new Set(unique(preserveProjectIds));
       commit(next => {
         next.pins = next.pins.filter(id => !removed.has(id));
@@ -542,6 +542,7 @@
           project.chatIds = project.chatIds.filter(id => !removed.has(id));
         }
       });
+      return true;
     }
     function view(items) {
       refresh();
@@ -741,7 +742,7 @@
           remember(next, [item]);
         });
       },
-      forget(id) { forgetMany([id]); },
+      forget(id) { return forgetMany([id]); },
       forgetMany,
     };
   }

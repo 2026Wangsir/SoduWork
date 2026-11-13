@@ -97,6 +97,9 @@
     'domain-modeling': [
       ['领域建模', '梳理业务概念、关系、规则和系统边界。'], ['Domain Modeling', 'Define business concepts, relationships, rules and system boundaries.'],
       ['ドメインモデリング', '業務概念、関係、ルール、システム境界を整理します。'], ['도메인 모델링', '업무 개념, 관계, 규칙, 시스템 경계를 정리합니다.']],
+    grilling: [
+      ['方案追问', '逐项澄清方案中的未知条件、依赖和取舍。'], ['Plan Interview', 'Clarify unknowns, dependencies and trade-offs in a plan.'],
+      ['計画の聞き取り', '計画の未確定事項、依存関係、判断の選択肢を順に確認します。'], ['계획 질문', '계획의 미확정 사항, 의존성, 선택에 따른 장단점을 차례로 확인합니다.']],
     'grill-with-docs': [
       ['文档核查', '结合文档追问关键细节并验证设计假设。'], ['Document Review', 'Question key details and validate design assumptions against documentation.'],
       ['文書の精査', '文書を基に重要な詳細と設計上の前提を確認します。'], ['문서 점검', '문서를 바탕으로 핵심 세부사항과 설계 가정을 확인합니다.']],
