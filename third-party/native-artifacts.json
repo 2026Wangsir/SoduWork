@@ -57,10 +57,10 @@
       },
       {
         "id": "skills-bundled",
-        "component": "Project-owned bundled skill guides",
+        "component": "Project-owned and reviewed upstream skill guides",
         "role": "Skill resources declared in the public source profile",
-        "license": "MIT, project copyright MDiRi",
-        "evidence": "tools/distribution/PUBLIC-SOURCE.json skills; skills/THIRD-PARTY.md; root LICENSE"
+        "license": "MIT for project-owned, Matt Pocock and Superpowers skills; Apache-2.0 for frontend-design",
+        "evidence": "tools/distribution/PUBLIC-SOURCE.json skills; skills/THIRD-PARTY.md; per-skill LICENSE and UPSTREAM.md; third-party/manifest.json"
       },
       {
         "id": "third-party-notices",

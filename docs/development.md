@@ -84,7 +84,7 @@ npm start
 
 ## 技能和插件
 
-`skills/<name>/SKILL.md` 描述本项目自有技能；`hub-backend/plugins/*.json` 提供通用插件与工作流。遵循[插件协议](plugin-authoring.md)保持版本不可变、权限最小化及导入审查。新增内置技能还需要显式更新 `tools/distribution/PUBLIC-SOURCE.json` 的发布范围。
+`skills/<name>/SKILL.md` 描述内置技能，包括项目自有指南和已核对来源的上游开发技能，见[技能目录](../skills/README.zh-CN.md)；`hub-backend/plugins/*.json` 提供通用插件与工作流。遵循[插件协议](plugin-authoring.md)保持版本不可变、权限最小化及导入审查。新增内置技能还需要显式更新 `tools/distribution/PUBLIC-SOURCE.json` 的发布范围，并保留原始许可和来源说明。
 
 模型、Codex 等执行器及外部插件使用用户自行配置的凭据和授权。不要把外部商业技能、真实密钥、组织地址或业务样本加入示例。
 

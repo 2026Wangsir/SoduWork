@@ -84,7 +84,7 @@ Run `npm test` and `npm run check:layout` in `client/`. Electron end-to-end chec
 
 ## Skills and plugins
 
-Project-owned skills live at `skills/<name>/SKILL.md`. Generic plugins and workflows live in `hub-backend/plugins/*.json`. Follow the [plugin protocol](plugin-authoring.en.md) for immutable versions, minimal permissions, and import review. Adding a bundled skill also requires explicitly updating the release scope in `tools/distribution/PUBLIC-SOURCE.json`.
+Bundled skills live at `skills/<name>/SKILL.md`; see the [skill catalog](../skills/README.md) for project-owned guides and reviewed upstream development skills. Generic plugins and workflows live in `hub-backend/plugins/*.json`. Follow the [plugin protocol](plugin-authoring.en.md) for immutable versions, minimal permissions, and import review. Adding a bundled skill also requires explicitly updating the release scope in `tools/distribution/PUBLIC-SOURCE.json` and retaining its original license and provenance.
 
 Models, executors such as Codex, and imported plugins use credentials and permissions configured by the user. Do not include external commercial skills, real credentials, organization addresses, or business data in examples.
 

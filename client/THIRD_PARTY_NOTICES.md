@@ -90,4 +90,10 @@ Original licenses for marked, highlight.js (BSD-3-Clause), jsdiff, diff2html,
 DOMPurify, CodeMirror and xterm remain alongside their files in vendor/. The
 complete diff2html 3.4.56 MIT notice includes its original copyright.
 
-The first source release does not bundle third-party Skill suites or official platform documentation snapshots. Runtime dependencies and compatibility adapters retain their applicable original notices.
+The development skill bundle includes fixed-version Matt Pocock and Superpowers
+guides under MIT and Anthropic frontend-design under Apache-2.0. Each skill
+retains its original license, UPSTREAM.md, and any adaptation records. See
+../skills/THIRD-PARTY.md and ../third-party/manifest.json for the reviewed scope
+and resource hashes. Other skill suites and official platform documentation
+snapshots remain excluded. Runtime dependencies and compatibility adapters
+retain their applicable original notices.
