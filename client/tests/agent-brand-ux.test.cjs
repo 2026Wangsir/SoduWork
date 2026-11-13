@@ -6,6 +6,9 @@ const crypto = require('node:crypto');
 const brand = require('../components/panels/agent-brand');
 const brandAssetDir = path.join(__dirname, '../assets/agent-brands');
 const brandSources = JSON.parse(fs.readFileSync(path.join(brandAssetDir, 'sources.json'), 'utf8'));
+const attributes = fs.readFileSync(path.join(__dirname, '../../.gitattributes'), 'utf8');
+assert.match(attributes, /^client\/assets\/agent-brands\/\*\.svg text eol=lf$/m,
+  'brand artwork must retain LF bytes on Windows checkouts');
 
 for (const [id, relative] of Object.entries(brand.ICONS)) {
   const file = relative.replace(/^assets\/agent-brands\//, '');
