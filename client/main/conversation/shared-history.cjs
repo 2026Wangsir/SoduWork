@@ -90,9 +90,12 @@ function create({ app, session, identityOf = () => require('./requirement-contex
     }
     const ids = [...sources.keys()], links = [], captured = access.actor(app, identity);
     for (let offset = 0; offset < ids.length; offset += 200) {
-      const rows = await store.nativeRows(ids.slice(offset, offset + 200));
+      // Keep display identity after a local deletion so its account directory
+      // row cannot reappear as an unrelated conversation. This does not join
+      // lifecycle aliases or mutate the account original.
+      const rows = await store.nativeRows(ids.slice(offset, offset + 200), { includeDeleted: true });
       for (const row of rows) {
-        if (!isNative(row) || row.cached || row.deleted) continue;
+        if (!isNative(row) || row.cached) continue;
         // A display join uses the same original Hub/account provenance as the
         // archive read boundary, plus existing execution-owner conflict checks.
         if (row.creator?.account !== account) continue;

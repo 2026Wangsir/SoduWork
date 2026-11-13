@@ -121,10 +121,19 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(output, 'after-reopen.png'), (await win.webContents.capturePage()).toPNG());
   report.cases.push('Service restart, native source rebind and real page reload retain the deletion and preserve requirement/output records.');
   await sync.close(); online = false;
+  const originalActor = actor;
   const [local] = await shared.register([{ id: 'shared-copy', cached: true, title: 'Shared local copy',
-    source: { id: 'cloud-original', account: 'old-account' } }]);
+    source: { id: 'cloud-original', account: require('../main/device-auth-request').accountId(originalActor), hub: originalActor.hub } }]);
   await shared.store.cache(local.id, [{ role: 'assistant', text: 'Complete local transcript' }], { expectedRevision: local.replicaRevision });
-  actor = require('../tests/helpers/platform-session-fixture.cjs').identity('two');
+  actor = { ...require('../tests/helpers/platform-session-fixture.cjs').identity('two'), hub: originalActor.hub };
+  captured = baseActor(app, actor);
+  await load(); await js('WorkspaceShell.refreshConversationHistory()');
+  assert.equal(await js('!!row("shared-copy")'), false);
+  assert.equal(await shared.open(local.id), null, 'Another account cannot read the original account cached transcript');
+  assert.equal((await shared.store.get(local.id)).deleted, false, 'Account isolation must not delete the cached copy');
+  assert.equal(writes, 1);
+  report.cases.push('A second account on the same Hub cannot list or open another account cached transcript, and no deletion is performed.');
+  actor = originalActor;
   captured = baseActor(app, actor);
   await load(); await until('!!row("shared-copy")');
   const view = await shared.open(local.id);
@@ -137,7 +146,7 @@ app.whenReady().then(async () => {
   assert.equal((await js('soduWorkAPI.piSession.archivedHistory()')).chats.some(row => row.id === local.id), true);
   assert.equal((await js('soduWorkAPI.piSession.restoreHistory("shared-copy")')).ok, true);
   await load(); await until('!!row("shared-copy")');
-  report.cases.push('A second account reads and archives a local copy offline; the archive entry and restore IPC remain available.');
+  report.cases.push('The original account reads and archives its local copy offline; the archive entry and restore IPC remain available.');
   await click('[data-chat-id="shared-copy"] + .ws-chat-actions .ws-chat-more');
   await click('.ws-chat-menu:not([hidden]) .ws-chat-delete');
   await until('!!document.querySelector(".app-confirm-dialog[open]")');

@@ -282,14 +282,14 @@ function create(file, { maxImportBytes = 512 * 1024 * 1024 } = {}) {
       });
     },
     get: id => project(resolve(id)),
-    nativeRows(ids) {
+    nativeRows(ids, { includeDeleted = false } = {}) {
       if (!Array.isArray(ids) || ids.length > 200) throw Error('Invalid native history batch');
       const wanted = [...new Set(ids.map(key))];
       if (!wanted.length) return [];
       // Only explicit native identities participate. Download origin locators
       // are deliberately absent from this lookup and remain independent copies.
       return projectPage(db.prepare(`SELECT DISTINCT r.* FROM replicas r JOIN aliases a ON r.id=a.replica
-        WHERE a.alias IN (${wanted.map(() => '?').join(',')}) AND r.deleted=0
+        WHERE a.alias IN (${wanted.map(() => '?').join(',')}) ${includeDeleted === true ? '' : 'AND r.deleted=0'}
         AND coalesce(json_extract(r.data,'$.cached'),0)=0`).all(...wanted));
     },
     remoteLifecycleRows({ account, sourceIds = [], taskIds = [] }) {

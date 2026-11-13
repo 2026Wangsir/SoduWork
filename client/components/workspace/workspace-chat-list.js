@@ -56,6 +56,15 @@
     const record = localRecords.get(canonicalLocalId(row?.id));
     return record && !record.archived && !record.deleted;
   };
+  function hiddenDisplaySource(row) {
+    const source = accountDisplayLinks.get(String(row?.id || ''));
+    if (!source) return false;
+    const id = canonicalLocalId(source);
+    const pending = lifecycle.get(source) || lifecycle.get(id);
+    if (pending) return pending.hidden;
+    const record = localRecords.get(id);
+    return Boolean(record && (record.archived || record.deleted));
+  }
   const historyText = (key, fallback) => global.SoduWorkI18n?.t(key, fallback) || fallback;
   function rowIds(row, fallback) {
     return [...new Set([fallback, row?.id, row?.localId,
@@ -74,6 +83,14 @@
       }
     } catch (_) { /* The native bridge may be unavailable during teardown. */ }
     return ids;
+  }
+  function activeLifecycleTarget(applied, selection) {
+    if (ctx.active !== selection.panel) return false;
+    // A previous native panel may outlive navigation while its IPC settles.
+    // Read runtime aliases only if the sidebar still has the same selection.
+    const ids = ctx.activeChatId === selection.id ? activeConversationIds() : rowIds({ id: ctx.activeChatId });
+    return [...ids].some(activeId => applied.ids.some(id => id === activeId || selectedChat(activeId, id))) ||
+      hiddenRow({ id: ctx.activeChatId });
   }
   async function openNewConversation() {
     const payload = { newSession: true, tab: 'chat' };
@@ -264,7 +281,7 @@ async function deleteHistoryChat(id) {
     const key = String(id || '');
     const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
     if (!key || !api || typeof api.deleteHistory !== 'function') return false;
-    const activeIds = activeConversationIds();
+    const selection = { id: ctx.activeChatId, panel: ctx.active };
     syncHistoryOwner();
     const epoch = historyEpoch, startedAt = mutationGeneration;
     const current = () => { syncHistoryOwner(); return epoch === historyEpoch; };
@@ -286,7 +303,7 @@ async function deleteHistoryChat(id) {
       // or the next "open conversation" would try to resume a missing archive.
       for (const id of applied.ids) ChatCollaborationStore.remove(id);
     }
-    if ([...activeIds].some(activeId => applied.ids.includes(activeId)) || hiddenRow({ id: ctx.activeChatId })) {
+    if (activeLifecycleTarget(applied, selection)) {
       ctx.activeChatId = '';
       await openNewConversation();
     }
@@ -298,7 +315,7 @@ async function archiveHistoryChat(id) {
     const key = String(id || '');
     const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
     if (!key || !api || typeof api.archiveHistory !== 'function') return false;
-    const activeIds = activeConversationIds();
+    const selection = { id: ctx.activeChatId, panel: ctx.active };
     syncHistoryOwner();
     const epoch = historyEpoch, startedAt = mutationGeneration;
     let got = null;
@@ -313,7 +330,7 @@ async function archiveHistoryChat(id) {
     const applied = applyLifecycle({ ...got, archived: true }, key, startedAt);
     if (!applied) return true;
     if (!forgetPinned(applied.ids, '这条会话暂时无法归档', true)) return false;
-    if ([...activeIds].some(activeId => applied.ids.includes(activeId)) || hiddenRow({ id: ctx.activeChatId })) {
+    if (activeLifecycleTarget(applied, selection)) {
       ctx.activeChatId = '';
       await openNewConversation();
     }
@@ -762,6 +779,9 @@ function _syncChatList(target, items, isPinned, pool) {
       }
     }
     return items.filter(row => {
+      // A verified account display counterpart must not resurrect a locally
+      // hidden source. This is presentation only, never a Hub lifecycle write.
+      if (hiddenDisplaySource(row)) return false;
       const source = accountDisplayLinks.get(String(row.id || ''));
       const representative = source && representatives.get(canonicalLocalId(source));
       if (representative) return representative.id === row.id;
