@@ -98,23 +98,18 @@ test('ordinary entry defaults to actionable while preserving other saved filters
   assert.equal(f.rendered.at(-1).state.scope, 'actionable');
 });
 
-test('personal action scope explains where active work remains and links to related work', () => {
+test('personal action scope keeps active work filtering without an extra banner', () => {
   const f = fixture({scope:'actionable'}, {now:Date.now()});
   f.context.tasks = [{id:'streaming',status:'doing',myRoles:['assignee'],ai:{state:'streaming'}}];
   f.api.open();
-  const hint = f.root.querySelector('#rqScopeHint');
-  assert.equal(hint.hidden,false);
-  assert.match(f.root.innerHTML,/当前轮到你操作/);
-  assert.match(f.root.innerHTML,/执行中或已提交验收的需求仍保留在/);
-  assert.match(f.root.innerHTML,/data-rq-scope="related">查看与我相关/);
+  assert.equal(f.root.children.has('#rqScopeHint'),false);
   const button = {dataset:{rqScope:'related'},hasAttribute:name=>name==='data-rq-scope',closest:()=>null};
   f.root.dispatchEvent({type:'click',target:{closest:selector=>selector==='button,[data-rq-open]'?button:null}});
-  assert.equal(hint.hidden,true);
   assert.equal(f.root.querySelector('#rqScope').value,'related');
   assert.match(f.root.querySelector('.hb-body').innerHTML,/data-hbid="streaming"/);
 });
 
-test('scope help uses tooltips without changing scope membership, counts or the existing action hint', () => {
+test('scope help uses tooltips without changing scope membership or counts', () => {
   const f = fixture({}, {now:Date.now()});
   f.context.tasks = [
     {id:'created',status:'todo',myRoles:['creator']},
@@ -135,7 +130,7 @@ test('scope help uses tooltips without changing scope membership, counts or the 
     const actual = [...f.root.querySelector('.hb-body').innerHTML.matchAll(/data-hbid="([^"]+)"/g)].map(match=>match[1]).sort();
     assert.deepEqual(actual,ids);
     assert.equal(f.root.querySelector('#hbCount').textContent,'· '+ids.length+' 条');
-    assert.equal(f.root.querySelector('#rqScopeHint').hidden,scope!=='actionable');
+    assert.equal(f.root.children.has('#rqScopeHint'),false);
     if (['related','all'].includes(scope)) assert.equal(f.root.querySelector('#rqScope').getAttribute('title'),f.context.Requirements.scopeDescriptions[scope]);
   }
   const scopes = f.root.querySelector('.rq-scopes').innerHTML;
@@ -148,7 +143,7 @@ test('scope help uses tooltips without changing scope membership, counts or the 
   assert.match(f.root.querySelector('#rqArchiveEntry').getAttribute('title'),/返回/);
   change('rqScope','related');
   assert.equal(f.root.querySelector('#hbCount').textContent,'· 已归档 · 1 条');
-  assert.equal(f.root.querySelector('#rqScopeHint').hidden,true);
+  assert.equal(f.root.children.has('#rqScopeHint'),false);
 });
 
 test('entering the pool reconciles a stale failure without rerunning the requirement', async () => {

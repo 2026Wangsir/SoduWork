@@ -58,7 +58,7 @@ app.whenReady().then(async()=>{
     })()`);
     const personal=['attention-review','explicit-request','manual-submit','ordinary-manual','own-review'];
     assert.deepEqual(await ids(),personal);
-    assert.match(await js("document.querySelector('#rqScopeHint').textContent"),/已提交验收的需求仍保留在“与我相关”/);
+    assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     assert.equal(await js('JSON.stringify(tasks)===beforeReviewRows'),true);
     report.checks.push('Submitted manual, agent and legacy deliveries leave executor actions; pending personal review, manual submission and explicit attention remain');
 
@@ -71,7 +71,7 @@ app.whenReady().then(async()=>{
     await screenshot('after-manual-submission');
     report.checks.push('The production board submit action runs once and removes a doing task from personal actions after the Hub projection enters reviewing');
 
-    await click('#rqScopeHint [data-rq-scope="related"]');
+    await click('.rq-scopes [data-rq-scope="related"]');
     const related=[...personal,'submitted-agent','submitted-legacy','submitted-manual'].sort();
     assert.deepEqual(await ids(),related);
     await click('.hb-body [data-rq-open="manual-submit"]');

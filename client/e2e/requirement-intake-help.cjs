@@ -42,7 +42,7 @@ app.whenReady().then(async()=>{
     assert.deepEqual(await js("[...document.querySelectorAll('#rqLane-intake [data-hbid]')].map(n=>n.dataset.hbid).sort()"),['clarifying','intake']);
     assert.equal(await js("document.querySelector('[data-hbid=clarifying] .rq-flag').textContent"),'待补充');
     assert.equal(await js("document.querySelector('[data-rq-lane=clarifying]')===null"),true);
-    assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),true);
+    assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     report.checks.push('Inbox retains both intake and clarification issues, its existing count and clarification badge; the approved description explains their relationship without adding a column or a scope banner');
     for(const file of [...JSON.parse(fs.readFileSync(path.join(client,'core/locales/manifest.json'),'utf8')).map(name=>'core/locales/'+name),'core/i18n-dom.js','core/i18n.js'])
       await js(fs.readFileSync(path.join(client,file),'utf8')+'\nvoid 0;');

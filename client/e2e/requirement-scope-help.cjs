@@ -49,7 +49,7 @@ app.whenReady().then(async()=>{
       assert.deepEqual(await ids(),rows);assert.equal(await count(),'· '+rows.length+' 条');
       const badges=await js(`Object.fromEntries([...document.querySelectorAll('.rq-scopes [data-rq-scope]')].map(n=>[n.dataset.rqScope,Number(n.querySelector('b').textContent)]))`);
       assert.deepEqual(badges,{related:4,actionable:2,created:1,all:5});
-      assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),scope!=='actionable');
+      assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
       if(['related','all'].includes(scope))assert.equal(await title('#rqScope'),await title('.rq-scopes [data-rq-scope="'+scope+'"]'));
     }
     assert.equal(await js("document.querySelector('.rq-scopes [data-rq-scope=all]').firstChild.textContent"),'全部可见');
@@ -62,7 +62,7 @@ app.whenReady().then(async()=>{
     await click('#rqArchiveEntry');assert.deepEqual(await ids(),['archived','cancelled']);assert.equal(await count(),'· 已归档 · 2 条');
     assert.match(await title('#rqArchiveEntry'),/返回/);
     await click('.rq-scopes [data-rq-scope=related]');assert.deepEqual(await ids(),['archived']);assert.equal(await count(),'· 已归档 · 1 条');
-    assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),true);
+    assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     await shot('archived-related');await click('#rqArchiveEntry');
     report.checks.push('Archive keeps only related/all scopes, includes canceled records as before, and changes its tooltip to the return action');
     for(const file of [...JSON.parse(fs.readFileSync(path.join(client,'core/locales/manifest.json'),'utf8')).map(name=>'core/locales/'+name),'core/i18n-dom.js','core/i18n.js'])
@@ -85,10 +85,10 @@ app.whenReady().then(async()=>{
     await click('.rq-scopes [data-rq-scope=related]');win.setContentSize(480,1000);await wait(150);
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth+1'),true);
     assert.equal(await js("document.querySelector('#rqScope').getClientRects().length>0"),true);
-    assert.match(await title('#rqScope'),/仓库成员/);assert.equal(await js("document.querySelector('#rqScopeHint').hidden"),true);
+    assert.match(await title('#rqScope'),/仓库成员/);assert.equal(await js("document.querySelector('#rqScopeHint')"),null);
     await shot('related-narrow');
     assert.deepEqual(await js('fixtureErrors'),[]);assert.equal(await js("fixtureCalls.some(row=>['patch','submit-review','review'].includes(row[0]))"),false);
-    report.checks.push('Narrow layout keeps the selected-scope tooltip without a permanent related-scope explanation or horizontal overflow; no write occurs');
+    report.checks.push('Narrow layout keeps the selected-scope tooltip without a scope banner or horizontal overflow; no write occurs');
     report.ok=true;
   }catch(error){report.error=String(error.stack||error);if(win)fs.writeFileSync(path.join(output,'failure.png'),(await win.webContents.capturePage()).toPNG());}
   finally{fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));win?.destroy();app.exit(report.ok?0:1);}

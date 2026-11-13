@@ -161,10 +161,9 @@ test('company visibility copy distinguishes related people in all supported loca
     }
   }
 });
-test('personal action scope guidance follows every supported locale', () => {
+test('execution status guidance follows every supported locale', () => {
   const c = client();
-  const phrases = ['“需要我处理”仅显示当前轮到你操作的需求。执行中或已提交验收的需求仍保留在“与我相关”。',
-    '查看与我相关', '执行已安排，可在“与我相关”查看进展', '已提交验收，等待验收人处理'];
+  const phrases = ['执行已安排，可在“与我相关”查看进展', '已提交验收，等待验收人处理'];
   for (const locale of ['en-US', 'ja-JP', 'ko-KR', 'zh-CN']) {
     c.api.setLocale(locale);
     for (const phrase of phrases) {
