@@ -61,6 +61,13 @@ const _personalPlugins = require('./main/personal-plugins');
 const _desktopOverlay = require('./main/desktop-overlay.cjs').create({
   app, BrowserWindow, ipcMain, screen, globalShortcut, Notification, powerMonitor,
   getRendererRoot: rendererRoot, getIcon: _appIcon, translate: _nativeText,
+  /* The transparent overlay must yield every point covered by a visible SoduWork window,
+     including detached application/composer windows that are not in _workWindows. */
+  getWorkWindows: () => {
+    try {
+      return BrowserWindow.getAllWindows().filter(win => win && win !== _desktopOverlay.window);
+    } catch (_) { return []; }
+  },
 });
 /* Keep a renderer failure local to its window. Work windows are separate
    BrowserWindows and historically had no crash listener, so a renderer crash

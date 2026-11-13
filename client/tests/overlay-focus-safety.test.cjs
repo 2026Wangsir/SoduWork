@@ -52,6 +52,17 @@ test('桌宠和竖条单独或同时显示时，主进程按真实组件区域�
   assert.match(guard, /40/);
 });
 
+test('工作窗口覆盖桌宠位置时优先接收输入并压低透明覆盖窗', () => {
+  const sync = block(main, 'function _syncOverlayInputNow()', 'function _isPointOverWorkWindow');
+  assert.match(sync, /_isPointOverWorkWindow\(point\)/);
+  const overlap = block(main, 'function _isPointOverWorkWindow', 'function _startOverlayInputGuard');
+  assert.match(overlap, /getWorkWindows\(\)/);
+  assert.match(overlap, /getBounds/);
+  const focus = block(main, 'function setWorkWindowFocused', 'function setWorkspaceMaximized');
+  assert.match(focus, /_setOverlayInputIgnored\(true\)/);
+  assert.match(focus, /_setOverlayTopmost\(false\)/);
+});
+
 test('窗口销毁会停止输入守卫，避免后台残留轮询', () => {
   const closed = block(main, `mainWindow.on('closed'`, "mainWindow.webContents.on('render-process-gone'");
   assert.match(closed, /releaseWindowResources\(\)/);
@@ -65,7 +76,7 @@ test('repainting preserves the layered window; explicit shows restore its shape'
   assert.match(redraw, /webContents\.invalidate/);
   assert.doesNotMatch(redraw.slice(0, redraw.indexOf('function revealInitialOverlay')), /mainWindow\.(?:hide|showInactive|setAlwaysOnTop)\(/);
   const create = block(main, 'function createWindow()', '/* ----- Overlay IPC ----- */');
-  const show = block(create, "mainWindow.on('show'", 'mainWindow.setAlwaysOnTop(');
+  const show = block(create, "mainWindow.on('show'", '_setOverlayTopmost(');
   assert.match(show, /applyOverlayShape\(_lastOverlayRects, false\)/);
 });
 

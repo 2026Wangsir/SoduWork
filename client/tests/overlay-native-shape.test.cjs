@@ -65,6 +65,7 @@ test('dynamic input guard accepts the cursor inside any component and ignores el
   const scope = { _overlayShape:shape, _emergencyMode:false, _overlayAwaitingShape:false, _overlayShapeEnabled:true,
     _overlayInputRects:[], NATIVE_SHAPE:false,
     screen:{ getCursorScreenPoint:()=>cursor },
+    _isPointOverWorkWindow:()=>false,
     mainWindow:{ isDestroyed:()=>false, isVisible:()=>true, getContentBounds:()=>({x:0,y:0,width:1920,height:1080}) },
     _setOverlayInputIgnored(ignore){ scope.decisions.push(ignore); } };
   scope.decisions = [];
@@ -98,6 +99,7 @@ test('native platforms guard transparent gaps without disabling visible componen
     _overlayInputRects:[{x:1800,y:900,width:72,height:132},{x:1880,y:300,width:36,height:500}],
     NATIVE_SHAPE:true,
     screen:{ getCursorScreenPoint:()=>cursor },
+    _isPointOverWorkWindow:()=>false,
     mainWindow:{ isDestroyed:()=>false, isVisible:()=>true, getContentBounds:()=>({x:0,y:0,width:1920,height:1080}) },
     _setOverlayInputIgnored(ignore){ decisions.push(ignore); } };
   vm.createContext(scope); vm.runInContext(sync, scope);
