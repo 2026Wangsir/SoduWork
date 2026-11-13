@@ -1,6 +1,6 @@
 /* One full-canvas requirement pool, using the existing workspace framing. */
 html[data-desk-panel="workspace"]:is([data-workspace-view="history"],[data-workspace-view="workitems"]) #historyBoard{
-  left:var(--ws-main-left,var(--ws-side-w,220px))!important;right:10px!important;
+  left:var(--ws-main-left,var(--ws-side-w,220px))!important;right:var(--ws-frame-right)!important;
   width:auto!important;height:auto!important;
   max-width:none!important;max-height:none!important;margin:0!important;transform:none!important;
   background:var(--bg-0)!important;overflow:hidden!important;
@@ -13,7 +13,7 @@ html[data-desk-panel="workspace"] #historyBoard.requirements-board > .hb-body{
 html[data-desk-panel="workspace"] #settingsPanel{
   --settings-gutter:max(28px,calc((100% - 1180px) / 2))!important;
   left:var(--ws-main-left,var(--ws-side-w,220px))!important;
-  right:10px!important;
+  right:var(--ws-frame-right)!important;
   width:auto!important;
   height:auto!important;
   min-height:0!important;
@@ -103,5 +103,5 @@ html[data-desk-panel="workspace"] #settingsPanel > .set-group{
 }
 
 html[data-desk-panel="workspace"]:is([data-workspace-view="history"],[data-workspace-view="workitems"]) #historyBoard.requirements-board{
-  right:6px!important;
+  right:var(--ws-frame-right)!important;
 }

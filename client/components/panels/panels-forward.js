@@ -25,7 +25,9 @@ async function _dispatchAITo(tid, who, name) {
   const scope = window.RequirementAssignment.scope();
   const brief = (document.getElementById('fwdNote') || {}).value || '';
   const selectedAgent = _fwdSubstrateOf(who.id);
-  const model = selectedAgent && selectedAgent.modelPick === false ? '' :
+  const canPickModel = typeof _fwdCanPickModel === 'function'
+    ? _fwdCanPickModel(selectedAgent) : Boolean(selectedAgent && selectedAgent.modelPick !== false);
+  const model = !canPickModel ? '' :
     String(((document.getElementById('fwdModel') || {}).value) || _fwdModel || '');
   _fwdSetBusy(true, '正在建立会话…');
   _fwdSetStatus('正在等待执行端接单…');
