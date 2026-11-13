@@ -53,13 +53,24 @@
   ${If} $4 == ""
     StrCpy $4 "$INSTDIR"
   ${EndIf}
-  nsExec::ExecToStack /TIMEOUT=120000 '"$3" "$PLUGINSDIR\soduwork-uninstall-resources.cjs" "$INSTDIR" "$4"'
+  StrCpy $5 ""
+  ${If} $soduworkDeleteUserData == 1
+  ${AndIfNot} ${Silent}
+  ${AndIfNot} ${isUpdated}
+    StrCpy $5 "$soduworkCurrentAppData"
+  ${EndIf}
+  nsExec::ExecToStack /TIMEOUT=120000 '"$3" "$PLUGINSDIR\soduwork-uninstall-resources.cjs" "$INSTDIR" "$4" "$5" "${PRODUCT_NAME}"'
   Pop $0
   Pop $1
   System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", p 0)'
   ${If} $0 != 0
     DetailPrint "$1"
+    !insertmacro soduworkDataText $1 \
+      "Installed resources or selected local data could not be safely removed. External workspaces and Hub service data are unchanged." \
+      "无法安全删除安装资源或所选本地数据。外部工作区和 Hub 服务数据未更改。" \
+      "インストール済みリソースまたは選択したローカルデータを安全に削除できませんでした。外部ワークスペースと Hub サービスのデータは変更されていません。" \
+      "설치된 리소스 또는 선택한 로컬 데이터를 안전하게 삭제할 수 없습니다. 외부 작업 공간과 Hub 서비스 데이터는 변경되지 않았습니다."
     SetErrorLevel 2
-    Abort "Installed runtime resources could not be safely removed."
+    Abort "$1"
   ${EndIf}
 !macroend

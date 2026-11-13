@@ -58,6 +58,8 @@ Windows 交互式安装器提供英语、简体中文、日语和韩语，默认
 
 Windows 原生安装输入由 `scripts/payload-sources.cjs` 按清单摘要冻结，再生成 NSIS 资源表，避免文件系统过滤层向不同构建进程暴露不同字节。源文件在清单生成后发生变化时构建立刻失败。冻结输入每目录最多 64 个文件，避免编译器对大目录反复扫描；安装与验包共用一个解包函数，保留压缩与逐文件校验，旧版本的安装兼容例外见验证器。`.runtime/installer/payload-sources/` 是可重建的中间产物，不提交仓库。原生安装及其故障注入测试共用构建目录，应顺序执行。
 
+Windows 卸载默认保留本地应用数据。交互式向导提供可选清理：显示完整目录，用户勾选并二次确认后，仅删除当前 Windows 账户的 `%APPDATA%\SoduWork` 目录，遇到目录链接则拒绝清理。外部工作区、其他 Windows 账户、Hub 服务数据和自定义 `SODUWORK_USER_DATA` 目录不在清理范围内。静默卸载与升级保留数据；旧的 `--delete-app-data` 参数会被拒绝，不能绕过确认。
+
 OpenCode 为可选底座，不再随客户端分发，也不会在构建时下载。Agent 管理继续识别本机安装，并提供主动安装入口。`build-light` 已退役，常规构建统一采用轻量配方。
 
 底座名单、显示信息、模型归属及权限声明来自 `../hub-backend/app/agent_catalog.json`，打包复制到 `resources/agent_catalog.json`；不在渲染端再维护第二份支持名单。扩展方式见 [Agent 扩展约定](../docs/release-scope.md)。

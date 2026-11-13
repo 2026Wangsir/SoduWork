@@ -3,6 +3,7 @@
 !ifdef BUILD_RESOURCES_DIR
   !ifdef BUILD_UNINSTALLER
     !include "${BUILD_RESOURCES_DIR}\uninstall-resources.nsh"
+    !include "${BUILD_RESOURCES_DIR}\uninstall-user-data.nsh"
   !endif
   !include "${BUILD_RESOURCES_DIR}\soduwork-install-identity.nsh"
   !include "${BUILD_RESOURCES_DIR}\file-open.nsh"
@@ -15,6 +16,8 @@
     Var soduWorkStartedAt
     !include "${PROJECT_DIR}\.runtime\installer\native-payload.nsh"
     !include "${BUILD_RESOURCES_DIR}\package-check.nsh"
+  !else
+    !insertmacro soduworkUninstallDataFunctions
   !endif
   !addincludedir "${PROJECT_DIR}\node_modules\app-builder-lib\templates\nsis"
   !include "${BUILD_RESOURCES_DIR}\installer-language.nsh"
