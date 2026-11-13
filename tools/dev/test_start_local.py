@@ -496,6 +496,19 @@ class LocalStartupTests(unittest.TestCase):
                 self.assertEqual(call.kwargs['cwd'], client)
                 self.assertEqual(call.kwargs['log'], log)
 
+    def test_desktop_install_includes_build_dependencies_in_production_environments(self):
+        client = self.cached_desktop()
+        for environment in ({'NODE_ENV': 'production'}, {'NPM_CONFIG_OMIT': 'dev'}):
+            with self.subTest(environment=environment), \
+                    patch.dict(os.environ, {'DISPLAY': ':fixture', **environment}), \
+                    patch.object(build, 'check_dependencies', return_value=('node', 'npm')), \
+                    patch.object(build, 'run') as run:
+                (self.state / 'desktop-dependencies.sha256').unlink(missing_ok=True)
+                self.assertEqual(build.prepare_desktop(self.state, self.state / 'startup.log'), client)
+                command = next(call.args[0] for call in run.call_args_list if call.args[0][:2] == ['npm', 'ci'])
+                self.assertIn('--include=dev', command)
+                self.assertIn('--ignore-scripts', command)
+
     def test_windows_shell_preparation_failure_stops_desktop_preparation(self):
         with patch.object(sys, 'platform', 'win32'):
             self.cached_desktop()
@@ -608,6 +621,8 @@ class LocalStartupTests(unittest.TestCase):
             install = next(command for command in commands if 'pip' in command)
             for manifest in ('requirements.txt', 'requirements-runner.txt'):
                 self.assertIn(str(source / 'hub-backend' / manifest), install)
+            frontend_install = next(command for command in commands if command[:2] == ['npm', 'ci'])
+            self.assertIn('--include=dev', frontend_install)
             for name in ("LICENSE", "third-party/manifest.json"):
                 self.assertEqual((self.state / "application" / name).read_bytes(), (source / name).read_bytes())
             generated = [self.state / 'application/client' / relative for relative in (
