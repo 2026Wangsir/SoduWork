@@ -245,6 +245,20 @@ function _mdCatalogModels(p) {
     (p?.modelNames || []).map(name => ({ name, label: name, modality: 'chat', config: {} }));
 }
 
+const _MD_BUILTIN_PROVIDER_NAMES = Object.freeze({
+  volcengine: '字节跳动 · 火山引擎方舟',
+  aliyun: '阿里云百炼（通义）',
+  zhipu: '智谱 GLM',
+  moonshot: '月之暗面 Kimi',
+});
+function _mdProviderNameAttrs(p) {
+  const source = _MD_BUILTIN_PROVIDER_NAMES[String(p?.id || '')];
+  if (p?.builtin === true && source && String(p.name || '') === source) {
+    return ' data-i18n="' + esc(source) + '" data-i18n-source="' + esc(source) + '"';
+  }
+  return p?.name ? ' data-user-content' : '';
+}
+
 function _mdNavItemHtml(p) {
   const state = _mdState(p);
   const own = _mdMyModels.filter((m) => m.providerId === p.id);
@@ -253,7 +267,7 @@ function _mdNavItemHtml(p) {
   return '<button type="button" class="cfg-nav-item md-nav-item st-' + state +
     (selected ? ' is-selected' : '') + '" data-mdselect="' + esc(p.id) + '" aria-pressed="' +
     (selected ? 'true' : 'false') + '">' +
-      '<span class="md-provider-icon">' + _MD_ICON + '<i class="cfg-nav-dot"></i></span><span class="cfg-nav-copy"><b data-user-content>' + esc(p.name || p.id) + '</b>' +
+      '<span class="md-provider-icon">' + _MD_ICON + '<i class="cfg-nav-dot"></i></span><span class="cfg-nav-copy"><b' + _mdProviderNameAttrs(p) + '>' + esc(p.name || p.id) + '</b>' +
         '<small>' + esc(_mdHost(p.baseUrl) || '未填写服务地址') + '</small></span>' +
       '<span class="cfg-nav-meta"><em>' + _mdMessage('models.count', '{count} 模型', { count }) + '</em><small>' + _MD_ST[state].t + '</small></span>' +
     '</button>';
@@ -270,7 +284,7 @@ function _mdDetailHtml(p) {
     state === 'local' ? '本机免密服务' : '完成配置后可用';
   return '<header class="cfg-detail-head">' +
       '<span class="cfg-detail-icon">' + _MD_ICON + '</span>' +
-      '<div class="cfg-detail-title"><span>模型服务</span><h2' + (p.name ? ' data-user-content' : '') + '>' + esc(p.name || '添加模型服务') + '</h2>' +
+      '<div class="cfg-detail-title"><span>模型服务</span><h2' + _mdProviderNameAttrs(p) + '>' + esc(p.name || '添加模型服务') + '</h2>' +
         '<p><span' + (_mdHost(p.baseUrl) ? ' data-user-content' : '') + '>' + esc(host) + '</span> · <span>' + esc(route) + '</span></p></div>' +
       '<span class="cfg-state is-' + state + '">' + _MD_ST[state].t + '</span></header>' +
     '<div class="cfg-detail-facts"><span><small>接口协议</small><b>' +
