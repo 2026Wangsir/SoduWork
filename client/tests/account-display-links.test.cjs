@@ -12,7 +12,7 @@ async function fixture(t) {
   const app = { getPath: () => root }, actor = identity(), batches = [];
   const storage = createWorker(path.join(root, 'replicas.sqlite'));
   const store = new Proxy(storage, { get(target, key) {
-    if (key === 'nativeRows') return ids => { batches.push(ids.length); return target.nativeRows(ids); };
+    if (key === 'nativeRows') return (ids, options) => { batches.push(ids.length); return target.nativeRows(ids, options); };
     return target[key];
   } });
   const history = createHistory({ app, store, session: new Proxy({}, {
@@ -41,7 +41,8 @@ test('display links use owned indexed native identities without claiming copies 
     f.account('acct-unproven-origin', 'unproven-origin'),
     f.account('acct-copy', 'download'), f.account('acct-origin', 'copy-source'), f.account('acct-downloaded', 'unindexed'),
     f.account('acct-deleted-native', 'deleted'), f.account('acct-deleted', 'native', { deleted: true })];
-  assert.deepEqual(await f.history.accountDisplayLinks(rows, f.actor), [['acct-owned', 'native'], ['acct-child', 'native']]);
+  assert.deepEqual((await f.history.accountDisplayLinks(rows, f.actor)).sort(),
+    [['acct-owned', 'native'], ['acct-child', 'native'], ['acct-deleted-native', 'deleted']].sort());
   assert.deepEqual(await f.storage.catalog(), before, 'Display association cannot mutate either store or its lifecycle aliases');
   assert.equal((await f.storage.get('acct-owned')), null);
   assert.deepEqual(await f.history.accountDisplayLinks(rows, identity('two')), [['acct-other-owner', 'other-owner']],
@@ -64,7 +65,10 @@ test('account history keeps display links separate from lifecycle, recomputes th
   assert.deepEqual(linked.chats[0].historyAliasIds, [item.id]);
   assert.deepEqual(linked.lifecycle[0].nativeIds, []); assert.deepEqual(linked.lifecycle[0].historyAliasIds, [item.id]);
   await f.storage.lifecycle('native', 'delete');
-  assert.equal((await sync.history({ source: 'account' })).chats[0].displayNativeId, undefined);
+  const deleted = await sync.history({ source: 'account' });
+  assert.equal(deleted.chats[0].displayNativeId, 'native', 'A local tombstone retains the verified display relationship');
+  assert.equal(deleted.chats[0].deleted, false, 'Local display suppression does not delete the account original');
+  assert.deepEqual(deleted.lifecycle[0].historyAliasIds, [item.id]);
   current = identity('two');
   assert.equal((await sync.history({ source: 'account' })).chats[0].displayNativeId, undefined);
 });

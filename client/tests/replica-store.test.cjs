@@ -68,6 +68,28 @@ test('keyset pages retain equal timestamps without duplicates and ignore another
   } finally { store.close(); }
 });
 
+test('native display lookup retains opted-in tombstones across restart without claiming downloaded origins', t => {
+  const file = fixture(t);
+  let store = create(file);
+  store.register([{ id: 'native', historyAliasIds: ['native-segment'] },
+    { id: 'copy', cached: true, source: { id: 'cloud-original' }, sourceSessionId: 'copy-source' }]);
+  store.lifecycle('native', 'delete');
+  store.lifecycle('copy', 'delete');
+  store.close();
+  store = create(file);
+  try {
+    const ids = ['native', 'native-segment', 'copy', 'cloud-original', 'copy-source'];
+    assert.deepEqual(store.nativeRows(ids), [], 'Import lookups must continue to exclude deleted archives');
+    const rows = store.nativeRows(ids, { includeDeleted: true });
+    assert.deepEqual(rows.map(row => row.id), ['native']);
+    assert.equal(rows[0].deleted, true);
+    assert.deepEqual(rows[0].historyAliasIds, ['native-segment']);
+    assert.deepEqual(store.nativeRows(ids, { includeDeleted: 'true' }), [], 'Only an explicit opt-in includes tombstones');
+    assert.equal(store.get('native').deleted, true);
+    assert.equal(store.list().items.length, 0);
+  } finally { store.close(); }
+});
+
 test('remote lifecycle lookup returns only explicit account-owned matching copies and survives reopening', t => {
   const file = fixture(t);
   let store = create(file);

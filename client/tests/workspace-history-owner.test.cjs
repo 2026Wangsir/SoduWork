@@ -568,3 +568,84 @@ test('a displayed account representative follows only its verified native active
   await f.switch('user-b');f.api.setActiveChat('saved-0');
   assert.equal(owned.classList.contains('is-active'),false,'An old account association cannot highlight after switching accounts');
 });
+
+function deletedDisplayFixture(initialState = {}) {
+  const native = { id: 'native-owned', title: 'Same title', at: 100, ...initialState };
+  const account = { id: 'acct-owned', title: native.title, accountProjection: true, accountConversation: true,
+    sourceSessionId: native.id, sourceClientId: 'device-a', displayNativeId: native.id, at: 100 };
+  const foreign = { ...account, id: 'acct-foreign', sourceClientId: 'foreign', displayNativeId: undefined };
+  const f = fixture('user-a', { local: true, realHistory: true, history: async options => options.source === 'local'
+    ? { ok: true, chats: native.deleted || native.archived ? [] : [native], next: null,
+      localCatalog: { workspace: 'display-deletion', revision: 2, items: [{ ...native, historyAliasIds: [] }] } }
+    : { ok: true, chats: [account, foreign] } });
+  return { ...f, native, account, foreign, ids: () => Array.from(f.ctx.paintedRows, row => row.id) };
+}
+
+for (const flag of ['deleted', 'archived']) test(`a ${flag} native source suppresses only its verified account display counterpart across reload`, async () => {
+  const f = deletedDisplayFixture({ [flag]: true });
+  await f.api.refreshConversationHistory(); await tick();
+  assert.deepEqual(f.ids(), ['acct-foreign']);
+  assert.ok(f.ctx.chatItems.some(row => row.id === 'acct-owned'), 'The independent Hub action identity is retained');
+  assert.equal(f.window.WorkspaceSidebarState.localHistoryId('acct-owned'), '');
+  await f.api.refreshConversationHistory(); await tick();
+  assert.deepEqual(f.ids(), ['acct-foreign'], 'A fresh account snapshot cannot resurrect the deleted local display');
+});
+
+test('native lifecycle events hide a display counterpart before catalog refresh without affecting independent rows', async () => {
+  const f = deletedDisplayFixture();
+  await f.api.refreshConversationHistory(); await tick();
+  f.ctx.displayPlacement = () => new Set(['acct-owned', 'acct-foreign']);
+  f.api.renderChats();
+  assert.deepEqual(f.ids(), ['acct-owned', 'acct-foreign']);
+  f.api.updateChatState({ kind: 'history-lifecycle', sessionId: f.native.id,
+    presence: { id: f.native.id, archived: true, localOnly: true, lifecycleRevision: 3 } });
+  assert.deepEqual(f.ids(), ['acct-foreign']);
+  f.api.updateChatState({ kind: 'history-lifecycle', sessionId: f.native.id,
+    presence: { ...f.native, archived: false, deleted: false, localOnly: true, lifecycleRevision: 4 } });
+  assert.ok(f.ids().includes('acct-owned'), 'Restoring the native archive also restores its existing display placement');
+  f.api.updateChatState({ kind: 'history-lifecycle', sessionId: f.native.id,
+    presence: { id: f.native.id, deleted: true, localOnly: true, lifecycleRevision: 5 } });
+  assert.deepEqual(f.ids(), ['acct-foreign']);
+});
+
+test('deleting a native source resets an active verified account display without deleting the Hub identity', async () => {
+  const f = deletedDisplayFixture(), opens = [], removed = [];
+  await f.api.refreshConversationHistory(); await tick();
+  f.window.soduWorkAPI.conversationSession.deleteHistory = async id => {
+    removed.push(id); return { ok: true, id, deleted: true, localOnly: true };
+  };
+  f.window.WorkspaceHost = { open: async (key, payload) => { opens.push({ key, payload }); return true; } };
+  f.ctx.activeChatId = 'acct-owned';
+  assert.equal(await f.api.deleteHistoryChat('native-owned'), true);
+  assert.deepEqual(removed, ['native-owned']);
+  assert.equal(f.ctx.activeChatId, '');
+  assert.equal(opens.length, 1); assert.equal(opens[0].payload.newSession, true);
+  assert.equal(opens[0].payload.chatId, undefined);
+  assert.deepEqual(f.ids(), ['acct-foreign']);
+});
+
+for (const action of ['delete', 'archive']) {
+  for (const destination of ['acct-foreign', '', 'another-panel']) {
+    test(`a delayed ${action} receipt preserves navigation to ${destination || 'a fresh composer'}`, async () => {
+      const f = deletedDisplayFixture(), opens = [];
+      await f.api.refreshConversationHistory(); await tick();
+      let release;
+      f.window.soduWorkAPI.conversationSession[action + 'History'] = id => new Promise(resolve => {
+        release = () => resolve({ ok: true, id, localOnly: true });
+      });
+      f.window.WorkspaceHost = { open: async (key, payload) => { opens.push({ key, payload }); return true; } };
+      // A previous native panel may finish tearing down after sidebar navigation.
+      f.window.NativeChat = { sessionInfo: () => ({ sessionId: 'native-owned' }) };
+      f.ctx.root.querySelectorAll = () => [];
+      f.ctx.active = 'create'; f.ctx.activeChatId = 'acct-owned';
+      const pending = f.api[action + 'HistoryChat']('native-owned'); await tick();
+      if (destination === 'another-panel') f.ctx.active = 'requirements';
+      else f.api.setActiveChat(destination);
+      const selected = f.ctx.activeChatId;
+      release(); await pending;
+      assert.equal(f.ctx.activeChatId, selected);
+      assert.equal(opens.length, 0, 'A completed background action must not replace the newly selected view');
+      assert.deepEqual(f.ids(), ['acct-foreign']);
+    });
+  }
+}
