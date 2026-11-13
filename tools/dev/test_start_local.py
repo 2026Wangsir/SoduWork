@@ -683,6 +683,7 @@ class LocalStartupTests(unittest.TestCase):
             put("hub-backend/" + name)
         for name in ("hub-backend/app/api.py", "tools/dev/local_server.py", "skills/example/SKILL.md",
                      "client/core/connector-brand.js", "client/components/panels/connector-config.js",
+                     "client/components/client-auth/legal-html.js", "client/components/client-auth/legal-html.css",
                      "client/assets/connector-brands/fixture.svg", "third-party/manifest.json", "LICENSE",
                      "hub-frontend/src/index.jsx", "hub-frontend/package.json", "hub-frontend/package-lock.json",
                      "hub-frontend/index.html", "hub-frontend/vite.config.js"):
@@ -726,6 +727,20 @@ class LocalStartupTests(unittest.TestCase):
             self.assertEqual((self.state / "application/client/assets/connector-brands/fixture.svg").read_text(), "updated artwork")
             for file in generated:
                 self.assertEqual(file.read_bytes(), b'generated runtime fixture')
+            for relative in ('client/components/client-auth/legal-html.js',
+                             'client/components/client-auth/legal-html.css'):
+                with self.subTest(shared_frontend_source=relative):
+                    calls.clear()
+                    put(relative, 'updated shared legal document resource')
+                    build.prepare(self.state, self.state / 'startup.log')
+                    self.assertEqual(calls, [
+                        '[Runner] 检查本地运行环境 / Checking the local Runner environment',
+                        '[4/4] 构建管理页面 / Building the management UI'])
+                    self.assertEqual((self.state / 'application' / relative).read_text(),
+                                     'updated shared legal document resource')
+            calls.clear()
+            build.prepare(self.state, self.state / 'startup.log')
+            self.assertEqual(calls, ['[Runner] 检查本地运行环境 / Checking the local Runner environment'])
             before = (self.state / 'python-dependencies.sha256').read_text()
             put('hub-backend/requirements-runner.txt', 'updated Runner dependencies')
             commands.clear()
