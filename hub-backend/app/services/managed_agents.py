@@ -15,10 +15,12 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -41,6 +43,7 @@ _RELEASE_BASE = (
 )
 _MAX_ARCHIVE_BYTES = 150 * 1024 * 1024
 _INSTALL_LOCK = threading.RLock()
+log = logging.getLogger(__name__)
 
 
 def _release_bases() -> list[str]:
@@ -288,13 +291,17 @@ def _download(url: str, target: Path, expected: str,
     partial = target.with_suffix(target.suffix + ".part")
     last_error = ""
     for attempt in range(1, 4):
+        stage, received, response = "prepare_file", 0, None
         try:
             offset = partial.stat().st_size if partial.is_file() else 0
+            received = offset
             headers = {"User-Agent": "SoduWork-Agent-Runtime/1"}
             if offset:
                 headers["Range"] = "bytes=%d-" % offset
             request = urllib.request.Request(url, headers=headers)
+            stage = "open_response"
             with managed_agent_network.open_download(request, timeout=45) as response:
+                stage = "read_body"
                 append = bool(offset and getattr(response, "status", 200) == 206)
                 if not append:
                     offset = 0
@@ -318,17 +325,35 @@ def _download(url: str, target: Path, expected: str,
                             if percent >= next_notice:
                                 say("\u4e0b\u8f7d\u8fdb\u5ea6 %d%%" % min(percent, 100))
                                 next_notice = (percent // 10 + 1) * 10
+            stage = "checksum"
             if _sha256(partial) != expected:
                 partial.unlink(missing_ok=True)
                 raise RuntimeError("\u5b89\u88c5\u5305 SHA-256 \u6821\u9a8c\u5931\u8d25")
+            stage = "publish"
             os.replace(partial, target)
             return
         except (OSError, ValueError, urllib.error.URLError, RuntimeError) as exc:
             last_error = managed_agent_network.error_label(exc)
+            # Persist the same attempt's evidence through the Runner stderr log.
+            # Routes contain origins only, never URL credentials, paths or queries.
+            routes = getattr(response, "_soduwork_download_routes", None)
+            if routes is None:
+                routes = getattr(exc, "_soduwork_download_routes", [])
+            log.warning("Agent download failed: %s", json.dumps({
+                "event": "agent_download_failed", "attempt": attempt,
+                "stage": stage, "received_bytes": received, "routes": routes,
+                "python_version": platform.python_version(), "tls_version": ssl.OPENSSL_VERSION,
+                "platform": sys.platform, "architecture": platform.machine(),
+                "frozen": bool(getattr(sys, "frozen", False)),
+                **managed_agent_network.error_details(exc),
+            }, ensure_ascii=True, separators=(",", ":")))
             missing = isinstance(exc, urllib.error.HTTPError) and exc.code in {404, 410}
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
-            retry = not missing and attempt < 3
+            # Retrying an unchanged trust decision cannot repair a certificate.
+            # The installer may still try its next independently verified source.
+            certificate_rejected = managed_agent_network.error_details(exc)["category"] == "tls_certificate"
+            retry = not (missing or certificate_rejected) and attempt < 3
             say("第 %d 次下载失败：%s%s" % (
                 attempt, last_error, "，准备重试" if retry else ""))
             if not retry:
