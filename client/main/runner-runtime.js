@@ -5,6 +5,7 @@
  * stop them with the client.
  */
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,6 +16,7 @@ let _quitting = false;
 let _lastError = '';
 let _connectionState = 'stopped';
 let _lastConfig = '';
+let _processCredential = '';
 let _identityOf = null;
 const _ownedRunners = new Map();
 const _runnerStops = new Set();
@@ -235,6 +237,14 @@ function _stored(cfg) {
     capabilityGrants: cfg.capabilityGrants, dataRoot: cfg.dataRoot };
 }
 
+function _credentialFingerprint(cfg) {
+  // Credentials are injected only at spawn. Keep this comparison in memory:
+  // the persisted configuration deliberately excludes the device secret.
+  return crypto.createHash('sha256').update(JSON.stringify([
+    cfg.hub, cfg.clientId, cfg.secret,
+  ])).digest('hex');
+}
+
 function _spec(app) {
   if (app.isPackaged) {
     if (process.platform === 'win32') {
@@ -406,6 +416,7 @@ function _stop() {
   _stdoutRest = '';
   const p = _proc;
   _proc = null;
+  _processCredential = '';
   _connectionState = 'stopped';
   return _retire(p);
 }
@@ -450,6 +461,7 @@ function _start(app) {
       env: _runnerEnv(process.env, cfg.secret, app),
     });
     _proc = child;
+    _processCredential = _credentialFingerprint(cfg);
     if (Number.isInteger(child.pid)) {
       _ownedRunners.set(child, require('./runner-process-lifecycle.cjs').supervise(child));
     }
@@ -469,6 +481,7 @@ function _start(app) {
       _lastError = String(e && e.message || e);
       _connectionState = 'error';
       _proc = null;
+      _processCredential = '';
       _rejectRpc(e);
       _stdoutRest = '';
       _schedule(app);
@@ -479,6 +492,7 @@ function _start(app) {
       // child's late exit must not erase or duplicate that new runner.
       if (_proc !== child) return;
       _proc = null;
+      _processCredential = '';
       _connectionState = 'error';
       if (!_lastError) _lastError = '本机 Runner 已退出（' + String(code ?? '未知') + '），正在自动重启。';
       _rejectRpc('Runner exited');
@@ -487,6 +501,7 @@ function _start(app) {
     });
   } catch (e) {
     _proc = null;
+    _processCredential = '';
     _lastError = String(e && e.message || e);
     _schedule(app);
   } finally {
@@ -522,7 +537,7 @@ function _applyConfig(app, raw) {
     const encoded = JSON.stringify(_stored(cfg));
     _writeConfig(app, encoded);
     _wanted = true;
-    if (encoded !== _lastConfig) {
+    if (encoded !== _lastConfig || (_proc && _processCredential !== _credentialFingerprint(cfg))) {
       _lastConfig = encoded;
       _stop();
     }
