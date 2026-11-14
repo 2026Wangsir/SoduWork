@@ -39,7 +39,7 @@ test('all automation openings share stable substrate choices and coalesce pendin
 test('automation editor expands a substrate into stable remote target choices', async () => {
   const ctx = context({ taskExecutionOptions: async () => ({
     substrates: [{
-      key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true,
+      key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true, nativeModelPick: true,
       locations: [
         { assigneeId: 'local:pi', mode: 'local', label: '本机' },
         { assigneeId: 'runner:desk-1:pi', mode: 'remote', runnerId: 'desk-1',
@@ -107,6 +107,54 @@ test('automation editor keeps model selection independent from the chosen Agent'
   assert.doesNotMatch(run(ctx, '_schModelFieldHtml("", "local:codex")'), /<select[^>]+disabled/);
   assert.equal(run(ctx, '_schAgentAllowsModel("local:codex")'), true);
   assert.equal(run(ctx, '_schAgentAllowsModel("local:pi")'), true);
+});
+
+test('local Pi automation merges the saved local model catalog and keeps it off remote seats', async () => {
+  const localRef = 'local:model-' + 'b'.repeat(32);
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{
+      key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true,
+      locations: [
+        { assigneeId: 'local:pi', mode: 'local', label: 'Local device' },
+        { assigneeId: 'runner:desk-1:pi', mode: 'remote', label: 'Runner' },
+      ],
+    }],
+    modelOptions: [{ name: 'managed-model', label: 'Managed' }],
+  }) }, {
+    conversationSession: { runtimeModels: async () => ({ models: [{ id: 's1', label: 's1' }] }) },
+    localModels: { get: async () => ({ usable: [
+      { id: localRef, name: localRef, modelName: 'custom-medium', label: 'custom-medium', modality: 'chat', localOnly: true },
+      { id: 'local:image', name: 'local:image', modality: 'image', localOnly: true },
+    ] }) },
+  });
+  const agents = await run(ctx, '_schLoadExecutionAgents({})');
+  assert.deepEqual(Array.from(agents, item => item.id), ['local:pi', 'runner:desk-1:pi']);
+  assert.match(run(ctx, `_schModelFieldHtml("", "local:pi")`), new RegExp(localRef));
+  assert.match(run(ctx, '_schModelFieldHtml("", "local:pi")'), /custom-medium/);
+  assert.doesNotMatch(run(ctx, `_schModelFieldHtml("", "runner:desk-1:pi")`), new RegExp(localRef));
+  assert.doesNotMatch(run(ctx, `_schModelFieldHtml("", "local:pi")`), /local:image/);
+});
+
+test('a current-device Runner seat uses the local Pi model catalog and a portable local route', async () => {
+  const localRef = 'local:model-' + 'c'.repeat(32);
+  let reads = 0;
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true,
+      locations: [
+        { assigneeId: 'runner:this-device:pi', mode: 'local', label: 'Local device' },
+        { assigneeId: 'runner:other-device:pi', mode: 'remote', label: 'Other device' },
+      ] }],
+    modelOptions: [{ name: 'managed-model', label: 's1' }],
+  }) }, { localModels: { get: async () => {
+    reads++;
+    return { usable: [{ name: localRef, label: 'Local custom model', localOnly: true, modality: 'chat' }] };
+  } } });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  const selected = run(ctx, '_schDefaultAgentId()');
+  assert.match(run(ctx, `_schModelFieldHtml("", ${JSON.stringify(selected)})`), /Local custom model/);
+  assert.equal(reads, 1);
+  assert.equal(selected, 'local:pi', 'local model saves must use the owner-device conversation route');
+  assert.doesNotMatch(run(ctx, '_schModelFieldHtml("", "runner:other-device:pi")'), /Local custom model/);
 });
 
 test('a new automation loads the default native substrate without loading unrelated catalogs', async () => {

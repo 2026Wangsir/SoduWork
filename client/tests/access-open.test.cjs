@@ -654,6 +654,21 @@ test('manual worker choices compile real standard, readonly and confirmed full p
   }
   assert.equal(f.dialogs.length, 0, 'existing confirmed default is the native consent source');
 });
+test('manual automation accepts the product default from a fresh profile at revision zero', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-manual-default-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = { getPath: () => root }, identity = automationIdentity(), f = fixture({ app, identityOf: async () => identity });
+  const options = { adapterId: 'pi' };
+  const choice = f.captureAutomationAccess(options, identity, 'fresh-manual', 'manual');
+  assert.equal(choice.revision, 0);
+  assert.equal(choice.mode, 'full');
+  const opened = await f.openAutomation(options, identity, choice, 'fresh-manual');
+  assert.equal(opened.ok, true, opened.reason);
+  assert.equal(f.calls.at(-1).accessPolicy.mode, 'full');
+  assert.equal(f.dialogs.length, 0);
+  assert.equal(fs.existsSync(path.join(root, 'access-preferences.json')), false);
+});
+
 test('unconfirmed full, timer, legacy and renderer-supplied automation choices do not gain full access', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-automation-source-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

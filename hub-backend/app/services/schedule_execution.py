@@ -1,6 +1,7 @@
 """Automation execution validation, capability checks and machine preflight."""
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,12 @@ from .schedule_run_contracts import (
 CAPABILITY_SKILLS = {
     "browser": "browser-use", "computer": "computer-use", "office": "office",
 }
+
+_OPAQUE_LOCAL_MODEL = re.compile(r"^local:model-[a-f0-9]{32}$")
+
+
+def _is_device_local_model(value: str) -> bool:
+    return bool(_OPAQUE_LOCAL_MODEL.fullmatch(str(value or '').strip()))
 
 
 def normalize_conversation_schedule(s):
@@ -113,6 +120,10 @@ async def validate_selected_model(session: AsyncSession, s) -> None:
     aid = str(getattr(s, "assignee_id", "") or "").strip()
     if not aid:
         raise ValueError("指定模型前请先选择执行 Agent")
+    if _is_device_local_model(model_name):
+        if aid != "local:pi":
+            raise ValueError("\u672c\u5730\u6a21\u578b\u81ea\u52a8\u5316\u4ec5\u652f\u6301\u672c\u673a Pi \u6267\u884c")
+        return
     client_id = str(getattr(s, "owner_client_id", "") or "").strip()
     client = await session.get(models.Client, client_id) if client_id else None
     if client is None:
@@ -127,7 +138,8 @@ async def validate_selected_model(session: AsyncSession, s) -> None:
 
 
 async def _schedule_model_readiness(session, client, ctx: dict,
-                                    model_kind: str, model_name: str) -> dict:
+                                    model_kind: str, model_name: str,
+                                    *, allow_device_local: bool = False) -> dict:
     """Resolve schedule model choices from the same live catalog as the editor.
 
     Legacy Runner dispatch keeps using the synchronous ``ai_exec`` model list,
@@ -137,6 +149,11 @@ async def _schedule_model_readiness(session, client, ctx: dict,
     from . import agent_execution_options, agent_route_selection, model_catalog
 
     model_kind, model_name = str(model_kind or "").strip(), str(model_name or "").strip()
+    if _is_device_local_model(model_name):
+        if allow_device_local and model_kind == "local:pi":
+            return {"ok": True, "model": model_name, "detail": "\u672c\u673a Pi \u672c\u5730\u6a21\u578b\u53ef\u7528"}
+        return {"ok": False, "model": model_name,
+                "detail": "\u672c\u5730\u6a21\u578b\u81ea\u52a8\u5316\u4ec5\u652f\u6301\u672c\u673a Pi \u6267\u884c"}
     if not model_name:
         return {"ok": True, "model": "", "detail": "跟随底座默认模型"}
     if agent_execution_options.is_native_model_kind(model_kind) or not agent_execution_options.supports_soduwork_model_kind(model_kind):
@@ -239,7 +256,9 @@ async def _preflight_execution(session: AsyncSession, s,
     model_name = str(getattr(s, "model_name", "") or "").strip()
     model_kind = aid if aid.startswith("local:") else (
         "local:" + aid.rsplit(":", 1)[-1] if aid.startswith("runner:") else aid)
-    model_state = await _schedule_model_readiness(session, client, ctx, model_kind, model_name)
+    model_state = await _schedule_model_readiness(
+        session, client, ctx, model_kind, model_name,
+        allow_device_local=(aid == "local:pi"))
     if not model_state.get("ok"):
         detail = str(model_state.get("detail") or "模型不可用")[:240]
         return {"state": "blocked", "mode": mode, "message": detail,
