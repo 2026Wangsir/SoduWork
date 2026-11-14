@@ -654,9 +654,10 @@ def _llm_gate_check(prof: dict, cfg: dict) -> str:
     except urllib.error.HTTPError:
         return ""       # An HTTP response proves reachability even when authentication or routing fails.
     except Exception as e:  # noqa: BLE001
+        from .managed_agent_network import error_label
         return ("这台执行机连不上模型网关 %s（直连失败：%s）。"
-                "请检查这台机器的网络连接与 DNS；SoduWork 对模型网关默认直连，"
-                "若该网络必须经代理访问网关，请联系管理员。" % (host, type(e).__name__))
+                "请按错误类型检查这台机器的网络、DNS 与证书信任；SoduWork 对模型网关默认直连，"
+                "若该网络必须经代理访问网关，请联系管理员。" % (host, error_label(e)))
 
 
 # Pi character deltas include thinking_delta, text_delta, and toolcall_delta.

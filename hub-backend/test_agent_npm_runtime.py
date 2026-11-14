@@ -144,6 +144,7 @@ class NodeResolutionTests(unittest.TestCase):
         # The personal package owns this native dependency; a shared native alone does not.
         (root / '@openai/codex/package.json').write_text('{"name":"@openai/codex"}', encoding='utf8')
         with patch.object(L, '_WIN', True), patch.dict(os.environ, {}, clear=True), \
+                patch.object(N, 'runtime_target', return_value=('win32', 'x64')), \
                 patch.object(N, 'configured_global_root', return_value=str(root)), \
                 patch.object(N, 'private_bin', return_value=''):
             self.assertEqual(L._npm_root(), str(root))
