@@ -59,6 +59,7 @@ function createProcessHost(app, options = {}) {
   let watchdogProbe = null, powerSuspended = false, powerEpoch = 0, powerListenersInstalled = false;
   let cleanupPromise = null, cleanupPending = false, cleanupError = null;
   let startupSettled = null, processJob = null;
+  let localPrivacyQueue = Promise.resolve();
   let lastHeartbeat = now(), lastWatchdogTick = now(), initialized = false;
   const fail = message => Object.assign(Error(message), { code: 'RUNTIME_PROCESS_GONE' });
   function resetHeartbeatWindow() { lastHeartbeat = lastWatchdogTick = now(); }
@@ -272,8 +273,17 @@ function createProcessHost(app, options = {}) {
           return require('../local-model-store.cjs').resolve(String(modelRef || ''));
         },
         async prepareLocalModels() {
-          require('../local-model-privacy.cjs').ensure(app);
-          return true;
+          // Session opens can arrive concurrently. Serialize privacy migration so
+          // two callers never publish competing atomic replacements of the same
+          // encrypted catalog or archived metadata file.
+          const previous = localPrivacyQueue.catch(() => {});
+          let release;
+          localPrivacyQueue = new Promise(resolve => { release = resolve; });
+          await previous;
+          try {
+            require('../local-model-privacy.cjs').ensure(app);
+            return true;
+          } finally { release(); }
         },
         async authRequest(id, url, init) {
           const auth = auths.get(id); if (!auth) throw Error('执行身份已失效');

@@ -7,6 +7,12 @@
   const composerCards = new WeakMap();
   const tx = value => global.SoduWorkI18n?.translateText?.(value) || value;
   const locale = () => global.SoduWorkI18n?.getLocale?.() || 'zh-CN';
+  const localSelection = card => {
+    const selected = selections.get(card)?.model;
+    if (selected?.localOnly === true) return true;
+    const value = typeof selected === 'string' ? selected : selected?.id || selected?.modelRef || selected?.name || '';
+    return String(value).trim().startsWith('local:');
+  };
   const scope = () => {
     const api = global.SoduWorkAPI;
     const user = api?.clientAuthSnapshot?.()?.user;
@@ -23,7 +29,7 @@
   const setText = (node, value) => { if (node.textContent !== value) node.textContent = value; };
 
   function render(card) {
-    const show = current?.exceeded === true && !personalSelectionAllowed(card);
+    const show = current?.exceeded === true && !personalSelectionAllowed(card) && !localSelection(card);
     card.hidden = !show;
     if (!show) return;
     const value = copy(card);

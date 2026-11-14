@@ -43,6 +43,7 @@ const conversationSession = {
   },
   runtimeModels: (adapterId) => ipcRenderer.invoke('pi-session-runtime-models', String(adapterId || '')),
   capabilities: (options) => timedPageInvoke('conversation-capabilities', options || {}),
+  localRequirementParse: params => ipcRenderer.invoke('pi-session-local-requirement-parse', params || {}),
   pathForFile: (file) => {
     try { return webUtils.getPathForFile(file); } catch (error) { return ''; }
   },

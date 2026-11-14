@@ -268,6 +268,35 @@ test('already opaque metadata does not require decrypting a locked catalog durin
   f.safeStorage.decryptString = decrypt;
 });
 
+test('already normalized local runtime metadata does not publish a replacement on startup', t => {
+  const f = fixture(t), id = store.get().myModels[0].id;
+  const file = f.write('pi-agent/models.json', { providers: {
+    soduwork: { localOnly: true, localRef: id, baseUrl: 'https://local-model.invalid/v1',
+      apiKey: 'soduwork-local-no-key', models: [{ id, localRef: id, name: 'Local model' }] },
+  } });
+  const rename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(Error('Synthetic startup publication failure'), { code: 'EPERM' }); };
+  try { assert.doesNotThrow(() => privacy.ensure(f.app)); }
+  finally { fs.renameSync = rename; }
+  assert.deepEqual(json(file), { providers: {
+    soduwork: { localOnly: true, localRef: id, baseUrl: 'https://local-model.invalid/v1',
+      apiKey: 'soduwork-local-no-key', models: [{ id, localRef: id, name: 'Local model' }] },
+  } });
+});
+
+test('legacy runtime metadata can recover a local reference from the encrypted catalog', t => {
+  const f = fixture(t);
+  const file = f.write('pi-agent/models.json', { providers: {
+    soduwork: { localOnly: true, baseUrl: provider.baseUrl,
+      models: [{ id: model.name, name: model.label }] },
+  } });
+  privacy.ensure(f.app);
+  const id = store.canonicalReference(legacy), migrated = json(file).providers.soduwork.models[0];
+  assert.equal(migrated.id, id);
+  assert.equal(migrated.localRef, id);
+  assert.equal(migrated.name, 'Local model');
+});
+
 test('unchanged inspected archives avoid full reads while changed files and later imports are checked', t => {
   const f = fixture(t), file = f.archive([selection(legacy), assistant()]);
   privacy.ensure(f.app);

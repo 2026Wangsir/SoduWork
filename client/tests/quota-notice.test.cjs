@@ -143,6 +143,19 @@ test('selected personal Pi hides only the platform budget card and never clears 
   }
 });
 
+test('selected local Pi hides a platform quota card without changing the authoritative quota state', () => {
+  const f = fixture();
+  const composer = { parentElement: {}, before(card) { card.isConnected = true; } };
+  const notice = f.ctx.SoduWorkQuotaNotice, card = notice.mount(composer);
+  const exhausted = { enabled: true, exceeded: true, reason: 'total_exhausted', limit: 10, used: 10 };
+  notice.update({ quota: exhausted });
+  notice.modelChanged({ id: 'local:model-0123456789abcdef0123456789abcdef', localOnly: true }, 'pi', composer);
+  assert.equal(card.hidden, true);
+  notice.modelChanged({ id: 'managed-model' }, 'pi', composer);
+  assert.equal(card.hidden, false, 'switching back to a managed model must restore the exhausted card');
+  assert.deepEqual(f.calls, [], 'local model selection must not clear or acknowledge platform quota');
+});
+
 test('an allowed personal conversation does not hide another mounted composer quota card', () => {
   const f = fixture(); f.ctx.SoduWorkQuota = require('../core/token-quota');
   const notice = f.ctx.SoduWorkQuotaNotice;

@@ -5,14 +5,15 @@ const fs = require('./renderer-source.cjs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function fixture(get = async () => ({ providers: [], myModels: [], revision: 1 })) {
+function fixture(get = async () => ({ providers: [], myModels: [], revision: 1 }), options = {}) {
   const requests = [], saves = [], values = new Map();
   const box = { URL, URLSearchParams, AbortController, Response, console,
     navigator: { platform: 'test' }, CustomEvent: class {}, dispatchEvent() {},
     setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
     localStorage: { getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
-    soduWorkAPI: { localModels: { get, save: async value => { saves.push(value); return { ok: true }; } } },
+    soduWorkAPI: { localModels: { get, save: async value => { saves.push(value); return { ok: true }; } },
+      ...(options.localRequirementParse ? { conversationSession: { localRequirementParse: options.localRequirementParse } } : {}) },
     fetch: async (url, options) => { requests.push({ url, body: options?.body && JSON.parse(options.body) });
       return new Response(JSON.stringify({ ok: true })); },
   };
@@ -46,11 +47,14 @@ test('non-Pi runtimes cannot resolve local credentials or forward their referenc
   assert.equal(store.resolve.mock.callCount(), 0);
 });
 
-test('local selections cannot be uploaded through remote parsing, plans or schedules', async () => {
-  const f = fixture();
+test('local selections use an on-device parser and never reach remote parsing, plans or schedules', async () => {
+  const f = fixture(undefined, { localRequirementParse: async params => ({ ok: true,
+    text: JSON.stringify({ title: 'Local draft', note: params.input, checklist: ['Keep local'], kind: 'requirement',
+      priority: 'normal', due: '', tags: ['local'] }) }) });
   for (const model of ['local:private:model', 'image::private::local:private:model']) {
     const parsed = await f.api.parseTaskText('Retain this draft.', model);
-    assert.match(parsed._parseError, /原文已保留/);
+    assert.equal(parsed.title, 'Local draft');
+    assert.match(parsed.note, /Retain this draft/);
     await assert.rejects(f.api.aiPlan('task', { model }), /本地模型/);
     await assert.rejects(f.api.preflightSchedule({ modelName: model }), /本地模型/);
     await assert.rejects(f.api.createSchedule({ modelName: model }), /本地模型/);
@@ -59,6 +63,13 @@ test('local selections cannot be uploaded through remote parsing, plans or sched
   assert.equal(f.requests.length, 0);
   await f.api.createSchedule({ modelName: 'managed-model' });
   assert.equal(f.requests.length, 1);
+});
+
+test('a failed local parser preserves the original requirement for manual editing', async () => {
+  const f = fixture(undefined, { localRequirementParse: async () => ({ ok: false, code: 'APP_AI_NOT_SENT' }) });
+  const parsed = await f.api.parseTaskText('Keep this exact text.', 'local:private:model');
+  assert.match(parsed._parseError, /原文已保留/);
+  assert.equal(f.requests.length, 0);
 });
 
 test('managed key patches never replace omitted provider or model lists', async () => {
