@@ -164,3 +164,19 @@ Repeating the same creation request for the same account and device returns its 
 Codex Harness, Qwen, Kimi and DeepSeek Harness use private state directories under the Runner data root. If a directory cannot be created because of permissions, a conflicting file or storage failure, preparation rejects the turn before launching an executor. The client receives an actionable diagnostic without personal paths or filesystem exception contents. Inherited personal state remains untouched; repairing the directory allows a new dispatch through the normal admission checks.
 
 `python3 -m unittest test_acp_home_isolation` checks real file collisions, injected permission failures, and Runner admission through a real subprocess/ACP bridge with a synthetic vendor. It verifies that failed preparation launches no executor and that a repaired directory permits execution. This does not establish real-provider or native-platform acceptance.
+
+## Private DeepSeek Harness probe
+
+Private model tests isolate writable DSH state and temporary files while resolving `DSH_PATH` from the Runner's installed runtime directory. Relocating test state must not relocate installed code. The private job and its raw provider output remain unavailable through Hub job APIs.
+
+With backend test dependencies and an existing compatible DSH installation, run:
+
+```sh
+python3 e2e_dsh_private_probe.py \
+  --adapter-entry /absolute/npm/root/@openma/deepseek-harness-acp/dist/bin.js \
+  --runtime-root /absolute/runner/data/agent-runtimes/dsh-host \
+  --node /absolute/path/to/node \
+  --output /absolute/evidence/directory
+```
+
+This explicit check uses the production private-probe job and ACP bridge, the installed adapter and host, and a synthetic loopback model. It first reproduces the old incorrect installation path, then requires a real model request and the expected Agent response with the corrected path. It uses disposable home, state and temporary directories, blocks non-loopback Node connections and cleans up its subprocesses. It does not install or update dependencies, use real credentials, or verify desktop UI, production Hub or provider behavior. Run it separately from the offline quality gate because it requires an existing native installation.

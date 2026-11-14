@@ -145,3 +145,19 @@ python3 fetch_opencode_assets.py darwin-arm64 darwin-x64 darwin-x64-baseline
 Codex Harness、Qwen、Kimi 和 DeepSeek Harness 使用 Runner 数据根目录下的独立状态目录。如果权限、同名文件或存储故障导致目录无法创建，准备阶段会在启动执行组件前拒绝本轮执行，并返回不含个人路径或文件系统异常内容的可操作提示。继承的个人状态保持不变；修复目录后，可以通过正常准入检查重新派发。
 
 `python3 -m unittest test_acp_home_isolation` 验证真实文件冲突、模拟权限拒绝，以及真实子进程与 ACP 桥接下使用合成底座的 Runner 准入流程，确认准备失败时执行组件未启动、修复目录后能够执行。这不等同真实模型服务或原生平台验收。
+
+## DeepSeek Harness 私有探测
+
+本地模型测试隔离 DSH 的可写状态和临时文件，同时从 Runner 已安装的运行时目录解析 `DSH_PATH`。隔离测试状态不能改变已安装代码的位置。私有作业及模型服务原始输出仍不能通过 Hub 作业 API 获取。
+
+准备后端测试依赖及已有兼容的 DSH 安装后，运行：
+
+```sh
+python3 e2e_dsh_private_probe.py \
+  --adapter-entry /absolute/npm/root/@openma/deepseek-harness-acp/dist/bin.js \
+  --runtime-root /absolute/runner/data/agent-runtimes/dsh-host \
+  --node /absolute/path/to/node \
+  --output /absolute/evidence/directory
+```
+
+此显式检查使用生产私有探测作业和 ACP 桥接、实际安装的适配器与运行时，以及合成本机回环模型。先重现旧安装路径错误，再要求修正路径后出现真实模型请求并由 Agent 返回预期响应。检查使用可清理的用户目录、状态和临时目录，阻止 Node 连接非回环地址，并清理自身子进程；不会安装或更新依赖，也不使用真实凭据，不覆盖桌面界面、生产 Hub 或模型服务行为。由于需要已有原生安装，请在离线质量门禁之外单独运行。
