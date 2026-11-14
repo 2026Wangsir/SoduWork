@@ -185,7 +185,7 @@ class Harness2BudgetTests(unittest.TestCase):
             return "complete"
         self.assertEqual(self.budget.run(self.model, self.messages, truncated_once,
                                         self.usage.append, on_retry=lambda: retries.append(True)), "complete")
-        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [2048, 4096])
+        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [2048, 16384])
         self.assertEqual(self.requests[0][1], self.requests[1][1])
         self.assertEqual(retries, [True])
         for _ in range(6):
@@ -220,7 +220,7 @@ class Harness2BudgetTests(unittest.TestCase):
         self.assertEqual(self.budget.retries, 1)
         self.assert_budget_failure(self.run_request)
 
-    def test_successful_recovery_headroom_is_reused_only_for_same_phase_kind(self):
+    def test_successful_recovery_headroom_is_reused_across_phases_within_model_cap(self):
         proposals = [{"role": "system", "content": "SODUWORK_HARNESS2_EDIT\nstage=inv1.a1"}]
         def truncate_initial(model, messages, on_usage, *, timeout):
             self.complete(model, messages, on_usage, timeout=timeout)
@@ -231,7 +231,7 @@ class Harness2BudgetTests(unittest.TestCase):
         self.assertEqual(self.run_request(truncate_initial, messages=proposals), "complete")
         self.run_request(messages=proposals, model={**self.model, "maxOutputTokens": 5000})
         self.run_request()
-        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [4096, 8192, 8192, 5000, 2048])
+        self.assertEqual([row[0]["maxOutputTokens"] for row in self.requests], [4096, 16384, 16384, 5000, 16384])
         self.assertEqual(self.budget.retries, 1)
 
     def test_second_phase_cannot_spend_another_recovery(self):
