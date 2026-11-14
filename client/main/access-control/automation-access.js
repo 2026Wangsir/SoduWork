@@ -26,7 +26,7 @@ function authorize(choice, options, identity, runId) {
   if (choice.schema !== SCHEMA || choice.trigger !== 'manual' || !runIdValid(runId) || choice.runId !== runId ||
       choice.adapterId !== (options.adapterId || 'pi') || !supported(choice.adapterId) ||
       !modes.has(choice.mode) || !Number.isSafeInteger(choice.revision) || choice.revision < 0 ||
-      choice.mode === 'full' && (choice.fullConsentVersion !== 1 || choice.revision < 1) ||
+      choice.mode === 'full' && choice.fullConsentVersion !== 1 ||
       !matches(choice, identity) || options.taskRef || options.taskSession) {
     throw Error('本次自动化授权已失效，请重新运行');
   }

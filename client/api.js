@@ -846,6 +846,16 @@
   function requireRemoteModel(value) {
     if (isLocalModelChoice(value)) throw new Error('本地模型仅支持本机对话，请为后台任务选择托管模型');
   }
+  var OPAQUE_LOCAL_MODEL = /^local:model-[a-f0-9]{32}$/;
+  function requireScheduleModel(body) {
+    var model = String(body?.modelName || '').trim();
+    if (!isLocalModelChoice(model)) return;
+    var reference = localModelReference(model);
+    if (model !== reference || !OPAQUE_LOCAL_MODEL.test(reference) ||
+        String(body?.assigneeId || '').trim() !== 'local:pi') {
+      throw new Error('\u672c\u5730\u6a21\u578b\u81ea\u52a8\u5316\u4ec5\u652f\u6301\u672c\u673a Pi\uff0c\u8bf7\u9009\u62e9\u672c\u673a Pi \u6267\u884c');
+    }
+  }
   function localParseInput(text, attachments) {
     var parts = ['原始需求：', String(text || '').slice(0, 12000)];
     var rows = Array.isArray(attachments) ? attachments.slice(0, 8) : [];
@@ -1870,7 +1880,7 @@
       var v = await jfetch('/schedules/templates'); mark(true); return Array.isArray(v) ? v : [];
     },
     async preflightSchedule(b, options) {
-      requireRemoteModel(b?.modelName);
+      requireScheduleModel(b || {});
       var epoch = _registrationEpoch, hub = base(), owner = taskStorageKey('ops');
       var r = await jfetch('/schedules/preflight',
         { method: 'POST', body: JSON.stringify(b || {}) });
@@ -1883,12 +1893,12 @@
       mark(true); return r || {};
     },
     async createSchedule(b) {
-      requireRemoteModel(b?.modelName);
+      requireScheduleModel(b || {});
       var r = await jfetch('/schedules', { method: 'POST', taskScope: taskStorageKey('ops'), body: JSON.stringify(b || {}) });
       mark(true); return r;
     },
     async updateSchedule(sid, b) {
-      requireRemoteModel(b?.modelName);
+      requireScheduleModel(b || {});
       var r = await jfetch('/schedules/' + encodeURIComponent(sid),
         { method: 'PUT', body: JSON.stringify(b || {}) });
       mark(true); return r;

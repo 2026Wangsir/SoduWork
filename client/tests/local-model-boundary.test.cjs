@@ -47,7 +47,7 @@ test('non-Pi runtimes cannot resolve local credentials or forward their referenc
   assert.equal(store.resolve.mock.callCount(), 0);
 });
 
-test('local selections use an on-device parser and never reach remote parsing, plans or schedules', async () => {
+test('legacy or malformed local references use an on-device parser and never reach remote plans or schedules', async () => {
   const f = fixture(undefined, { localRequirementParse: async params => ({ ok: true,
     text: JSON.stringify({ title: 'Local draft', note: params.input, checklist: ['Keep local'], kind: 'requirement',
       priority: 'normal', due: '', tags: ['local'] }) }) });
@@ -62,6 +62,15 @@ test('local selections use an on-device parser and never reach remote parsing, p
   }
   assert.equal(f.requests.length, 0);
   await f.api.createSchedule({ modelName: 'managed-model' });
+  assert.equal(f.requests.length, 1);
+});
+
+test('an opaque local model can be saved only for the local Pi automation seat', async () => {
+  const model = 'local:model-' + 'a'.repeat(32);
+  const f = fixture();
+  await f.api.createSchedule({ modelName: model, assigneeId: 'local:pi' });
+  assert.deepEqual(f.requests[0].body, { modelName: model, assigneeId: 'local:pi' });
+  await assert.rejects(f.api.createSchedule({ modelName: model, assigneeId: 'runner:desk:pi' }), /\u672c\u5730\u6a21\u578b/);
   assert.equal(f.requests.length, 1);
 });
 
