@@ -762,12 +762,16 @@
     });
     const recent = layer.querySelector('#capMakerRecent');
     if (recent) recent.addEventListener('click', async function () {
+      const scope = SoduWorkAPI.taskStorageKey?.('ops');
+      const isCurrent = () => scope === SoduWorkAPI.taskStorageKey?.('ops');
       const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
       if (!api || typeof api.recentPluginDraft !== 'function') return ctx.say('当前没有可读取的会话插件草稿');
       this.disabled = true;
       try {
         const got = await api.recentPluginDraft();
+        if (!isCurrent()) return;
         if (!got || got.ok === false) throw new Error(got && got.reason || '没有找到插件草稿');
+        if (got.kind === 'skill') return await UTILS.openSkillPackage(got, ctx, isCurrent);
         const preview = await SoduWorkAPI.preflightPluginDraft(got.body);
         ctx.closeModal(); deps.openLocalImport(got.body, preview, ctx);
       } catch (error) {

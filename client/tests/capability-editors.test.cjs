@@ -63,3 +63,92 @@ test('missing skill route gives an actionable version message without confusing 
     assert.match(nodes.get('#capModalFoot').innerHTML, /data-detail-retry/);
   }
 });
+
+test('skill installation commits once and keeps refresh failures separate from import failures', async () => {
+  const globals = { window: {} }, messages = [], nodes = new Map();
+  vm.runInNewContext(read('components/panels/panels-capability-editors.js'), globals);
+  function node(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { disabled: false, classList: { add() {} },
+      addEventListener(type, fn) { this[type] = fn; }, querySelector: node, querySelectorAll: () => [] });
+    return nodes.get(selector);
+  }
+  const layer = { hidden: false, querySelector: node };
+  let imports = 0, resolveImport, scope = 'alice';
+  const file = new File(['fixture'], 'weekly.skill');
+  const editor = globals.window.SoduWorkCapabilityEditors.create({
+    api: { taskStorageKey: () => scope, importMySkill: async got => {
+      assert.equal(got, file); imports++; await new Promise(resolve => { resolveImport = resolve; });
+    } }, h: String, say: message => messages.push(message), errorText: (_error, fallback) => fallback,
+    openModal: (title, subtitle) => { assert.equal(title, '安装技能'); assert.match(subtitle, /个人技能库/); layer.hidden = false; return layer; },
+    closeModal: () => { assert.equal(layer._installPending, false); layer.hidden = true; },
+    load: async () => { throw Error('offline'); },
+  });
+  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly', hasScripts: true }, files: [],
+    checks: [{ key: 'scripts', ok: false, label: 'Contains scripts' }] });
+  const button = node('#capImportDo');
+  const pending = button.click();
+  await button.click();
+  assert.equal(imports, 1);
+  assert.equal(layer._installPending, true);
+  resolveImport(); await pending;
+  assert.equal(layer.hidden, true);
+  assert.match(messages[0], /技能已安装并启用/);
+  assert.match(messages[1], /目录刷新失败/);
+  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly' }, files: [] });
+  button.disabled = false; scope = 'bob';
+  await button.click();
+  assert.equal(imports, 1, 'A prior account preview cannot install into the next account');
+  assert.throws(() => editor.openImportPreview(file, { checks: [{ ok: false }] }), /预检没有通过/);
+});
+
+test('skill preview reads remain bound to their account while installation is pending', async () => {
+  const nodes = new Map(), calls = [], rendered = [];
+  const files = ['SKILL.md', 'references/rules.md'];
+  const buttons = files.map(path => ({ dataset: { packageFile: path },
+    classList: { toggle() {} }, setAttribute() {} }));
+  function node(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { disabled: false, isConnected: true,
+      classList: { add() {}, toggle() {} }, setAttribute() {},
+      addEventListener(type, fn) { this[type] = fn; }, querySelector: node,
+      querySelectorAll: selector => selector === '[data-package-file]' ? buttons : [],
+      replaceChildren() {}, appendChild(child) { rendered.push(child.textContent); },
+    });
+    return nodes.get(selector);
+  }
+  const globals = { window: {}, document: { createElement: () => ({}) } };
+  vm.runInNewContext(read('components/panels/panels-capability-editors.js'), globals);
+  const layer = { hidden: false, querySelector: node };
+  let scope = 'alice', finishImport, finishRead;
+  const closeModal = () => {
+    if (layer._installPending) return;
+    layer.hidden = true; layer._skillView = null;
+  };
+  const editor = globals.window.SoduWorkCapabilityEditors.create({
+    api: { taskStorageKey: () => scope,
+      previewSkillContent: async (_file, path) => {
+        calls.push({ scope, path });
+        if (path === 'SKILL.md') return { kind: 'text', text: 'Initial preview' };
+        return new Promise(resolve => { finishRead = resolve; });
+      },
+      importMySkill: async () => new Promise(resolve => { finishImport = resolve; }),
+    }, h: String, say() {}, errorText: error => error.message,
+    openModal: () => layer, closeModal, load: async () => {},
+  });
+  editor.openImportPreview(new File(['fixture'], 'weekly.skill'), {
+    ok: true, skill: { name: 'weekly' }, files: files.map(path => ({ path })),
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const pendingRead = buttons[1].onclick();
+  const pendingImport = node('#capImportDo').click();
+  scope = 'bob'; closeModal();
+  assert.equal(layer.hidden, false, 'The installation keeps its dialog mounted while committing');
+  assert.equal(layer._installPending, true);
+  const before = calls.length;
+  await buttons[0].onclick();
+  assert.equal(calls.length, before, 'The old dialog cannot upload its package under the new account');
+  finishRead({ kind: 'text', text: 'Private old-account response' });
+  await pendingRead;
+  assert.deepEqual(rendered, ['Initial preview'], 'An old response cannot paint into the mounted dialog after switching accounts');
+  finishImport(); await pendingImport;
+  assert.equal(layer.hidden, true);
+});

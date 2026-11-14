@@ -150,9 +150,11 @@ test('result card includes every current-turn primary output, even when the answ
   {artifactId:'unmarked-shot',name:'capture.png',kind:'image',changedInTurn:true},
   {artifactId:'evidence',name:'trace.png',changedInTurn:true,processEvidence:true},
   {artifactId:'draft',name:'soduwork-plugin-draft.json',changedInTurn:true,pluginDraft:true},
+  {artifactId:'legacy-skill',name:'soduwork-plugin-draft.json',changedInTurn:true,pluginDraft:true,skillPackage:true},
+  {artifactId:'native-skill',name:'created.skill',changedInTurn:true,pluginDraft:true,skillPackage:true},
  ];
  const selected=h.api._selectOutputFiles(files,new Set(['named']),true,new Set());
- assert.deepEqual(selected.map(file=>file.artifactId),['named','new-a','new-b']);
+ assert.deepEqual(selected.map(file=>file.artifactId),['native-skill','named','new-a','new-b']);
  assert.deepEqual(h.api._selectOutputFiles(files,new Set(['validation-shot']),false,new Set()).map(file=>file.artifactId),[]);
  assert.deepEqual(h.api._selectOutputFiles(files,new Set(),false,new Set()).map(file=>file.artifactId),[]);
 });

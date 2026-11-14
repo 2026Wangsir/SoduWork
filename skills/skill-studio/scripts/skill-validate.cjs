@@ -154,6 +154,9 @@ function validate(source) {
   return { ...tree, meta, body, warnings, extra };
 }
 function checkTargets(result, targets) {
+  if (targets.includes('soduwork') && Object.keys(result.files).some(name => name !== 'SKILL.md' && name.endsWith('/SKILL.md'))) {
+    fail('SoduWork requires exactly one SKILL.md; rename nested examples or export portable only');
+  }
   const unknown = result.extra.filter(k => !CLAUDE.has(k));
   if (unknown.length && targets.some(t => t !== 'portable')) fail('Unknown frontmatter requires manual adaptation; export portable only: ' + unknown.join(', '));
   if (result.extra.some(k => CLAUDE.has(k)) && targets.some(t => !['portable', 'claude'].includes(t))) {

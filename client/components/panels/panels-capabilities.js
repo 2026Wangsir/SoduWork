@@ -474,6 +474,7 @@
       openMcpEditor: openMcpEditor,
       mcpCatalog: function () { return mcp; },
       openModal: openModal, closeModal: closeModal, say: say, errorText: errorText,
+      openSkillImport: (file, preview) => capabilityEditors().openImportPreview(file, preview),
       refresh: function () { render(); },
       clearSearch: function () {
         query = ''; const search = document.getElementById('capSearch');

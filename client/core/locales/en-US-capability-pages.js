@@ -1,5 +1,16 @@
 (function (global) {
   const messages = {
+    "安装技能": "Install skill",
+    "保存到当前账号的个人技能库并启用，可在「技能」页管理。": "Save to your account’s personal skill library and enable it. Manage it on the Skills tab.",
+    "安装并启用": "Install and enable",
+    "技能没有安装成功": "Skill installation failed",
+    "技能已安装并启用，可在「技能」页找到": "Skill installed and enabled. Find it on the Skills tab.",
+    "技能已安装，目录刷新失败，请点击刷新重试": "Skill installed, but the catalog could not refresh. Try refreshing again.",
+    "技能包预检没有通过": "The skill package did not pass preflight checks",
+    "技能安装入口不可用，请更新并重启 SoduWork": "Skill installation is unavailable. Update and restart SoduWork",
+    "技能包检查通过": "Skill package checks passed",
+    "技能已生成": "Skill created",
+    "检查内容后，安装到我的技能库": "Review the contents and install to my skill library",
     "导出连接配置": "Export connector settings",
     "导出 JSON": "Export JSON",
     "常用连接器": "Popular connectors",

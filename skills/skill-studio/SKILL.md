@@ -38,7 +38,7 @@ node scripts/skill-package.cjs build --source /work/candidate/purchase-check --o
 脚本路径相对于本 Skill 资源目录；source/out 使用真实绝对路径并正确引用含空格路径。out 必须是不存在的新目录。
 调整时增加 `--baseline /work/original/purchase-check`。默认阻止文件丢失；只有用户明确同意删除清单时才使用 `--allow-removals`。默认拒绝覆盖已有输出。
 
-targets 支持 portable、codex、claude、copilot、soduwork，逗号分隔。SoduWork 目标同时生成可安装的 soduwork-plugin-draft.json 和包含真实 Skill 的 .soduwork-plugin；前者仅供安装，最终交付仍须包含实际 ZIP/Skill 文件。
+targets 支持 portable、codex、claude、copilot、soduwork，逗号分隔。SoduWork 目标生成 .skill 技能包，包内以技能名目录保存 SKILL.md 及全部资源。通过技能导入入口检查并安装，安装后归入技能列表。保留该格式，不额外生成插件安装草稿或 .soduwork-plugin。
 工具检查命名、必需字段、引用、路径、体积、常见凭据与变更清单；只接受文档列出的安全 YAML 子集，不声称实现完整 YAML 或自动证明业务正确。
 
 ## 4. 业务验收与交付
@@ -47,4 +47,4 @@ targets 支持 portable、codex、claude、copilot、soduwork，逗号分隔。S
 
 检查生成的 skill-report.json、CHANGES.md、INSTALL.md 和各目标压缩包。报告区分静态校验与业务实测；指出宿主差异、依赖和未验证项目。最终给出实际可打开的文件链接和简短使用方式。
 
-在 SoduWork 中合并当前 .soduwork/delivery.json 的已有成果登记，不覆盖其他成果；把用户选择平台的压缩包作为本次主要交付，另外登记安装草稿、验证报告和业务测试报告。用户明确要求安装/上传时才使用现有安装/审核流程；不能把个人试用说成团队审批已完成。
+在 SoduWork 中合并当前 .soduwork/delivery.json 的已有成果登记，不覆盖其他成果；把用户选择平台的压缩包（包括 SoduWork 的 .skill）作为本次主要交付，另外登记验证报告和业务测试报告。用户明确要求安装/上传时才使用现有技能导入/共享流程；不能把个人试用说成团队审批已完成。

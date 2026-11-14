@@ -85,6 +85,15 @@ function render(files) {
 const copyLabel = card =>
   card.children.find(c => c.className === 'nplugin-draft-copy').children[0].textContent;
 
+test('skill packages identify their destination as the skill library', () => {
+  const root = render([archive('skill:weekly-summary', { name: 'weekly-summary.skill', skillPackage: true })]);
+  const card = cardsOf(root)[0];
+  assert.equal(copyLabel(card), '技能已生成');
+  assert.equal(card.querySelector('.nplugin-draft-copy').children[1].textContent, '检查内容后，安装到我的技能库');
+  assert.match(card.querySelector('.nplugin-draft-icon').innerHTML, /circle/);
+  assert.equal(card.querySelector('[data-install-plugin-draft]').textContent, '检查并安装');
+});
+
 test('resource-only repair renews the install card at the repaired reply and clears its stale error', () => {
   const { root, snapshot } = conversation();
   const original = manifest('name:sales-qa', { at: 130, pluginRevisionAt: 130, pluginRevision: 'before' });

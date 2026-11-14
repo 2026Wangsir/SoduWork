@@ -170,6 +170,24 @@ test('late mutation success cannot notify a different account or a later login o
   }
 });
 
+test('skill previews cannot retry an old account upload with a new account session', async () => {
+  for (const preview of [
+    api => api.preflightMySkill(new File(['private skill'], 'fixture.skill')),
+    api => api.previewSkillContent(new File(['private skill'], 'fixture.skill'), 'SKILL.md', 0),
+  ]) {
+    const f = apiFixture(); await f.signIn('alice');
+    let complete;
+    f.fetch = () => new Promise(resolve => { complete = resolve; });
+    const pending = preview(f.api); await flush();
+    assert.equal(f.calls.length, 1);
+    await f.signIn('bob');
+    f.fetch = async () => new Response('{"ok":true}');
+    complete(new Response('{"detail":"expired"}', { status: 401 }));
+    await assert.rejects(pending, error => error.code === 'STALE_TASK_SCOPE');
+    assert.equal(f.calls.length, 1);
+  }
+});
+
 test('a replacement conversation picker gets the coalesced catalog after the old view closes', async () => {
   const f = fixture(); const first = f.binding._loadChatSkills();
   f.ctx._skillLoadSeq++;

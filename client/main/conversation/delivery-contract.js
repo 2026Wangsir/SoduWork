@@ -35,6 +35,7 @@ const KINDS = Object.freeze({
   '.m4v': 'video',
   '.ogv': 'video',
   '.zip': 'archive',
+  '.skill': 'archive',
   '.7z': 'archive',
   '.tar': 'archive',
   '.gz': 'archive',

@@ -62,6 +62,17 @@ test('cloud delivery keeps same-named files from different paths', () => {
   assert.deepEqual(Array.from(rows, row => String(row.relative)), ['docs/README.md', 'examples/README.md']);
 });
 
+test('skill archives remain downloadable while legacy installation wrappers stay out of deliveries', () => {
+  const deliveries = helper();
+  const files = [
+    { artifactId: 'skill', name: 'created-skill.skill', pluginDraft: true, skillPackage: true },
+    { artifactId: 'legacy-draft', name: 'soduwork-plugin-draft.json', pluginDraft: true, skillPackage: true },
+    { artifactId: 'legacy-archive', name: 'created-skill.soduwork-plugin', pluginDraft: true, skillPackage: true },
+    { artifactId: 'plugin', name: 'soduwork-plugin-draft.json', pluginDraft: true },
+  ];
+  assert.deepEqual(Array.from(deliveries._groupFiles(files, ''), file => file.artifactId), ['skill']);
+});
+
 test('settled local and cloud outputs render a delivery card without the unused continuation arrow', () => {
   for (const remote of [false, true]) {
     const child = () => ({ textContent: '', hidden: false, dataset: {}, classList: { toggle() {} },

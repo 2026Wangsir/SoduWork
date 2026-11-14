@@ -124,6 +124,40 @@ test('conversation action preflights exact draft before showing installation con
   assert.deepEqual(messages,['制作中']);assert.equal(button.disabled,false);assert.equal(button.textContent,'检查并安装');
 });
 
+test('conversation skill artifacts use the skill preflight and installation flow', async () => {
+  const calls = [];
+  const bytes = Buffer.from('fixture skill archive');
+  const result = { ok: true, kind: 'skill', skillPackage: { name: 'weekly-summary.skill', base64: bytes.toString('base64') } };
+  let scope = 'alice';
+  const window = {
+    soduWorkAPI: { conversationSession: { pluginDraft: async () => result } },
+    SoduWorkAPI: {
+      taskStorageKey: () => scope,
+      preflightMySkill: async file => {
+        assert.equal(file.name, 'weekly-summary.skill');
+        assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
+        calls.push('skill-preflight');
+        return { ok: true, skill: { name: 'weekly-summary', hasScripts: true },
+          checks: [{ ok: true, label: 'Checked' }, { ok: false, key: 'scripts', label: 'Contains scripts' }] };
+      },
+      preflightPluginDraft: () => assert.fail('A skill must not enter plugin preflight'),
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/panels/panels-plugin-maker-utils.js'), 'utf8'),
+    { window, File, atob });
+  const button = { disabled: false, textContent: '检查并安装' };
+  const ctx = { openSkillImport: (file, preview) => {
+    assert.equal(file.name, 'weekly-summary.skill');
+    assert.equal(preview.skill.name, 'weekly-summary'); calls.push('skill-preview');
+  }, say: () => {} };
+  await window.SoduWorkPluginMakerUtils.openConversationDraft('chat', 'artifact', button, ctx);
+  assert.deepEqual(calls, ['skill-preflight', 'skill-preview']);
+  assert.equal(button.disabled, false);
+  window.SoduWorkAPI.preflightMySkill = async () => { scope = 'bob'; return { ok: true }; };
+  await window.SoduWorkPluginMakerUtils.openConversationDraft('chat', 'artifact', button, ctx);
+  assert.deepEqual(calls, ['skill-preflight', 'skill-preview'], 'A stale preflight cannot open an install dialog for another account');
+});
+
 test('platform account is restored before requesting Feishu MCP authorization', async t => {
   const {app} = fixture(t), calls=[];
   const item=personal.create(app,{...body,template:'connector',platforms:['feishu']}).plugin;

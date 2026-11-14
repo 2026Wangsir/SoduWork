@@ -211,7 +211,7 @@
     // deliverable and the files stay in the workspace/package.
     const hasWebsiteOutput = Boolean(latest && (files || []).some(file =>
       file.changedInTurn && isWebsiteFile(file)));
-    const isArchive = file => file.kind === 'archive' || /\.zip$/i.test(String(file.name || file.relative || file.path || ''));
+    const isArchive = file => file.kind === 'archive' || /\.(?:zip|skill)$/i.test(String(file.name || file.relative || file.path || ''));
     return (files || []).filter(file => {
       const explicit = linked.has(key(file));
       const currentPrimary = Boolean(latest && file.changedInTurn &&
@@ -222,7 +222,8 @@
           ? file.primary === true && !hasWebsiteOutput
           : file.primary !== false));
       return file.primary !== false && (explicit || currentPrimary) && canSave(file) &&
-        !file.processEvidence && (!currentPrimary || !file.pluginDraft) &&
+        !file.processEvidence && (!currentPrimary || !file.pluginDraft ||
+          file.skillPackage && /\.skill$/i.test(file.name || file.relative || file.path || '')) &&
         !rendered.has(key(file));
     }).sort((left, right) => Number(isArchive(right)) - Number(isArchive(left)));
   }

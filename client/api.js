@@ -1767,7 +1767,8 @@
       mark(true); return r;
     },
     async preflightMySkill(file) {
-      var r = await uploadFile('/skills/preflight', file);
+      var scope = skillMutationScope();
+      var r = await uploadFile('/skills/preflight', file, false, null, scope.key);
       mark(true); return r;
     },
     skillDetails(name) { return jfetch('/skills/' + encodeURIComponent(name) + '/details'); },
@@ -1776,8 +1777,9 @@
         new URLSearchParams({ checksum, path, offset: offset || 0 }));
     },
     previewSkillContent(file, path, offset) {
+      var scope = skillMutationScope();
       return uploadFile('/skills/preflight/content?' +
-        new URLSearchParams({ path, offset: offset || 0 }), file);
+        new URLSearchParams({ path, offset: offset || 0 }), file, false, null, scope.key);
     },
     shareSkill(name, body) {
       return jfetch('/skills/' + encodeURIComponent(name) + '/share', {

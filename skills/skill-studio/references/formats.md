@@ -8,9 +8,9 @@
 | codex | .agents/skills/技能名/SKILL.md | 解压到项目根；保留 agents/openai.yaml |
 | claude | .claude/skills/技能名/SKILL.md | 解压到项目根，按 Claude Code 的 Skill 入口调用 |
 | copilot | .github/skills/技能名/SKILL.md | 解压到项目根，在支持 Agent Skills 的 Copilot 中使用 |
-| soduwork | plugin.json + skills/插件标识/references/source/SKILL.md | .soduwork-plugin 走现有导入审核；本机使用同目录的安装草稿 |
+| soduwork | 技能名/SKILL.md | .skill 走现有技能预检与导入，安装后在技能列表中启用 |
 
-SoduWork 使用 skill- 前缀的插件标识，原始 Skill 名称保持不变；资源按 SoduWork 现有完整性校验布局封装，ZIP 和本机草稿都保留实际材料。SoduWork 现有导入器不接受同时包含预发布标记和构建元数据的版本，遇到时工具阻止导出并提示使用正式版本。
+SoduWork 的 .skill 是标准 ZIP，保留原始 Skill 名称及全部实际材料。包中仅包含一个完整技能目录；安装预检检查路径、文件数量、大小、frontmatter 与资源。版本用于导出文件名与报告，技能内容以校验摘要标识。
 
 只有 Codex 目标在缺少 agents/openai.yaml 时补充展示字段；已有文件原样保留，不覆盖策略。其他文件逐字节保留。无需为纯 Skill 伪造 .codex-plugin/plugin.json、MCP 服务或工作流。
 

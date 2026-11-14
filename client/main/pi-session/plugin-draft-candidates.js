@@ -12,6 +12,8 @@ const DRAFT_NAME = 'soduwork-plugin-draft.json';
 const DRAFT_NAMES = [DRAFT_NAME];
 const MAX_BYTES = 24 * 1024 * 1024;
 const ARCHIVE = /\.soduwork-plugin$/i;
+const SKILL_ARCHIVE = /\.skill$/i;
+const skillPackages = require('./skill-package-candidate');
 const metadataCache = new Map();
 
 function parseJson(bytes) {
@@ -25,15 +27,23 @@ function metadata(file, stat, archive = false) {
   let body = null;
   if (stat.size <= MAX_BYTES) {
     try {
-      const parsed = archive
-        ? require('../plugin-package-reader.cjs').readPersonalArchive(fs.readFileSync(file))
-        : parseJson(fs.readFileSync(file, 'utf8'));
-      if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
-        // Cache discovery metadata only, never the potentially large embedded resources.
-        body = Object.fromEntries(['name', 'key', 'version', 'template', 'description', 'instructions']
-          .map(key => [key, typeof parsed[key] === 'string' ? parsed[key].slice(0, 256) : '']));
-        body.resourcePaths = !archive && Array.isArray(parsed.resources) && parsed.resources.length <= resources.MAX_FILES
-          ? parsed.resources.map(item => item?.path).filter(value => typeof value === 'string' && value.length <= 240) : [];
+      if (SKILL_ARCHIVE.test(file)) {
+        const skill = skillPackages.read(fs.readFileSync(file));
+        body = { name: skill.name, key: skill.name, skillPackage: true };
+      } else {
+        const bytes = fs.readFileSync(file);
+        const parsed = archive
+          ? require('../plugin-package-reader.cjs').readPersonalArchive(bytes)
+          : parseJson(bytes.toString('utf8'));
+        if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+          // Cache discovery metadata only, never the potentially large embedded resources.
+          body = Object.fromEntries(['name', 'key', 'version', 'template', 'description', 'instructions']
+            .map(key => [key, typeof parsed[key] === 'string' ? parsed[key].slice(0, 256) : '']));
+          body.resourcePaths = !archive && Array.isArray(parsed.resources) && parsed.resources.length <= resources.MAX_FILES
+            ? parsed.resources.map(item => item?.path).filter(value => typeof value === 'string' && value.length <= 240) : [];
+          const skill = skillPackages.legacy(parsed, undefined, archive ? bytes : undefined);
+          if (skill) Object.assign(body, { name: skill.name, key: skill.name, skillPackage: true });
+        }
       }
     } catch (_) { /* Validate malformed drafts on click. */ }
   }
@@ -68,7 +78,8 @@ function describe(cwd, file) {
   const target = path.resolve(file.path), name = path.basename(target);
   const canonical = DRAFT_NAMES.includes(name.toLowerCase());
   const archive = ARCHIVE.test(name);
-  if (!canonical && !archive && name.toLowerCase() !== 'plugin.json') return null;
+  const skillArchive = SKILL_ARCHIVE.test(name);
+  if (!canonical && !archive && !skillArchive && name.toLowerCase() !== 'plugin.json') return null;
   let stat;
   try {
     resources.assertNoLinks(path.resolve(cwd), target);
@@ -76,13 +87,13 @@ function describe(cwd, file) {
     if (!stat.isFile()) return null;
   } catch (_) { return null; }
   const body = metadata(target, stat, archive);
-  if (!canonical && !archive && !(body && ['method', 'connector', 'workflow'].includes(body.template) &&
+  if (!canonical && !archive && !skillArchive && !(body && ['method', 'connector', 'workflow'].includes(body.template) &&
       ['name', 'description', 'instructions'].every(key => typeof body[key] === 'string' && body[key].trim()))) return null;
   return { ...file, path: target, name,
     relative: path.relative(cwd, target).split(path.sep).join('/'),
     size: stat.size, at: file.at == null ? Math.round(stat.mtimeMs) : file.at,
     ...revision(cwd, target, stat, body, file.at == null ? Math.round(stat.mtimeMs) : file.at),
-    pluginDraft: true, pluginPackage: archive,
+    pluginDraft: true, pluginPackage: archive, skillPackage: skillArchive || body?.skillPackage === true,
     pluginName: body && typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '',
     pluginKey: body && typeof body.key === 'string' ? body.key.trim().slice(0, 64) : '',
     pluginVersion: body && typeof body.version === 'string' ? body.version.trim().slice(0, 40) : '',
@@ -152,6 +163,7 @@ function packageSlug(row) {
 
 function candidateIdentity(row) {
   const key = String(row.pluginKey || '').trim();
+  if (row.skillPackage) return key ? 'skill:' + key : 'skill-file:' + row.path.toLowerCase();
   if (key) return 'key:' + key;
   if (row.pluginPackage) {
     const slug = packageSlug(row);
@@ -168,7 +180,7 @@ function mergePluginCandidates(rows) {
   // legacy filename slug when package metadata is unavailable).
   const byDir = new Map();
   rows.forEach(row => {
-    const dir = path.dirname(row.path).toLowerCase();
+    const dir = path.dirname(row.path).toLowerCase() + '\0' + (row.skillPackage ? 'skill' : 'plugin');
     if (!byDir.has(dir)) byDir.set(dir, { manifests: [], packages: [] });
     (row.pluginPackage ? byDir.get(dir).packages : byDir.get(dir).manifests).push(row);
   });
@@ -201,5 +213,5 @@ function mergePluginCandidates(rows) {
   return kept;
 }
 
-module.exports = { DRAFT_NAME, MAX_BYTES, ARCHIVE, parseJson, describe, collect, withinSnapshot, sessionSince,
+module.exports = { DRAFT_NAME, MAX_BYTES, ARCHIVE, SKILL_ARCHIVE, parseJson, describe, collect, withinSnapshot, sessionSince,
   mergePluginCandidates, slugName, packageSlug, candidateIdentity };
