@@ -70,10 +70,11 @@ async def _resolve_catalog(session, client, model_name="", modality="chat", *, a
         conf = await resolver(session, client, model_name, modality)
     if getattr(client, "user_ref", None):
         if conf:
-            personal_chat = modality == "chat" and getattr(client, "_proxy_quota_runtime", "") == "pi"
+            from ..services import model_quota
+            personal_chat = modality == "chat" and bool(model_quota.managed_runtime(
+                getattr(client, "_proxy_quota_runtime", "")))
             conf = {**conf, "quotaScope": conf.get("fundingScope", "platform")
                     if personal_chat else "platform"}
-            from ..services import model_quota
             prior_binding = getattr(client, "_proxy_quota_binding", "")
             if personal_chat and prior_binding and prior_binding != model_quota.binding(conf):
                 raise HTTPException(409, "模型凭据已变化，请重新选择模型后继续")
@@ -453,8 +454,10 @@ async def _client_by_bearer(
             if not settings.device_auth_compat:
                 raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         else:
+            from ..services.model_quota import managed_runtime
             await enforce_client_quota(session, client,
-                conf={"quotaScope": "personal"} if getattr(client, "_proxy_quota_runtime", "") == "pi" else None)
+                conf={"quotaScope": "personal"} if managed_runtime(
+                    getattr(client, "_proxy_quota_runtime", "")) else None)
             return client
         dev, _, sec = raw.partition(":")
         dev, sec = dev.strip(), sec.strip()
@@ -503,9 +506,8 @@ async def proxy_config(
     want = str(model or "").strip() or (
         "" if custom_acp or ignore_preference else model_catalog.agent_model(client, cli)
     )
-    # Only Pi implements per-call funding receipts. Other runtimes and old
-    # proxy tickets retain platform admission until they negotiate that contract.
-    client._proxy_quota_runtime = "pi" if cli == "pi" else ""
+    # Signed proxy tickets and usage receipts bind funding to this exact runtime.
+    client._proxy_quota_runtime = cli
     usable = await model_catalog.usable(session, client)
     if want and not any(item["name"] == want for item in usable):
         return {"ok": False, "path": PROXY_PATH,
@@ -523,7 +525,7 @@ async def proxy_config(
     video_models = await model_catalog.usable(session, client, "video")
     from ..services import model_quota
     proxy_key, expires_in = device_auth.issue_proxy_ticket(client, quota_runtime=cli,
-        quota_binding=model_quota.binding(conf) if cli == "pi" else "")
+        quota_binding=model_quota.binding(conf))
     mcp_key, mcp_expires_in = device_auth.issue_mcp_ticket(client)
     image_routing = model_catalog.normalize_image_routing(conf.get("imageRouting"))
     # Catalog values may come from an administrator-edited JSON payload. Keep
@@ -553,8 +555,8 @@ async def proxy_config(
         thinking_fields["thinkingAlwaysOn"] = True
     return {"ok": True, "path": PROXY_PATH,
             "quotaVersion": model_quota.VERSION, "quotaScope": conf.get("quotaScope", "platform"),
-            "personalQuotaSupported": cli == "pi",
-            **({"quotaUsageToken": model_quota.usage_token(client, conf)} if cli == "pi" else {}),
+            "personalQuotaSupported": True,
+            "quotaUsageToken": model_quota.usage_token(client, conf, cli),
             "key": proxy_key, "expiresIn": expires_in,
             "mcpKey": mcp_key, "mcpExpiresIn": mcp_expires_in,
             "model": conf["model"],

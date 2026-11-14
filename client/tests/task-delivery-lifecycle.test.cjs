@@ -31,6 +31,33 @@ test('task delivery uses the asynchronous turn boundary and captures website dep
   assert.equal(payload.files.find(x=>x.name.endsWith('index.html')).category, 'primary');
 });
 
+test('local model delivery retains real artifacts without storing or uploading model references', async t => {
+  const f = workspace(t), ref = 'local:model-' + 'a'.repeat(32);
+  f.write('report.md', 'Completed task report');
+  const requests = [];
+  t.mock.method(global, 'fetch', async (url, options) => {
+    requests.push({ url, body: options.body });
+    return Response.json({ ok: true });
+  });
+  for (const model of [ref, 'local:private:wire-model', 'image::device:private::' + ref,
+    { id: ref, localOnly: true }]) {
+    f.handle.model = model;
+    const payload = await delivery.capture(f.handle, 'completed');
+    assert.equal(payload.model, '');
+    assert.deepEqual(payload.files.map(row => row.name), ['report.md']);
+    assert.doesNotMatch(JSON.stringify(payload), /local:|wire-model/);
+    await delivery.send({ hub: 'https://fixture.invalid' }, '/tasks/task',
+      { conversationId: 'chat', turnId: 'turn' }, { ...payload, model });
+    const body = requests.at(-1).body;
+    assert.equal(body.get('model'), '');
+    assert.equal(body.get('conversationId'), 'chat');
+    assert.equal(body.get('outcome'), 'completed');
+    assert.equal(await body.get('files').text(), 'Completed task report');
+  }
+  f.handle.model = 'managed-model';
+  assert.equal((await delivery.capture(f.handle, 'completed')).model, 'managed-model');
+});
+
 test('a changed dependency revises its unchanged entry but an unchanged prior delivery is not resubmitted', async t => {
   const f = workspace(t), now = Date.now();
   f.since(now - 1000);
@@ -65,6 +92,8 @@ test('local result cards and task transport agree on an entry changed only throu
 
 test('native skill packages survive local indexing and task delivery alongside installation candidates', async t => {
   const f = workspace(t);
+  const localRef = 'local:model-' + 'b'.repeat(32);
+  f.handle.model = localRef;
   const bytes = require('../../skills/skill-studio/scripts/skill-zip.cjs').zip({
     'created-skill/SKILL.md': Buffer.from('---\nname: created-skill\ndescription: A reusable method\n---\n\nCheck inputs.\n'),
   });
@@ -81,8 +110,21 @@ test('native skill packages survive local indexing and task delivery alongside i
   assert.equal(f.handle.deliverySync.currentTurn, true);
   assert.equal(f.handle.deliverySync.artifactIds.length, 1);
   const payload = await delivery.capture(f.handle, 'completed');
+  assert.equal(payload.model, '');
   assert.deepEqual(payload.files.map(file => file.name), ['created-skill.skill']);
   assert.deepEqual(Buffer.from(payload.files[0].data, 'base64'), bytes);
+  const uploads = [];
+  t.mock.method(global, 'fetch', async (url, options) => {
+    uploads.push({ url, body: options.body });
+    return Response.json({ ok: true });
+  });
+  await delivery.send(identity, '/tasks/task', { conversationId: 'chat', turnId: 'skill-turn' },
+    { ...payload, model: 'image::device:private::' + localRef });
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].body.get('model'), '');
+  assert.equal(uploads[0].body.get('paths'), 'created-skill.skill');
+  assert.equal(uploads[0].body.get('categories'), 'primary');
+  assert.deepEqual(Buffer.from(await uploads[0].body.get('files').arrayBuffer()), bytes);
   f.write('legacy/soduwork-plugin-draft.json', JSON.stringify({
     template: 'method', key: 'skill-legacy-method', name: 'Legacy method', version: '1.0.0',
     description: 'A method exported by the older Skill Studio',

@@ -380,11 +380,17 @@ async function _schmCreateAutomation(text, intent, options) {
   }
   const hasExplicitModel = Boolean(options && Object.prototype.hasOwnProperty.call(options, 'modelName'));
   const requestedModel = hasExplicitModel ? String(options.modelName || '').trim() : '';
-  const acceptsModel = selectedAgent.modelPick !== false || selectedAgent.nativeModelPick === true;
+  const acceptsModel = typeof _schAgentAllowsModel === 'function'
+    ? _schAgentAllowsModel(selectedAgent.id)
+    : selectedAgent.modelPick !== false || selectedAgent.nativeModelPick === true;
   const selectedModel = acceptsModel
     ? (hasExplicitModel ? requestedModel
-      : (selectedAgent.nativeModelPick ? '' : String(_schDefaultModel || '')))
+      : (selectedAgent.nativeModelPick ? '' : _schDefaultModelFor(selectedAgent.id)))
     : '';
+  if (selectedModel && !_schModelOptionsFor(selectedAgent.id).some(item => item.name === selectedModel)) {
+    if (typeof petSay === 'function') petSay('原模型或默认模型已不可用，请主动选择可用模型');
+    return false;
+  }
   try {
     await SoduWorkAPI.createSchedule({
       title: text.slice(0, 60), note: note.slice(0, 8000),
@@ -397,6 +403,8 @@ async function _schmCreateAutomation(text, intent, options) {
       startDate: sch.every === 'once' || sch.every === 'custom' ? null : sch.startDate || null,
       endDate: sch.every === 'once' || sch.every === 'custom' ? null : sch.endDate || null, timeZone,
       assigneeId: selectedAgent.id, assigneeType: 'agent',
+      assigneeMode: String(selectedAgent.mode || selectedAgent.locationMode || ''),
+      assigneeClientId: String(selectedAgent.clientId || ''),
       modelName: selectedModel,
       repoId: String(sch.repoId || options?.repoId || '').trim(),
       personalPluginKey: methodKey,

@@ -75,6 +75,20 @@ function fixture({ fresh = false, attachments, send, files: initialFiles } = {})
   return { ctx, input, bridge, requests, notices, added, plugins, switchTo, paints: () => paints };
 }
 
+test('a deleted local model blocks sending and preserves the draft until a valid model is explicitly selected', async () => {
+  const f = fixture(); f.input.value = 'Keep this original draft';
+  f.ctx._snap.modelSelection = { name: 'local:deleted', model: {
+    id: 'local:deleted', label: '原本地模型已删除或不可用', unavailable: true, historicalLocal: true,
+  } };
+  assert.equal(await f.ctx._sendCore(), false);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.input.value, 'Keep this original draft');
+  assert.match(JSON.stringify(f.ctx._snap), /主动选择可用模型/);
+  f.ctx._snap.modelSelection = { name: 'valid-model', model: { id: 'valid-model' } };
+  assert.equal(await f.ctx._sendCore(), true);
+  assert.equal(f.requests.length, 1);
+});
+
 test('folded original request reaches plugin inference, send and failure receipt intact', async () => {
   const original = '  #1 原始要求\r\n' + '按原文执行，不解析为另一个需求。'.repeat(130) + '\n\n';
   const suffix = '追加约束  ';

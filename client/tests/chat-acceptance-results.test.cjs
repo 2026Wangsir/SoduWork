@@ -20,6 +20,72 @@ function fixture() {
   return { window, ctx, create, invalidations: () => invalidations };
 }
 
+test('native analysis completion renders without a heading and pins controls to the exact review version', async () => {
+  const runtime = await require('./fixtures/acceptance-analysis-runtime.cjs').create({ cwd: __dirname });
+  await runtime.run();
+  const f = fixture(), { review } = runtime;
+  f.ctx._snap = runtime.acc.snapshot();
+  f.ctx._sessionOptions = { taskRef: review.task.id, acceptanceSession: true, approvalId: review.approvalId };
+  f.ctx._collaborationTask = { ...review.task };
+  f.ctx._collaborationTrace = { approvals: [{ id: review.approvalId, action: 'review', status: 'pending',
+    artifactVersionId: review.artifactVersionId }] };
+  const helper = f.create(), text = f.ctx._snap.messages.at(-1).blocks[0].text;
+  assert.doesNotMatch(text, /【验收分析结果】/);
+  assert.equal(helper.supersededText(1, 0), true);
+  const html = () => helper.html(text, '2:0', 2);
+  assert.match(html(), /nacceptance-result is-analysis/);
+  assert.match(html(), /逐项核验/);
+  assert.match(html(), /data-acceptance-result-action="approve"/);
+  assert.doesNotMatch(html(), /local:model-|acceptance-analysis:v1:/);
+  f.ctx._collaborationTrace.approvals[0].artifactVersionId = 'replacement';
+  assert.doesNotMatch(html(), /data-acceptance-result-action/);
+  helper.reset();
+  assert.doesNotMatch(html(), /data-acceptance-result-action/, 'reopen cannot attach an old result to the new artifact');
+  f.ctx._collaborationTrace.approvals[0].artifactVersionId = review.artifactVersionId;
+  f.ctx._collaborationTask.requirementVersion++;
+  assert.doesNotMatch(html(), /data-acceptance-result-action/);
+  f.ctx._collaborationTask.requirementVersion--;
+  f.ctx._snap.messages.push({ role: 'user', submissionId: 'later-turn' });
+  assert.doesNotMatch(html(), /data-acceptance-result-action/);
+});
+
+test('analysis cannot acquire unrelated direct controls or replace a different or unfinished reply', async () => {
+  const runtime = await require('./fixtures/acceptance-analysis-runtime.cjs').create({ cwd: __dirname });
+  await runtime.run();
+  const f = fixture();
+  f.ctx._snap = runtime.acc.snapshot();
+  f.ctx._sessionOptions = { taskRef: runtime.review.task.id };
+  f.ctx._collaborationTask = { ...runtime.review.task };
+  f.ctx._collaborationTrace = { artifacts: [{ id: runtime.review.artifactVersionId }], approvals: [] };
+  const helper = f.create(), receipt = f.ctx._snap.messages.at(-1);
+  assert.doesNotMatch(helper.html(receipt.blocks[0].text, '2:0', 2), /data-acceptance-result-action/,
+    'a pool receipt cannot acquire direct review controls when its approval is absent');
+  f.ctx._snap.messages[1].blocks[0].text = 'Different output';
+  assert.equal(helper.supersededText(1, 0), false);
+  f.ctx._snap.messages[1].done = false;
+  assert.equal(helper.html('【验收分析结果】\nPartial', '1:0', 1), '');
+});
+
+test('direct review analysis requires the latest recorded artifact, including after history restore', async () => {
+  const runtime = await require('./fixtures/acceptance-analysis-runtime.cjs').create({ cwd: __dirname,
+    approvalId: 'direct:acceptance-task' });
+  await runtime.run();
+  const f = fixture();
+  const restored = require('../main/pi-session/event-stream').create();
+  require('../main/pi-session/history-seed').seed(restored, { state: { messages: runtime.transcript() } }, {});
+  f.ctx._snap = restored.snapshot();
+  f.ctx._sessionOptions = { taskRef: runtime.review.task.id };
+  f.ctx._collaborationTask = runtime.review.task;
+  f.ctx._collaborationTrace = { artifacts: [{ id: runtime.review.artifactVersionId }], approvals: [] };
+  const helper = f.create(), receipt = f.ctx._snap.messages.at(-1);
+  const html = () => helper.html(receipt.blocks[0].text, '2:0', 2);
+  assert.match(html(), /data-acceptance-result-action="approve"/);
+  f.ctx._collaborationTrace.artifacts.push({ id: 'new-direct-artifact' });
+  assert.doesNotMatch(html(), /data-acceptance-result-action/);
+  helper.reset();
+  assert.doesNotMatch(html(), /data-acceptance-result-action/);
+});
+
 test('another reviewer decision never becomes an executor operation receipt', () => {
   const f = fixture();
   f.window.__teamCap = {meId:'executor'};

@@ -135,7 +135,26 @@ function reportOf(file, criteria) {
   } catch (_) { throw Error('没有取得完整有效的验收报告，需求仍待验收。请重试分析或使用手动验收。'); }
 }
 
-async function prepare({ identity, taskId, instruction = '', requested = {}, runtime, request }) {
+function analysisReply(result, turnId) {
+  const messages = result?.snapshot?.messages;
+  if (!Array.isArray(messages)) throw Error('没有取得本轮完整的验收分析结果，请重试分析。');
+  const users = messages.flatMap((message, index) => message.role === 'user' &&
+    message.submissionId === turnId ? [index] : []);
+  const lastUser = messages.findLastIndex(message => message.role === 'user');
+  const message = messages.at(-1);
+  const blocks = message?.blocks || [];
+  const lastTool = blocks.findLastIndex(block => block.kind === 'toolcall');
+  const output = blocks.slice(lastTool + 1).filter(block => block.kind === 'text');
+  const text = output.map(block => String(block.text || '')).join('\n\n').trim();
+  if (users.length !== 1 || users[0] !== lastUser || lastUser >= messages.length - 1 ||
+      message?.role !== 'assistant' || message.done === false || message.errorMessage ||
+      /^(tool_?use|tool_?calls?|error|aborted|cancelled|canceled|length|max_tokens)$/i.test(message.stopReason || '') ||
+      blocks.at(-1)?.kind !== 'text' || output.some(block => block.done === false) || !text)
+    throw Error('没有取得本轮完整的验收分析结果，请重试分析。');
+  return text;
+}
+
+async function prepare({ identity, taskId, turnId = '', instruction = '', requested = {}, runtime, request }) {
   const route = '/tasks/' + encodeURIComponent(taskId);
   const context = await request(identity, route + '/acceptance-context');
   const auto = requested.acceptanceMode === 'auto';
@@ -204,7 +223,8 @@ async function prepare({ identity, taskId, instruction = '', requested = {}, run
   if (bundle) lines.push('本轮交付文件已合并为压缩包：' + bundle.filename +
     '。请先解压并按包内相对路径核验；上面的原附件 ID 仅用于追溯，不会再逐个附加。过程和验证材料仅在验收人主动选择后提供。');
   if (instruction) lines.push('验收人补充说明：\n' + instruction);
-  const result = { acceptanceOnly: true, task, attachmentIds: selectedIds,
+  const submissionId = String(turnId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || crypto.randomUUID();
+  const result = { acceptanceOnly: true, submissionId, task, attachmentIds: selectedIds,
     deliveryBundle: bundle || null, referenceAttachmentIds: referenceIds,
     optionalAttachmentIds: requestedOptional.filter(id => !referenceIds.includes(id)),
     beforeTurn: async () => {
@@ -263,13 +283,28 @@ async function prepare({ identity, taskId, instruction = '', requested = {}, run
         : ['【验收确认卡】', '需求：' + (task.title || ''), '结果：' +
           (reply.closed ? '验收通过，任务状态已更新。' : '本人的验收已通过，等待其余验收人确认。'),
           '验收结论：' + report.summary, '逐项依据：', ...lines].join('\n');
-      runtime.handle.appendTaskMessage?.('assistant', message, [], taskId,
+      await runtime.handle.appendTaskMessage?.('assistant', message, [], taskId,
         'acceptance-result:' + snapshot.artifactVersionId + ':' + report.verdict);
       return reply;
     };
   } else {
     lines.push('本轮只分析并提供结论，不提交验收、不改变需求状态；最终由验收人在需求详情中确认或退回。',
       '请在回复末尾输出一张【验收分析结果】，包含建议结果、逐项标准结论、证据和待人工确认事项；不要使用“自动验收”或“验收确认卡”作为标题。');
+    // A model heading is presentation, not a completion receipt. Persist the
+    // exact completed turn with its pinned review identity for native replay.
+    const receiptKey = 'acceptance-analysis:v1:' + encodeURIComponent(JSON.stringify({
+      taskId, approvalId: snapshot.approvalId, artifactVersionId: snapshot.artifactVersionId,
+      requirementVersion: snapshot.requirementVersion, turnId: submissionId,
+    }));
+    let recorded = false;
+    result.afterTurn = async (status, completed) => {
+      if (status !== 'completed' || recorded) return;
+      const text = analysisReply(completed, submissionId);
+      if (typeof runtime?.handle?.appendTaskMessage !== 'function')
+        throw Error('无法保存本轮验收分析结果，请重新打开验收会话后重试。');
+      await runtime.handle.appendTaskMessage('assistant', text, [], taskId, receiptKey);
+      recorded = true;
+    };
   }
   let promptText = lines.filter(Boolean).join('\n\n');
   if (promptText.length > ACCEPTANCE_PROMPT_LIMIT) {

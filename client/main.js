@@ -180,7 +180,14 @@ _workPreview.install({ ipcMain, BrowserWindow, WebContentsView, screen, shell, a
 require('./main/app-settings-ipc.cjs').install({ app, ipcMain, safeStorage,
   identityOf: _deviceAuth.authenticatedIdentity,
   ownerOf: () => { const id = _deviceAuth.identity(app), owner = _deviceAuth.localOwner(app); return id && owner ? id.hub + ':' + owner : ''; } });
-require('./main/local-model-ipc.cjs').install({ app, ipcMain, safeStorage });
+require('./main/local-model-ipc.cjs').install({ app, ipcMain, safeStorage, changed: _catalogChanges.changed });
+require('./main/local-agent-model-ipc.cjs').install({ app, ipcMain, safeStorage, changed: _catalogChanges.changed,
+  probeAgent: options => require('./main/local-agent-probe.cjs').run({ ...options, runner: _runnerRuntime }),
+  scopeOf: () => {
+    const id = _deviceAuth.identity(app), owner = _deviceAuth.localOwner(app);
+    return id && owner ? { hub: id.hub, clientId: id.clientId, owner } : null;
+  } });
+require('./main/local-automation-model-ipc.cjs').install({ app, ipcMain, safeStorage, identityOf: _sessionIdentity });
 _attachmentFiles.install({ app, ipcMain, BrowserWindow, dialog, net, shell, identityOf: _deviceAuth.identity,
   authenticatedIdentityOf: _deviceAuth.authenticatedIdentity });
 require('./main/acceptance-summary-export.cjs').install({ app, ipcMain, BrowserWindow, dialog,

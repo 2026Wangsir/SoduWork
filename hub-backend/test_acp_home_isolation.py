@@ -84,6 +84,7 @@ class AcpHomeIsolationTests(unittest.TestCase):
                 self.assertTrue(report["blockedBeforeExecutor"])
                 self.assertTrue(report["healthyRetry"])
                 self.assertTrue(report["personalStateUnchanged"])
+                self.assertTrue(report["localModelReady"])
 
 
 if __name__ == "__main__":

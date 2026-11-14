@@ -48,10 +48,9 @@ test('captured Pi turns use the real HTTP model/agent contract and preserve task
   assert.ok(requests.every(row => row.auth === 'Device ' + owner.session));
 });
 
-test('native and managed Runner admission remains strict even with a queued personal model', async () => {
+test('account and controlled admission remains strict even with a queued personal model', async () => {
   const owner = identity(), calls = [];
   for (const runtime of [undefined, { agent: 'codex', modelMode: 'account' },
-    { agent: 'codex-harness', modelMode: 'managed' },
     { agent: 'pi', modelMode: 'managed', controlled: true }]) {
     await beforeTurn(async (...args) => calls.push(args), owner, undefined, runtime)({ modelName: 'personal-model' });
   }
@@ -174,7 +173,7 @@ test('offline platform-personal-platform checkpoints retain 10/15/18 boundaries,
   assert.equal(sent.at(-1).quotaUsageToken, undefined, 'aggregate legacy usage cannot borrow model credentials');
 });
 
-test('model configuration requires receipt-capable Pi funding and keeps its ticket out of the public model', async () => {
+test('model configuration requires signed managed funding and keeps its ticket out of the public model', async () => {
   const { fetchModel } = require('../main/pi-session/model-config');
   const owner = identity(), valid = { ok: true, model: 'personal-model', provider: 'provider',
     key: 'proxy-key', quotaVersion: 2, quotaScope: 'personal', personalQuotaSupported: true,
@@ -187,7 +186,14 @@ test('model configuration requires receipt-capable Pi funding and keeps its tick
   for (const patch of [{ personalQuotaSupported: false }, { quotaVersion: 1 }, { quotaUsageToken: '' }, { provider: '' }]) {
     assert.equal((await fetchModel(owner, 'personal-model', 1000, fetchImpl({ ...valid, ...patch }))).ok, false);
   }
-  assert.equal((await fetchModel(owner, 'personal-model', 1000, fetchImpl(valid), false, 'codex-harness')).ok, false);
+  for (const agent of ['qwen', 'opencode', 'codex-harness', 'harness2', 'kimi', 'dsh']) {
+    const managed = await fetchModel(owner, 'personal-model', 1000, fetchImpl(valid), false, agent);
+    assert.equal(managed.ok, true, agent);
+    assert.equal(managed.model.quotaUsageToken, valid.quotaUsageToken);
+  }
+  for (const agent of ['codex', 'claude', 'unknown']) {
+    assert.equal((await fetchModel(owner, 'personal-model', 1000, fetchImpl(valid), false, agent)).ok, false, agent);
+  }
 });
 
 test('inline app inference never asks for Pi funding without Pi per-call accounting', async () => {
@@ -219,4 +225,17 @@ test('versioned legacy monthly quota uses server-derived personal allowance with
   for (const patch of [{ quotaVersion: undefined }, { personalModelsAllowed: undefined }, { limit: 0 },
     { reason: 'trial_expired' }, { reason: 'model_not_allowed' }, { reason: 'unknown-block' }, { restrictModels: true }])
     assert.equal(quota.allowsPersonal({ ...legacy, ...patch }), false);
+});
+
+
+test('managed Runner turns preserve model-specific admission under signed funding', async () => {
+  for (const agent of ['qwen', 'opencode', 'codex-harness', 'harness2', 'kimi', 'dsh']) {
+    const owner = identity(), calls = [];
+    const authorize = create({ identityOf: async () => owner, fetchImpl: async url => {
+      calls.push(new URL(url)); return Response.json(admitted());
+    } });
+    await beforeTurn(authorize, owner, undefined, { agent, modelMode: 'managed' })({ modelName: 'personal-model' });
+    assert.equal(calls[0].searchParams.get('agent'), agent);
+    assert.equal(calls[0].searchParams.get('model'), 'personal-model');
+  }
 });

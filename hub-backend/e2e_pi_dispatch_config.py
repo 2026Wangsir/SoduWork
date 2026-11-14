@@ -220,6 +220,7 @@ async def run(root, executable=None):
                     break
                 assert "No session found" not in output, output
                 await asyncio.sleep(0.1)
+            (root / "recovered-terminal.txt").write_text("".join(terminal_output), encoding="utf-8")
             assert "PI_DISPATCH_OK" in "".join(terminal_output), "Recovered terminal must display the original result"
             assert len(model_requests) == before, "Opening history must not invoke a model"
         finally:

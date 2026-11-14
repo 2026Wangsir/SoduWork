@@ -102,7 +102,8 @@ export class CdpPage {
     }
     if (message.method === 'Log.entryAdded') {
       const entry = message.params && message.params.entry;
-      if (entry && entry.level === 'error') this.runtimeErrors.push(entry.text || '页面错误日志');
+    if (entry && entry.level === 'error') this.runtimeErrors.push((entry.text || '页面错误日志') +
+      (entry.url ? ' [' + entry.url + ']' : ''));
     }
   }
 

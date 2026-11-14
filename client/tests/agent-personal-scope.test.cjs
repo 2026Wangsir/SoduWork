@@ -58,6 +58,26 @@ test('renewing the same account keeps its inventory and active installation stat
   assert.match(f.body.textContent, /personal-a/);
 });
 
+test('device models are offered as local Agent defaults and deleted selections remain explicit', () => {
+  const f = fixture(); f.context.esc = String;
+  f.read('_agData = { models: [{ name: "local:private", label: "Private", localOnly: true }] }');
+  let html = f.context._agModelHtml({ key: 'qwen', modelPick: true });
+  assert.match(html, /本地默认模型仅保存在当前设备/);
+  assert.match(html, /value="local:private"/);
+  assert.doesNotMatch(html, /还没有能用的模型/);
+  f.read('_agData.models.push({ name: "hub-model", label: "Hub model" })');
+  html = f.context._agModelHtml({ key: 'qwen', modelPick: true });
+  assert.match(html, /value="hub-model"/);
+  assert.match(html, /value="local:private"/);
+  html = f.context._agModelHtml({ key: 'qwen', modelPick: true, model: 'local:deleted',
+    localModelDefault: true, modelGone: true });
+  assert.match(html, /value="local:deleted" selected/);
+  assert.match(html, /原本地模型已删除或不可用/);
+  assert.doesNotMatch(html, /派活会退回默认/);
+  html = f.context._agModelHtml({ key: 'codex', modelPick: false });
+  assert.doesNotMatch(html, /<select|local:private/);
+});
+
 for (const outcome of ['accepted', 'rejected']) {
   test(`a previous account's ${outcome} installation cannot replace a new account job`, async () => {
     const f = fixture();

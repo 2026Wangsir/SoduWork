@@ -31,6 +31,7 @@ const providerId = 'private-e2e-sentinel';
 const requests = [], hubRequests = [], serverErrors = [];
 let runtime, bridge, handle, win, providerServer, hubServer, reporter, modelRef, providerUrl;
 let mode = 'normal';
+let expectedWireModel = privateModel;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(test, label, timeout = 15000) {
   const deadline = Date.now() + timeout;
@@ -48,6 +49,7 @@ function assertHubBoundary() {
     assert.equal(row.body, '');
     for (const value of [privateModel, privateLabel, privateKey, providerId, providerUrl, modelRef])
       assert.equal(JSON.stringify(row).includes(value), false);
+    assert.doesNotMatch(JSON.stringify(row), /local:model-[a-f0-9]{32}/);
   }
 }
 function scan(file) {
@@ -78,7 +80,7 @@ app.whenReady().then(async () => {
       try {
         assert.equal(req.url, '/private-endpoint-739/v1/chat/completions');
         const body = JSON.parse(raw);
-        assert.equal(body.model, privateModel, 'Provider receives the real model only on its private wire');
+        assert.equal(body.model, expectedWireModel, 'Provider receives the real model only on its private wire');
         assert.equal(req.headers.authorization, mode === 'no-key' ? undefined : 'Bearer ' + privateKey);
         assert.equal(req.headers['x-soduwork-secret'], undefined);
         requests.push({ model: body.model, mode });
@@ -89,7 +91,7 @@ app.whenReady().then(async () => {
         }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const frame = (delta, finish_reason = null, usage) => res.write('data: ' + JSON.stringify({
-          id: 'fixture', object: 'chat.completion.chunk', model: privateModel,
+          id: 'fixture', object: 'chat.completion.chunk', model: expectedWireModel,
           choices: [{ index: 0, delta, finish_reason }], ...(usage ? { usage } : {}),
         }) + '\n\n');
         frame({ role: 'assistant', content: 'Private inference completed.' });
@@ -199,9 +201,31 @@ app.whenReady().then(async () => {
   store.save({ models: [], expectedRevision: store.get().revision });
   const before = requests.length;
   opened = await bridge.open({ ...options, ref: 'privacy-deleted', resumePath: archive, resumeCwd: cwd });
-  assert.equal(opened.ok, false); assert.equal(requests.length, before); assertHubBoundary();
+  assert.equal(opened.ok, true, opened.reason); handle = opened.session;
+  assert.equal(handle.snapshot().modelSelection.activeModel.localOnly, true);
+  const blocked = await turn('Try the removed local model.');
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.reason, /原本地模型已删除或不可用/);
+  assert.equal(requests.length, before); assertHubBoundary();
   scan(profile);
-  report.cases.push('A deleted private model cannot silently fall back to a Hub model or send another provider request.');
+  report.cases.push('A deleted private model opens as a historical placeholder, blocks sending until an explicit replacement, and never falls back to Hub or sends another provider request.');
+
+  stage('Require explicit selection before the historical session can continue');
+  expectedWireModel = privateModel + '-replacement';
+  const replacement = store.save({ models: [{ providerId, name: expectedWireModel, label: privateLabel }],
+    expectedRevision: store.get().revision }).myModels[0].id;
+  assert.notEqual(replacement, modelRef);
+  const stillBlocked = await turn('A new catalog entry must not replace a deleted selection automatically.');
+  assert.equal(stillBlocked.ok, false);
+  assert.equal(requests.length, before);
+  const replaced = await handle.selectModel(replacement);
+  assert.equal(replaced.ok, true, replaced.reason);
+  assert.equal((await turn('Continue after choosing the replacement explicitly.')).ok, true);
+  assert.equal(requests.length, before + 1);
+  reporter.observe(handle, handle.snapshot()); await reporter.flush();
+  assertHubBoundary(); scan(profile); assert.deepEqual(serverErrors, []);
+  await handle.close();
+  report.cases.push('Adding another local model cannot clear the historical placeholder; an explicit valid selection resumes the same history with no private Hub request.');
   report.requests = requests.length; report.hubRequests = hubRequests.length; report.ok = true;
 }).catch(error => { report.error = String(error.stack || error); }).finally(async () => {
   await Promise.resolve(bridge?.dispose()).catch(error => { report.ok = false; report.cleanupError = error.message; });

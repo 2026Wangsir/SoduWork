@@ -132,12 +132,28 @@ async function open(opts) {
       return { ok: false, reason: '接回历史会话失败：' + String((e && e.message) || e) };
     }
   }
-  const savedModel = resumedManager && [...resumedManager.getEntries()].reverse().find(entry =>
+  const archiveEntries = resumedManager && (typeof resumedManager.getBranch === 'function'
+    ? resumedManager.getBranch() : resumedManager.getEntries());
+  const savedModel = archiveEntries && [...archiveEntries].reverse().find(entry =>
     entry.type === 'custom' && entry.customType === 'soduwork.model.selection');
   const explicitModel = typeof opts.modelName === 'string';
-  const storedLocalModel = modelConfig.configuredModel(app);
-  let modelName = explicitModel ? opts.modelName : (savedModel && savedModel.data && savedModel.data.name) ||
-    (storedLocalModel.startsWith('local:') ? storedLocalModel : '');
+  let archivedLocalModel = '';
+  if (!explicitModel && !savedModel?.data?.name && archiveEntries) {
+    // Older sessions could persist an empty default choice. Only this archive's
+    // active branch may identify that choice; models.json belongs to all chats.
+    const recorded = [...archiveEntries].reverse().find(entry => entry.type === 'model_change' && entry.modelId ||
+      entry.type === 'message' && entry.message?.role === 'assistant' && entry.message.model &&
+        entry.message.model !== 'task-executor');
+    const name = String(recorded?.type === 'model_change' ? recorded.modelId : recorded?.message?.model || '');
+    if (name.startsWith('local:')) archivedLocalModel = name;
+    else if (recorded?.localOnly === true || recorded?.message?.usageLocalOnly === true) {
+      return { ok: false, code: 'LOCAL_HISTORY_MODEL_UNAVAILABLE',
+        reason: '历史会话的原本地模型无法确定，请主动选择可用模型后继续' };
+    }
+  }
+  let modelName = explicitModel ? opts.modelName : savedModel?.data?.name || archivedLocalModel;
+  const localChoice = name => String(name || '').startsWith('local:') ||
+    require('./image-model').imageChoice(name)?.name.startsWith('local:');
   if (require('./image-model').imageChoice(modelName) && ((goal.intent === 'goal' && restoredMode.visible) || opts.taskRef)) {
     return { ok: false, reason: '直接生图请使用普通对话；目标和需求可通过图片插件生成图片' };
   }
@@ -149,7 +165,8 @@ async function open(opts) {
   // must not make the whole conversation unopenable after that model is
   // removed from the personal model catalog; retry once with the current default and clear
   // the stale selection for future resumes.
-  const canRecoverStaleModel = Boolean(opts.resumePath || opts.resumedConversation);
+  const canRecoverStaleModel = Boolean(opts.resumePath || opts.resumedConversation) &&
+    prep?.code !== 'LOCAL_AGENT_DEFAULT_UNAVAILABLE';
   // Some older Hub releases returned a successful default configuration even
   // when the requested historical model had already been retired. Treat a
   // different returned model as stale in a resumed conversation so the same
@@ -161,7 +178,7 @@ async function open(opts) {
   // that case `modelName` is empty, but the Hub can still reject its own stale
   // Agent preference. Only a resumed conversation may bypass that preference;
   // new chats keep the strict explicit/default selection behavior.
-  if (canRecoverStaleModel && !String(modelName).startsWith('local:') && (!prep.ok || returnedDifferentModel)) {
+  if (canRecoverStaleModel && !localChoice(modelName) && (!prep.ok || returnedDifferentModel)) {
     const fallback = await modelConfig.prepare(app, identity, '', {
       ignoreAgentPreference: true, allowHistorical: allowHistoricalModel,
     });
@@ -172,7 +189,8 @@ async function open(opts) {
     }
   }
   if (!prep.ok) return prep;
-  if (prep.model.localOnly) modelName = require('./local-model-runtime-privacy.cjs').reference(prep.model);
+  if (prep.model.localOnly) modelName = prep.model.modality === 'image'
+    ? prep.model.imageChoice || modelName : require('./local-model-runtime-privacy.cjs').reference(prep.model);
   const MODEL_TICKET_REFRESH_SKEW_MS = 2 * 60 * 1000;
   const MODEL_TICKET_FALLBACK_MS = 10 * 60 * 1000;
   const contextPrompts = Array.isArray(opts.contextPrompts)
@@ -280,7 +298,7 @@ async function open(opts) {
   if (access && (!savedAccess || savedAccess.data?.mode !== access.policy.mode)) {
     piSession.sessionManager.appendCustomEntry('soduwork.access.policy', access.policy);
   }
-  if (resetSavedModel || (explicitModel && savedModel?.data?.name !== modelName)) {
+  if (resetSavedModel || ((explicitModel || prep.model.localOnly) && savedModel?.data?.name !== modelName)) {
     piSession.sessionManager.appendCustomEntry('soduwork.model.selection', { name: modelName });
   } else if (require('./image-model').imageChoice(modelName) && !savedModel) {
     piSession.sessionManager.appendCustomEntry('soduwork.model.selection', { name: modelName });
@@ -511,7 +529,7 @@ async function open(opts) {
       // Keep strict Hub deployments usable after the 30-minute device session
       // expires.  The fallback request still handles older compatibility
       // deployments, but renewing here avoids sending a stale session at all.
-      if (!String(name).startsWith('local:')) {
+      if (!localChoice(name)) {
         try {
           const fresh = await deviceAuth.ensureSession(app, identity);
           if (fresh) identity.session = fresh;
@@ -540,6 +558,9 @@ async function open(opts) {
     if (prep.model.modality === 'image') return { ok: true };
     // Device-local models have no expiring Hub proxy ticket. A forced retry
     // may reload local credentials, but must retain the local reference.
+    if (prep.model.historicalLocal) {
+      return { ok: false, reason: '原本地模型已删除或不可用，请先选择一个当前可用模型后再发送' };
+    }
     if (prep.model.localOnly && !force) return { ok: true };
     if (!force && modelTicketExpiresAt > Date.now() + MODEL_TICKET_REFRESH_SKEW_MS) return { ok: true };
     if (modelTicketRefresh) return modelTicketRefresh;

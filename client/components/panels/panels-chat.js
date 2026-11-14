@@ -508,6 +508,14 @@
     if (global.ChatTools && typeof ChatTools.paintSendButton === 'function') {
       ChatTools.paintSendButton(root, _runtimeBusy(), _messageAttachments, _stopState, _stopCapable(), _sendState);
     }
+    if ((_snap?.modelSelection?.model || _model)?.unavailable && !_stopCapable()) {
+      const send = root.querySelector('#nchatSend');
+      if (send) {
+        send.disabled = true;
+        send.title = '原本地模型已删除或不可用，请主动选择可用模型后继续发送';
+        send.setAttribute('aria-label', send.title);
+      }
+    }
   }
   function _paintStopState() { _paintActionState(); }
   function _beginSendState() {

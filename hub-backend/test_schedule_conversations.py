@@ -1,6 +1,6 @@
 """Automation conversation protocol, isolated from the real Hub/Runner and DB."""
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -50,6 +50,7 @@ class ConversationProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(self.schedule.note, envelope['text']); self.assertIn('全部保留', envelope['text'])
         self.assertEqual(envelope['personalPlugin'], {})
         self.assertEqual(envelope['modelName'], ''); self.assertEqual(envelope['adapterId'], 'pi')
+        self.assertEqual(envelope['modelSource'], 'managed')
         self.assertNotIn('projectId', envelope)
         self.assertEqual(envelope['conversationTitle'], '自动化 · 自动化标题 · 2026-10-26 10:20')
         self.assertEqual(self.run.receipt['conversationTitle'], envelope['conversationTitle'])
@@ -75,12 +76,112 @@ class ConversationProtocolTests(unittest.IsolatedAsyncioTestCase):
         await self.prepare()
         self.assertEqual(self.run.receipt['conversationInput']['modelName'], 'schedule-model')
 
+    async def test_legacy_local_model_references_are_not_persisted_in_hub_envelope(self):
+        for model_name in ('local:private:model', 'image::private::local:private:model'):
+            with self.subTest(model_name=model_name):
+                self.schedule.model_name = model_name
+                self.run.receipt = {}
+                await self.prepare()
+                envelope = self.run.receipt['conversationInput']
+                self.assertEqual(envelope['modelName'], '')
+                self.assertEqual(envelope['modelSource'], 'device')
+                self.assertNotIn(model_name, str(self.run.receipt))
+
+    async def test_claim_cleans_legacy_local_model_from_inline_receipt(self):
+        self.run.receipt = {'executionMode': chats.PROTOCOL,
+            'route': {'requested': {'modelName': 'image::private::local:private:model'},
+                      'resolved': {'model': 'local:model-private'}},
+            'conversationInput': {
+            'runId': 'run', 'text': 'work', 'modelName': 'local:private:model'}}
+        await self.session.commit()
+        claimed = await chats.claim(self.session, self.client, self.run.id, 'worker')
+        self.assertEqual(claimed['input']['modelName'], '')
+        self.assertEqual(self.run.receipt['conversationInput']['modelName'], '')
+        self.assertEqual(self.run.receipt['route']['requested']['modelName'], '')
+        self.assertEqual(claimed['input']['modelSource'], 'device')
+        self.assertEqual(self.run.receipt['route']['requested']['modelSource'], 'device')
+        self.assertEqual(self.run.receipt['route']['resolved']['model'], '')
+
+    async def test_new_run_route_snapshot_does_not_persist_local_model_reference(self):
+        for model_name in ('local:private:model', 'image::private::local:private:model'):
+            with self.subTest(model_name=model_name):
+                self.schedule.model_name = model_name
+                run = await schedules.begin_run(self.session, self.schedule, 'manual')
+                self.assertEqual(run.receipt['route']['requested']['modelName'], '')
+                self.assertEqual(run.receipt['route']['requested']['modelSource'], 'device')
+
     async def test_schedule_contract_round_trips_selected_model(self):
         schedule = models.AiSchedule(title='automation', assignee_id='local:pi')
         apply_schedule_update(schedule, {'modelName': 'selected-model'})
         payload = schedule_payload(schedule, timestamp=lambda value: None)
         self.assertEqual(schedule.model_name, 'selected-model')
         self.assertEqual(payload['modelName'], 'selected-model')
+        self.assertEqual(payload['modelSource'], 'managed')
+
+    async def test_schedule_contract_persists_device_source_without_model_reference(self):
+        schedule = models.AiSchedule(title='local automation', assignee_id='local:pi')
+        apply_schedule_update(schedule, {'modelName': 'local:model-private'})
+        self.assertEqual(schedule.model_source, 'device')
+        self.assertEqual(schedule.model_name, '')
+        payload = schedule_payload(schedule, timestamp=lambda value: None)
+        self.assertEqual(payload['modelSource'], 'device')
+        self.assertEqual(payload['modelName'], '')
+
+    async def test_schedule_contract_allows_device_model_on_any_managed_base(self):
+        for assignee in ('local:qwen', 'local:opencode', 'runner:device:dsh'):
+            with self.subTest(assignee=assignee):
+                schedule = models.AiSchedule(title='local automation', assignee_id=assignee)
+                apply_schedule_update(schedule, {'modelName': 'local:model-private'})
+                self.assertEqual(schedule.model_source, 'device')
+                self.assertEqual(schedule.model_name, '')
+
+    async def test_schedule_contract_rejects_managed_source_with_local_reference(self):
+        schedule = models.AiSchedule(title='local automation', assignee_id='local:pi')
+        with self.assertRaises(HTTPException):
+            apply_schedule_update(schedule, {
+                'modelSource': 'managed', 'modelName': 'local:model-private'})
+
+    async def test_legacy_blank_model_keeps_existing_device_source(self):
+        schedule = models.AiSchedule(title='local automation', assignee_id='local:pi',
+                                     model_source='device', model_name='')
+        apply_schedule_update(schedule, {'modelName': ''})
+        self.assertEqual(schedule.model_source, 'device')
+        self.assertEqual(schedule.model_name, '')
+
+    async def test_once_model_source_change_resets_stale_retry(self):
+        schedule = models.AiSchedule(title='local automation', assignee_id='local:pi',
+                                     every='once', model_source='managed', model_name='',
+                                     run_at=datetime.now(timezone.utc) + timedelta(days=1),
+                                     retry_count=2,
+                                     next_retry_at=datetime.now(timezone.utc) + timedelta(minutes=5))
+        apply_schedule_update(schedule, {'modelSource': 'device'})
+        self.assertEqual(schedule.retry_count, 0)
+        self.assertIsNone(schedule.next_retry_at)
+
+    async def test_run_api_redacts_nested_legacy_local_model_references(self):
+        item = SimpleNamespace(id='run', schedule_id='schedule', trigger='manual', state='failed',
+            attempt=1, started_at=None, finished_at=None, error='', receipt={
+                'route': {'resolved': {'model': 'local:model-private'}},
+                'conversationInput': {'modelName': 'image::private::local:model-private'}})
+        result = schedules.run_to_api(item)
+        self.assertEqual(result['receipt']['route']['resolved']['model'], '')
+        self.assertEqual(result['receipt']['conversationInput']['modelName'], '')
+        self.assertEqual(result['receipt']['route']['resolved']['modelSource'], 'device')
+
+    async def test_device_source_receipts_redact_wire_names_and_preserve_business_inputs(self):
+        from app.services.schedule_run_contracts import sanitize_schedule_model_payload
+        source = {"modelSource": "device", "modelName": "private-wire",
+            "conversationInput": {"modelName": "private-wire", "text": "Keep private-wire in user content",
+                "pluginInputs": {"model": "local:user-written-input", "usage": 5}},
+            "route": {"resolved": {"model": "private-wire"}},
+            "managed": {"modelSource": "managed", "modelName": "hub-model"}}
+        projected = sanitize_schedule_model_payload(source)
+        self.assertEqual(projected["modelName"], "")
+        self.assertEqual(projected["conversationInput"]["modelName"], "")
+        self.assertEqual(projected["route"]["resolved"]["model"], "")
+        self.assertEqual(projected["conversationInput"]["text"], source["conversationInput"]["text"])
+        self.assertEqual(projected["conversationInput"]["pluginInputs"], source["conversationInput"]["pluginInputs"])
+        self.assertEqual(projected["managed"], source["managed"])
 
     async def test_schedule_contract_round_trips_selected_personal_plugin(self):
         checksum = 'b' * 64
@@ -115,17 +216,45 @@ class ConversationProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_save_validation_rejects_model_not_open_for_selected_agent(self):
         self.schedule.model_name = 'closed-model'
         with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
-                patch('app.services.agent_route_selection.model_readiness',
-                      return_value={'ok': False, 'detail': '模型未开放'}):
-            with self.assertRaisesRegex(ValueError, '模型未开放'):
+                patch('app.services.model_catalog.choices',
+                      new=AsyncMock(return_value={'default': 'open-model', 'list': []})):
+            with self.assertRaisesRegex(ValueError, '未在当前企业开放'):
                 await schedule_execution.validate_execution(self.session, self.schedule)
 
     async def test_save_validation_accepts_explicit_model_for_selected_agent(self):
         self.schedule.model_name = 'selected-model'
         with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
-                patch('app.services.agent_route_selection.model_readiness',
-                      return_value={'ok': True, 'detail': '可用'}):
+                patch('app.services.model_catalog.choices',
+                      new=AsyncMock(return_value={'default': 'selected-model', 'list': []})):
             await schedule_execution.validate_execution(self.session, self.schedule)
+
+    async def test_catalog_failure_cannot_authorize_a_stale_legacy_model(self):
+        self.schedule.model_name = 'removed-model'
+        with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
+                patch('app.services.model_catalog.choices', new=AsyncMock(side_effect=RuntimeError('unavailable'))), \
+                patch('app.services.agent_route_selection.model_readiness', return_value={'ok': True}) as legacy:
+            with self.assertRaisesRegex(ValueError, '目录暂时无法读取'):
+                await schedule_execution.validate_execution(self.session, self.schedule)
+        legacy.assert_not_called()
+
+    async def test_device_model_rejects_remote_runner_during_save_and_preflight(self):
+        self.schedule.model_source = 'device'
+        self.schedule.model_name = ''
+        self.schedule.assignee_id = 'runner:remote:pi'
+        remote = SimpleNamespace(client_id='other-device')
+        with patch('app.services.runner_hub.get', return_value=remote):
+            with self.assertRaisesRegex(ValueError, '不能派往其他执行机'):
+                await schedule_execution.validate_execution(self.session, self.schedule)
+            result = await schedule_execution.preflight_execution(self.session, self.schedule)
+        self.assertEqual(result['state'], 'blocked')
+        self.assertIn('不能派往其他执行机', result['message'])
+
+    async def test_device_model_allows_same_device_runner(self):
+        self.schedule.model_source = 'device'
+        self.schedule.model_name = ''
+        self.schedule.assignee_id = 'runner:local:pi'
+        with patch('app.services.runner_hub.get', return_value=SimpleNamespace(client_id='device')):
+            self.assertEqual(schedule_execution.device_model_target_error(self.schedule), '')
 
     async def test_personal_plugin_selection_round_trips_into_ordinary_chat_envelope(self):
         self.schedule.personal_plugin_key = 'daily-report'

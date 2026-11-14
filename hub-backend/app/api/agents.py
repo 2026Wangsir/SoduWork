@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..deps import current_client
 from ..models import Client
+from ..agent_catalog import AGENTS
 from ..services import agent_setup, model_catalog, runner_hub
 from ..services.agent_messages import decorate_many as _decorate_agents, runtime_descriptor as _runtime_descriptor
 from ..services.cluster_bus import bus
@@ -40,6 +41,7 @@ async def get_agent_setup(
     client: Client = Depends(current_client),
     session: AsyncSession = Depends(get_session),
     runnerId: str | None = None,
+    hasLocalModel: bool = False,
 ):
     """Return agent installation status and model availability for this client's effective
     credentials, including personal keys.
@@ -50,8 +52,8 @@ async def get_agent_setup(
     # A user may own multiple execution machines, so that single selection is insufficient here.
     # Listing only one Runner can hide agents installed on the user's desktop.
     # Installation and removal must target the selected machine to avoid modifying another computer.
-    machines = (await _machines(session, client, bool(usable)) if runnerId is None else
-                await _machines(session, client, bool(usable), runner_id=runnerId))
+    machines = await _machines(session, client, bool(usable), runner_id=runnerId,
+                               has_local_model=hasLocalModel)
     data = {
         "machines": machines,
         "modelCount": len(usable),
@@ -73,8 +75,13 @@ async def get_agent_setup(
         for a in m.get("agents") or []:
             if not isinstance(a, dict):
                 continue
+            managed = (AGENTS.get(str(a.get("key") or "")) or {}).get("modelMode") == "managed"
+            a["modelPick"] = managed
+            if not managed:
+                # Account runtimes never inherit the Hub model directory or its defaults.
+                a.update(model="", modelEffective="", modelGone=False)
+                continue
             picked = model_catalog.agent_model(client, a.get("key", ""))
-            a["modelPick"] = bool(a.get("needsLlm"))
             a["model"] = picked
             # Report unavailable selections immediately, before dispatch.
             a["modelGone"] = bool(picked and not any(x["name"] == picked for x in usable))
@@ -83,7 +90,7 @@ async def get_agent_setup(
 
 
 async def _machines(session: AsyncSession, client: Client, has_model: bool,
-                    *, runner_id: str | None = None) -> list[dict]:
+                    *, runner_id: str | None = None, has_local_model: bool = False) -> list[dict]:
     """List agent installations on every execution machine, using the shared display-name
     precedence: custom name, host and OS, then shortened ID.
     """
@@ -110,7 +117,9 @@ async def _machines(session: AsyncSession, client: Client, has_model: bool,
     for r in runners:
         mkey = agent_naming.machine_key(host=r.host, runner_id=r.id)
         try:
-            data = await _runner_call(r, "agent.setup", {"hasModel": has_model})
+            local_available = (has_local_model and r.client_id == client.id and
+                               runner_hub.is_client_runtime(r))
+            data = await _runner_call(r, "agent.setup", {"hasModel": has_model or local_available})
         except Exception as e:  # noqa: BLE001  A failed probe must not hide other machines.
             reason = "这台执行机没有应答（%s）" % type(e).__name__
             out.append({"runnerId": r.id, "machineKey": mkey,
@@ -177,6 +186,8 @@ async def put_agent_model(
     if key not in agent_setup._SPECS:
         raise HTTPException(status_code=404, detail="没有这个 AI 助手")
     name = str(body.get("model") or "").strip()[:160]
+    if name and (AGENTS.get(key) or {}).get("modelMode") != "managed":
+        raise HTTPException(status_code=422, detail="该底座使用独立账号模型，不能选择 Hub 模型")
     if name:
         lst = await model_catalog.usable(session, client)
         if not any(m["name"] == name for m in lst):
@@ -275,7 +286,8 @@ async def post_agent_configure(
     key = str(body.get("key") or "").strip()
     if key not in agent_setup._SPECS:
         raise HTTPException(status_code=404, detail="没有这个 AI 助手")
-    llm = await model_catalog.resolve_for_agent(session, client, key, str(body.get("model") or ""))
+    llm = (await model_catalog.resolve_for_agent(session, client, key, str(body.get("model") or ""))
+           if (AGENTS.get(key) or {}).get("modelMode") == "managed" else {})
     runner = _pick_runner(client, body.get("runnerId"))
     if runner is not None:
         return await _runner_call(runner, "agent.configure", {"key": key, "llm": llm}, timeout=60)

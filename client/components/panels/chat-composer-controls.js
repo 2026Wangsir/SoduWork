@@ -13,7 +13,7 @@
     let nativeModels = [], nativeView = 'effort', effortEpoch = 0, pendingEffort = null, effortPreview = null, effortRequest = null, modelRequest = null;
     const effortView = () => global.ComposeModelPicker?.nativeEffort;
     const nativeMode = state => state.adapterId === 'codex' && !state.cloudHandoff && Boolean(effortView());
-    let catalogScope = '', catalogLoads = 0;
+    let catalogScope = '', lastScope = '', catalogLoads = 0;
     const modelScope = () => {
       const state = options.state();
       return JSON.stringify([global.SoduWorkAPI?.taskStorageKey?.('ops') || '',
@@ -102,15 +102,18 @@
       const state = options.state(), selection = state.selection || {};
       global.SoduWorkQuotaNotice?.modelChanged?.(selection.model || state.model, state.adapterId || 'pi', el);
       const identity = state.ref || (state.draftOnly ? 'draft:' + state.draftId : '');
-      if (lastIdentity !== identity || lastAdapter !== state.adapterId || state.runtimeSwitching) {
+      const scope = modelScope();
+      if (lastScope !== scope || lastIdentity !== identity || lastAdapter !== state.adapterId || state.runtimeSwitching) {
         close(false); rows = []; nativeModels = []; nativeView = 'effort'; effortEpoch++; pendingEffort = null; effortPreview = null; effortRequest = null; modelRequest = null; selecting = false;
         pop.removeAttribute('aria-busy');
       }
+      lastScope = scope;
       lastIdentity = identity;
       lastAdapter = state.adapterId;
       const selectedName = selection.name || selection.model?.id || state.model?.id || '';
       const updated = catalogScope === modelScope() && rows.find(row => row.name === selectedName);
-      const label = updated?.label || selection.model && selection.model.label || state.model && (state.model.label || state.model.id) || '选择模型';
+      const selectedModel = selection.model || state.model;
+      const label = (selectedModel?.unavailable ? selectedModel.label : updated?.label) || selectedModel?.label || selectedModel?.id || '选择模型';
       button.querySelector('span').textContent = label;
       button.title = '模型：' + label + ' · 用于之后发送的消息';
       button.setAttribute('aria-label', button.title);
@@ -216,6 +219,7 @@
       if (lifecycle.signal.aborted) return;
       catalogLoads++;
       const current = options.state(), scope = modelScope(), token = ++generation;
+      const selectedAtStart = current.selection?.name || current.selection?.model?.id || current.model?.id || '';
       const valid = () => !lifecycle.signal.aborted && token === generation && scope === modelScope();
       try {
         const adapter = current.adapterId || 'pi';
@@ -225,21 +229,34 @@
         if (!runtime) throw new Error('Agent catalog unavailable');
         const native = runtime.modelMode === 'account';
         const response = native ? (current.cloudHandoff ? { models: [] } : await global.soduWorkAPI.conversationSession.runtimeModels(adapter)) :
-          await global.SoduWorkAPI.myModels();
+          await global.SoduWorkAPI.myModels({ localDefaults: !current.cloudHandoff });
         if (!valid()) return;
         if (native) {
           nativeModels = response.models || [];
           rows = nativeModels.map(row => ({ name: row.id, label: row.label || row.id }));
         }
         else {
+          if (!Array.isArray(response?.usable)) throw new Error('Model catalog unavailable');
           const subtitle = row => [row.providerName, row.keyFrom === 'mine' ? '自己的额度' : ''].filter(Boolean).join(' · ');
-          rows = (response.usable || []).map(row => ({ name: row.name, label: row.label || row.name, subtitle: subtitle(row) }));
-          if (adapter === 'pi' && global.SoduWorkModelChoice) rows.push(...(response.mediaUsable?.image || []).map(row => ({
+          const allowed = row => !current.cloudHandoff || (row.localOnly !== true && !String(row.name || '').startsWith('local:'));
+          rows = (response.usable || []).filter(allowed).map(row => ({ name: row.name, label: row.label || row.name, subtitle: subtitle(row) }));
+          if (adapter === 'pi' && global.SoduWorkModelChoice) rows.push(...(response.mediaUsable?.image || []).filter(allowed).map(row => ({
             name: SoduWorkModelChoice.imageKey(row), label: '生成图片 · ' + (row.label || row.name), subtitle: subtitle(row),
           })));
+          const latest = options.state(), selection = latest.selection || {}, selected = selection.name || selection.model?.id || latest.model?.id || '';
+          const localReference = selected.startsWith('local:') ? selected : global.SoduWorkModelChoice?.imageChoice(selected)?.name;
+          const remainsAvailable = rows.some(row => row.name === selected || !selected.startsWith('local:') &&
+            localReference?.startsWith('local:') && global.SoduWorkModelChoice?.imageChoice(row.name)?.name === localReference);
+          if (!latest.cloudHandoff && selected === selectedAtStart && localReference?.startsWith('local:') && !remainsAvailable) {
+            // Preserve the exact reference; only an explicit user selection can replace it.
+            options.modelAvailabilityChanged?.({ ...selection, name: selected, model: {
+              ...(selection.model || latest.model || {}), id: localReference, localOnly: true,
+              unavailable: true, historicalLocal: true, label: '原本地模型已删除或不可用',
+            } });
+          }
         }
         catalogScope = scope;
-        // Refresh metadata only; never select a model or rewrite a conversation snapshot.
+        // Catalog refreshes must never choose a replacement model.
         render();
         if (pop.hidden) return;
         if (nativeMode(options.state()) && nativeView === 'effort') {

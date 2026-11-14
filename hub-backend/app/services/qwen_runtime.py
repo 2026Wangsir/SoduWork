@@ -123,7 +123,8 @@ def configure(env: dict, llm: dict, data_root: str, runtime_ref: str = "") -> No
     file per invocation avoids races with concurrent sessions or model switches,
     and does not rely on atomic renames blocked by some Windows filesystem filters.
     """
-    if not all(llm.get(key) for key in ("base", "key", "model")):
+    if not (llm.get("base") and llm.get("model") and
+            (llm.get("key") or llm.get("localOnly") is True)):
         return
     try:
         defaults = Path(env.get(DEFAULTS_ENV) or system_settings_path(env).parent / "system-defaults.json")

@@ -2,8 +2,8 @@
 // Real Chromium assignment mount, WorkCards restore, WorkIntent, task/session
 // controllers and the verbatim NativeChat sessionInfo function. Only the Hub,
 // conversation IPC and unrelated owner/view effects are fixtures; no model runs.
-// Native execution remains a controller regression reached by a labelled test
-// button: the assignment UI now offers Runner Agents only.
+// The default-only regression uses a labelled controller button. The model
+// matrix uses the real assignment UI and the verbatim API dispatch method.
 const electron = require('electron');
 if (typeof electron === 'string') {
   const env = { ...process.env };
@@ -23,7 +23,7 @@ if (typeof electron === 'string') {
   app.setPath('userData', path.join(temporary, 'profile'));
   app.disableHardwareAcceleration();
   const report = { ok: false, cases: [], errors: [], networkRequests: [], realModel: false, businessDatabase: false,
-    boundary: 'Real WorkCards.restore, WorkIntent, TaskController/TaskStart, SessionController, verbatim NativeChat.sessionInfo and assignment mount. A labelled fixture button invokes the native controller; it is not an assignment candidate. Hub/conversation IPC, reset/view/draft effects are fixtures; no native archive or SDK execution.',
+    boundary: 'Real WorkCards.restore, WorkIntent, TaskController/TaskStart, SessionController, verbatim NativeChat.sessionInfo, assignment UI and API dispatchToAI. The default-only case uses a labelled controller button; the model matrix submits through the real assignment UI. Hub, model catalogs, runtime probes, conversation IPC and reset/view/draft effects are fixtures; no model inference, native archive or SDK execution.',
     timing: 'No business-readiness sleeps. Restore immediately opens assignment. Rendering waits use animation frames; completion waits observe actual callbacks/DOM.' };
   let win;
   const js = code => win.webContents.executeJavaScript(code, true);
@@ -141,7 +141,7 @@ if (typeof electron === 'string') {
     assert.equal(await js(`calls.some(row=>['open','bind','send'].includes(row.kind))`),false);
     assert.match(await js(`document.querySelector('.fwd-directory-hint').textContent`), /独立的会话目录/);
     // Exercise the production assignment UI with API-compatible catalogs. The
-    // default remains an empty override; users may also select it explicitly.
+    // A new selection pins its sole model; users can still explicitly return to the default.
     await js(`(async()=>{window.originalOptions=SoduWorkAPI.taskExecutionOptions;
       SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),
         models:[],modelOptions:[{name:'only-model',providerId:'fixture-provider',providerName:'Example provider'}],defaultModel:'only-model',defaultModels:{pi:'only-model'}});
@@ -150,11 +150,13 @@ if (typeof electron === 'string') {
     assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认');
     assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').title`),'跟随底座默认 · only-model · Example provider');
     assert.equal(await js(`document.querySelector('#fwdModel option[value="only-model"]').textContent`),'only-model · Example provider');
-    assert.equal(await js(`document.querySelector('#fwdModel').value`),'');
+    assert.equal(await js(`document.querySelector('#fwdModel').value`),'only-model');
+    await js(`{const select=document.querySelector('#fwdModel');select.value='';select.dispatchEvent(new Event('change'));}void 0;`);
+    assert.equal(await js('_fwdModel'),'', 'an explicit return to the default is not replaced by automatic selection');
     await js(`{const select=document.querySelector('#fwdModel');select.value='only-model';select.dispatchEvent(new Event('change'));}void 0;`);
     assert.equal(await js('_fwdModel'),'only-model');
     assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),false);
-    report.cases.push({name:'single-model catalog shows its exact default and allows an explicit selection',ok:true,
+    report.cases.push({name:'single-model catalog automatically selects its exact model and preserves an explicit return to the default',ok:true,
       screenshot:await screenshot('03-explicit-default-model')});
     await js(`(async()=>{SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),models:['review-model'],
       modelOptions:[{name:'catalog-model'},{name:'review-model'}],defaultModel:'catalog-model',defaultModels:{pi:'review-model'}});
@@ -225,6 +227,104 @@ if (typeof electron === 'string') {
     await js(`document.querySelector('#receipt').textContent=${JSON.stringify('已确认：新会话 isolated-new-session\n需求绑定成功 → 本机发送已接受\n默认模型：保持企业默认（空选择）')};void 0;`);
     report.cases.push({name:'fixture controller button opens fresh native session, binds task, starts real send controller and accepts queue receipt',ok:true,
       result,evidence,screenshot:await screenshot('02-native-send-accepted')});
+
+    const apiSource = fs.readFileSync(path.join(client, 'api.js'), 'utf8');
+    const dispatchBegin = apiSource.indexOf('    async dispatchToAI(');
+    const dispatchEnd = apiSource.indexOf('    /* A project may contain', dispatchBegin);
+    assert(dispatchBegin >= 0 && dispatchEnd > dispatchBegin, 'API dispatchToAI extraction boundary must exist');
+    const dispatchMethod = apiSource.slice(dispatchBegin, dispatchEnd);
+    const managed = ['pi', 'qwen', 'opencode', 'dsh', 'kimi', 'harness2', 'codex-harness'];
+    const privateRef = 'local:model-0123456789abcdef0123456789abcdef';
+    await js(`window.matrixManaged=${JSON.stringify(managed)};window.matrixLocal=${JSON.stringify(privateRef)};
+      window.productionDispatch=new Function('acceptTaskResult','requireRemoteModel','jfetch','mark',
+        'return ({'+${JSON.stringify(dispatchMethod)}+'}).dispatchToAI;')(
+        value=>value,()=>{throw Error('Unexpected remote model boundary');},
+        ()=>{throw Error('Unexpected Hub dispatch');},()=>{});
+      SoduWorkAPI.dispatchToAI=async(...args)=>{calls.push({kind:'dispatch',args:clone(args)});return productionDispatch(...args);};
+      low.runtimes=async()=>({ok:true,runtimes:[...matrixManaged,'codex','claude'].map(id=>({id,displayName:id,
+        transport:id==='pi'?'direct':'runner',modelMode:matrixManaged.includes(id)?'managed':'account'}))});
+      low.probe=async()=>({ok:true,state:'ready'});low.history=async()=>({ok:true,chats:[]});
+      soduWorkAPI.localModels={get:async()=>({usable:[{id:matrixLocal,name:matrixLocal,label:'Private model',
+        providerId:'device:private',localProviderId:'private',localOnly:true,modality:'text'}]})};
+      SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),substrates:[],models:['managed-model'],
+        modelOptions:[{name:'managed-model',providerId:'hub-provider',localOnly:false}],defaultModel:'managed-model'});
+      low.open=async options=>{calls.push({kind:'open',options:clone(options)});
+        const name=options.modelName||'',model=name?{id:name,name,localOnly:name.startsWith('local:')}:null;
+        return {ok:true,ref:'ref-'+taskFixture.id,sessionId:'chat-'+taskFixture.id,adapterId:options.adapterId,model,
+          snapshot:{status:'idle',messages:[],tools:[],adapterId:options.adapterId,modelSelection:{name,model}}};};void 0;`);
+    let matrixIndex = 0;
+    for (const runtime of [...managed, 'codex', 'claude']) {
+      const choices = managed.includes(runtime) ? [privateRef, 'managed-model'] : [''];
+      for (const model of choices) {
+        const taskId = 'isolated-model-matrix-' + (++matrixIndex);
+        await js(`RequirementAssignment.close();ctx.reset();calls.length=0;
+          taskFixture.id=${JSON.stringify(taskId)};taskFixture.note='Matrix task instruction';
+          window.completed=new Promise(resolve=>window.resolveCompleted=resolve);
+          RequirementAssignment.open(taskFixture.id);void 0;`);
+        await waitDOM(`!_fwdLocalLoading&&document.querySelector('#fwdAgentSelect option[value="local:${runtime}"]')`);
+        await js(`{const select=document.querySelector('#fwdAgentSelect');select.value=${JSON.stringify('local:' + runtime)};
+          select.dispatchEvent(new Event('change',{bubbles:true}));}void 0;`);
+        await waitDOM(`document.querySelector('#fwdAgentSelect').value===${JSON.stringify('local:' + runtime)}&&!document.querySelector('#fwdConfirm').disabled`);
+        if (model) {
+          assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="${privateRef}"]:not(:disabled)'))`), true);
+          assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="managed-model"]:not(:disabled)'))`), true);
+          await js(`{const select=document.querySelector('#fwdModel');select.value=${JSON.stringify(model)};
+            select.dispatchEvent(new Event('change',{bubbles:true}));}void 0;`);
+          assert.equal(await js(`document.querySelector('#fwdModel').value`), model);
+        } else {
+          assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="${privateRef}"]:not(:disabled)'))`), false);
+          assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="managed-model"]:not(:disabled)'))`), false);
+        }
+        assert.equal(await js(`calls.some(row=>['open','bind','send','dispatch'].includes(row.kind))`), false);
+        await click('#fwdConfirm');
+        const outcome = await js(`Promise.race([completed,new Promise((_,reject)=>setTimeout(()=>reject(Error('No matrix enqueue completion')),5000))])`);
+        const actual = await js(`({calls:clone(calls),adapterId:ctx._sessionOptions.adapterId,
+          model:NativeChat.sessionInfo().model,errors:clone(errors)})`);
+        assert.equal(outcome.ok, true, JSON.stringify(actual));
+        const opens = actual.calls.filter(row=>row.kind==='open'), sends = actual.calls.filter(row=>row.kind==='send');
+        const dispatches = actual.calls.filter(row=>row.kind==='dispatch'), bindings = actual.calls.filter(row=>row.kind==='bind');
+        assert.equal(dispatches.length, 1);assert.equal(dispatches[0].args[1].id, 'local:' + runtime);
+        assert.equal(dispatches[0].args[4], model);
+        assert.equal(opens.length, 1);assert.equal(opens[0].options.adapterId, runtime);
+        assert.equal(opens[0].options.modelName, model);assert.equal(opens[0].options.taskRef, taskId);
+        assert.equal(opens[0].options.chatId, undefined);
+        assert(bindings.length >= 1);assert(bindings.every(row=>row.id===taskId&&row.ref==='ref-'+taskId));
+        assert.equal(sends.length, 1);assert.equal(sends[0].options.taskId, taskId);
+        assert.equal(sends[0].options.taskExecution.agentId, 'local:' + runtime);
+        assert.equal(sends[0].options.taskExecution.model, model);
+        assert.equal(sends[0].text, 'Matrix task instruction');
+        assert.equal(actual.adapterId, runtime);assert.equal(actual.model, model);assert.deepEqual(actual.errors, []);
+        assert.equal(outcome.conversationId, 'chat-' + taskId);
+        report.cases.push({name:runtime+' assignment submits '+(model===privateRef?'opaque local':model?'Hub':'account-default')+
+          ' model through the native controller',ok:true,runtime,model,conversationId:outcome.conversationId});
+        await waitDOM(`!document.querySelector('#fwdConfirm')`);
+      }
+    }
+    for (const scenario of ['hub-only', 'local-only', 'local-no-default']) {
+      const taskId = 'isolated-single-model-' + scenario, local = scenario !== 'hub-only';
+      const expected = local ? privateRef : 'managed-model';
+      await js(`RequirementAssignment.close();ctx.reset();calls.length=0;
+        taskFixture.id=${JSON.stringify(taskId)};taskFixture.note='Single model instruction';
+        window.completed=new Promise(resolve=>window.resolveCompleted=resolve);
+        soduWorkAPI.localModels.get=async()=>({usable:${local ? '[{id:matrixLocal,name:matrixLocal,label:"Private model",localOnly:true,modality:"text"}]' : '[]'}});
+        SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),substrates:[],models:[],
+          modelOptions:${local ? '[]' : '[{name:"managed-model",providerId:"hub-provider",localOnly:false}]'},
+          defaultModel:${JSON.stringify(scenario === 'local-only' ? '' : 'unavailable:default')},
+          defaultModelErrors:{pi:'No Hub default is configured'}});
+        RequirementAssignment.open(taskFixture.id);void 0;`);
+      await waitDOM(`!_fwdLocalLoading&&document.querySelector('#fwdModel')?.value===${JSON.stringify(expected)}&&!document.querySelector('#fwdConfirm').disabled`);
+      assert.equal(await js('_fwdModel'), expected, 'the sole usable model replaces an unresolved default only in a new selection');
+      assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="unavailable:default"]'))`), false);
+      await click('#fwdConfirm');
+      const outcome = await js(`Promise.race([completed,new Promise((_,reject)=>setTimeout(()=>reject(Error('No singleton enqueue completion')),5000))])`);
+      assert.equal(outcome.ok, true);
+      const actual = await js('calls.filter(row=>row.kind==="open"||row.kind==="send"||row.kind==="dispatch")');
+      assert.equal(actual.find(row=>row.kind==='dispatch').args[4], expected);
+      assert.equal(actual.find(row=>row.kind==='open').options.modelName, expected);
+      assert.equal(actual.find(row=>row.kind==='send').options.taskExecution.model, expected);
+      report.cases.push({name:scenario+' assignment explicitly selects its sole usable model without inheriting an unavailable default',ok:true,model:expected});
+      await waitDOM(`!document.querySelector('#fwdConfirm')`);
+    }
     report.errors=await js('errors');assert.deepEqual(report.errors,[]);assert.deepEqual(report.networkRequests,[]);report.ok=true;
   }).catch(async error=>{
     report.error=String(error.stack||error);

@@ -74,3 +74,13 @@ test('Runner forwards only explicit supported thinking levels and typed policy d
     if (typeof invalid === 'boolean') assert.equal(llm.thinkingAlwaysOn, invalid);
   }
 });
+
+test('Runner keeps keyless local model configuration on the local execution boundary', () => {
+  const cfg = create({ localOnly: true, authMode: 'none', baseUrl: 'http://127.0.0.1:11434/v1',
+    key: '', id: 'local:opaque-reference', wireModelId: 'qwen-local-wire' }, 'qwen');
+  assert.equal(cfg.llm.base, 'http://127.0.0.1:11434/v1');
+  assert.equal(cfg.llm.key, '');
+  assert.equal(cfg.llm.model, 'qwen-local-wire');
+  assert.equal(cfg.llm.localOnly, true);
+  assert.equal(cfg.llm.authMode, 'none');
+});

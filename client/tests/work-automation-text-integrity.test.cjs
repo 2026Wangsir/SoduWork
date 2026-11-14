@@ -8,7 +8,7 @@ function fixture() {
   const context = {Intl, setTimeout, clearTimeout, addEventListener(){},
     SoduWorkAPI:{parseTaskText:async(...args)=>{calls.push(args);return context.result;}}};
   context.window=context; context.result={};
-  for (const name of ['schedule-timing','work-automation-bindings','work-automation-view']) vm.runInNewContext(read(name),context);
+  for (const name of ['schedule-timing','work-automation-bindings','work-automation-view','work-automation-card-state']) vm.runInNewContext(read(name),context);
   vm.runInNewContext(read('work-automation-sheet').replace(
     '  global.WorkAutomationSheet = { open, active, refine, close };',
     '  global.probe = { state, proposalOf, bodyOf, validate };\n  global.WorkAutomationSheet = { open, active, refine, close };'),context);

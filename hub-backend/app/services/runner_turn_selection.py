@@ -28,7 +28,8 @@ def validate(ref, raw, cfg):
         raise selection.SelectionError("本轮模型授权与所选 Agent 不匹配")
     if prof.get("needs_llm"):
         llm = dict(cfg.get("llm") or {})
-        if not all(llm.get(k) for k in ("base", "key", "model")):
+        local_only = llm.get("localOnly") is True
+        if not (llm.get("base") and llm.get("model") and (llm.get("key") or local_only)):
             raise selection.SelectionError("请先选择并授权可用模型")
         if wanted["modelName"] and wanted["modelName"] != llm["model"]:
             raise selection.SelectionError("本轮模型授权与所选模型不匹配")
@@ -82,6 +83,7 @@ def resume(ref, text, cfg):
                 merged.pop("llm", None)
             merged["local_cli"] = wanted["agentId"]
             run.update(cli=wanted["agentId"], model=wanted["modelName"],
+                       modelLocalOnly=(merged.get("llm") or {}).get("localOnly") is True,
                        reasoningEffort=wanted["reasoningEffort"], cfg=merged,
                        contextSegments=segments, segment=int(run.get("segment") or 1) + 1,
                        cliSid="", tokens={}, appliedAccessPolicy={}, pendingPermissions=[])
@@ -97,7 +99,8 @@ def resume(ref, text, cfg):
                 _save_meta(ref)
                 return result
             _note(ref, "已切换为 " + _PROFILES[wanted["agentId"]]["name"] +
-                  (" · " + wanted["modelName"] if wanted["modelName"] else "") + "，继续当前会话。")
+                  (" · 本地模型" if (merged.get("llm") or {}).get("localOnly") else
+                   " · " + wanted["modelName"] if wanted["modelName"] else "") + "，继续当前会话。")
             return {**result, "acceptedSelection": wanted}
     except (selection.SelectionError, access_policy.PolicyError, ValueError, OSError) as exc:
         return {"ok": False, "code": getattr(exc, "code", "EXECUTION_SELECTION_INVALID"), "error": str(exc)}

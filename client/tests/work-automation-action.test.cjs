@@ -96,6 +96,24 @@ test('automation sheet translates model selector text on initial render and refr
   assert.match(modelRows('', 'local:pi'), /No models are available/);
 });
 
+test('automation sheet exposes local models for Pi even when modelPick is false', () => {
+  const context = { Intl, setTimeout, clearTimeout, document: { createElement: tag => ({ tagName: tag }) } };
+  context.window = context;
+  const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
+  vm.runInNewContext(automation.replace(marker,
+    '  global.probe = { state, modelField };\n' + marker), context);
+  const { state, modelField } = context.probe;
+  state.agents = [{ id: 'local:pi', cli: 'pi', modelPick: false, nativeModelPick: false }];
+  state.modelOptions = [
+    { name: 'local:model-abcdefabcdefabcdefabcdefabcdefab', label: 'glm5.2 · 本机', localOnly: true },
+    { name: 'managed-model', label: '托管模型' },
+  ];
+  const field = modelField('', 'local:pi');
+  assert.match(field, /local:model-abcdefabcdefabcdefabcdefabcdefab/);
+  assert.doesNotMatch(field, /<select[^>]+disabled/);
+  assert.doesNotMatch(field, /由底座自身管理模型/);
+});
+
 test('automation remains an iterative plugin form inside the conversation', () => {
   assert.match(automation, /PluginUIHost\.mount/);
   assert.match(automation, /PluginUIHost\.checkpointCurrent/);
@@ -142,7 +160,7 @@ test('both desktop entrypoints load automation styles and runtime in dependency 
 
 test('automation payload permissions come from explicit choices and the selected method', () => {
   const context = { Intl, setTimeout, clearTimeout }; context.window = context;
-  for (const name of ['schedule-timing.js', 'work-automation-bindings.js']) {
+  for (const name of ['schedule-timing.js', 'work-automation-bindings.js', 'work-automation-card-state.js']) {
     vm.runInNewContext(read('components', 'panels', name), context);
   }
   const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
@@ -162,6 +180,16 @@ test('automation payload permissions come from explicit choices and the selected
   assert.deepEqual(Array.from(manual.requiredCapabilities), ['computer']);
   assert.deepEqual(Array.from(bodyOf(manual).requiredCapabilities), ['computer', 'office']);
   assert.deepEqual(Array.from(manual.requiredCapabilities), ['computer'], 'derived method permissions stay out of editable choices');
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  state.defaultModels = { pi: model }; state.defaultModelErrors = { pi: 'Deleted local default' };
+  state.modelOptions = [{ name: 'managed-alternative' }];
+  assert.equal(proposalOf({}, 'Choose the sole available model', {}).modelName, 'managed-alternative');
+  assert.equal(proposalOf({ modelName: 'unavailable:default' }, 'Do not persist a UI placeholder', {}).modelName, 'managed-alternative');
+  const invalid = proposalOf({}, 'Keep the explicitly saved model', { modelName: model });
+  assert.equal(invalid.modelName, model);
+  assert.throws(() => bodyOf(invalid), /不可用/);
+  state.defaultModelErrors = {}; state.modelOptions.push({ name: model, localOnly: true });
+  assert.equal(bodyOf(proposalOf({}, 'Use the configured model', {})).modelName, model);
 });
 
 test('automation editor keeps a saved model when the model control is temporarily disabled', () => {

@@ -29,6 +29,7 @@ const fileChangeJournal = require('../conversation/file-change-journal');
 const messageTime = require('../conversation/message-time');
 const agentSource = require('../conversation/agent-source.cjs');
 const _runnerConfig = require('./runner-config.cjs').create;
+const executionModelId = model => String(model?.localOnly ? model.wireModelId || '' : model?.id || '');
 const ADAPTER_ID = 'codex-harness';
 const EXECUTION_NAMESPACE = '9af442c8-cd1d-4b91-a668-22da2b2635bf';
 const POLL_MS = 420;
@@ -318,8 +319,9 @@ function _snapshot(state) {
     usage: state.usage ? { ...state.usage } : null,
     // The Runner's cumulative receipt includes tool-only/hidden work and cost.
     // Display fragments intentionally contain only per-message token details.
-    ...(state.usage ? { usageReceipts: [{ usage: { ...state.usage },
-      at: state.updatedAt || 0, model: state.model?.id || '', agent: state.adapterId }] } : {}),
+    ...(state.usageReceipts ? { usageReceipts: state.usageReceipts } : state.usage ? { usageReceipts: [{ usage: { ...state.usage },
+      at: state.updatedAt || 0, model: state.model?.id || '', agent: state.adapterId,
+      ...(state.model?.localOnly || state.localUsageObserved ? { localOnly: true, reportable: false } : {}) }] } : {}),
     contextUsage: state.contextUsage ? { ...state.contextUsage } : null,
     tokens: state.contextUsage ? { ...state.contextUsage } : null,
     contextWindow: Number(state.contextWindow || 0) || 0,
@@ -439,6 +441,10 @@ async function createRunnerHandle(request, defaults, initialSession) {
   const savedSelection = modelPreference.readSelection();
   const explicitModel = typeof opts.modelName === 'string';
   let modelName = explicitModel ? opts.modelName : modelPreference.read() || '';
+  if (accountModel && (String(modelName).startsWith('local:') ||
+      require('../../core/model-choice').imageChoice(modelName)?.name.startsWith('local:'))) {
+    throw new RuntimeContractError('RUNNER_MODEL_UNAVAILABLE', '账号型底座不能使用本地模型，请选择账号模型');
+  }
   const initialThinking = adapterId === 'codex' ? require('./codex-thinking').profile(modelName,
     resumedRef && typeof savedSelection.reasoningEffort === 'string' ? savedSelection.reasoningEffort
       : opts.reasoningEffort || savedSelection.reasoningEffort || '') : null;
@@ -459,12 +465,13 @@ async function createRunnerHandle(request, defaults, initialSession) {
   let prepared = accountModel
     ? { ok: true, model: { id: modelName, name: modelName || displayName, baseUrl: '', key: '' } }
     : await models.fetchModel(identity, modelName, undefined, undefined, false, adapterId,
-      { app, allowHistorical: Boolean(resumedRef || opts.resumedConversation) });
+      { app, allowLocal: true, allowHistorical: Boolean(resumedRef || opts.resumedConversation) });
   // A Runner archive can outlive the model catalog just like a native Pi archive.
   // Historical model names are hints, not a reason to make the whole conversation
   // unreadable. Retry only resumed conversations with the current default; new
   // chats keep an explicit model failure visible so a typo is not silently changed.
-  const canRecoverStaleModel = Boolean(resumedRef || opts.resumedConversation);
+  const canRecoverStaleModel = Boolean(resumedRef || opts.resumedConversation) && !modelName.startsWith('local:') &&
+    prepared?.code !== 'LOCAL_AGENT_DEFAULT_UNAVAILABLE';
   const returnedModel = String(prepared?.model?.id || '').trim();
   const returnedDifferentModel = Boolean(prepared?.ok && modelName && returnedModel && returnedModel !== modelName);
   let resetSavedModel = false;
@@ -472,7 +479,8 @@ async function createRunnerHandle(request, defaults, initialSession) {
     const fallback = accountModel
       ? { ok: true, model: { id: '', name: displayName, baseUrl: '', key: '' } }
       : await models.fetchModel(identity, '', undefined, undefined, false, adapterId,
-        { app, ignoreAgentPreference: true, allowHistorical: Boolean(resumedRef || opts.resumedConversation) });
+        { app, allowLocal: true, ignoreAgentPreference: true,
+          allowHistorical: Boolean(resumedRef || opts.resumedConversation) });
     if (fallback?.ok && fallback.model) {
       modelName = '';
       prepared = fallback;
@@ -483,7 +491,10 @@ async function createRunnerHandle(request, defaults, initialSession) {
     throw new RuntimeContractError('RUNNER_MODEL_UNAVAILABLE',
       String(prepared && prepared.reason || displayName + ' 没有可用模型'));
   }
-  if (explicitModel || resetSavedModel) {
+  // Capture a device default as the conversation's actual immutable choice.
+  // A later default edit must not retarget an archive that originally passed an empty name.
+  if (prepared.model.localOnly) modelName = require('../pi-session/local-model-runtime-privacy.cjs').reference(prepared.model);
+  if (explicitModel || resetSavedModel || prepared.model.localOnly) {
     try { modelPreference.write(modelName, initialThinking?.level); }
     catch (error) {
       // Clearing a retired historical choice is a best-effort repair. A
@@ -507,7 +518,8 @@ async function createRunnerHandle(request, defaults, initialSession) {
     pendingPermissions: [],
     accessRestorePending: Boolean(resumeNative && !opts.accessPolicy),
     nextAccessPolicy: null,
-    model: prepared.model, lastExecutionModelId: prepared.model.id,
+    model: prepared.model, lastExecutionModelId: executionModelId(prepared.model),
+    localUsageObserved: prepared.model.localOnly === true,
     agentExecution: _nativeExecution(adapterId, { ...opts, modelName,
       ...(initialThinking ? { reasoningEffort: initialThinking.level } : {}) }),
     thinking: initialThinking,
@@ -542,7 +554,8 @@ async function createRunnerHandle(request, defaults, initialSession) {
     name: modelName, model: prepared.model,
     generation: accountModel ? undefined : models.generation,
     async resolve(name) {
-      if (!accountModel) return models.fetchModel(identity, name, undefined, undefined, false, adapterId);
+      if (!accountModel) return models.fetchModel(identity, name, undefined, undefined, false, adapterId,
+        { app, allowLocal: true });
       if (adapterId !== 'codex') return { ok: false };
       const catalog = await require('./native-model-catalog').list(adapterId);
       const row = (catalog.models || []).find(model => model.id === name);
@@ -561,6 +574,7 @@ async function createRunnerHandle(request, defaults, initialSession) {
     apply(next, name) {
       state.contextUsage = null;
       state.model = next; handle.model = next.id;
+      state.localUsageObserved ||= next.localOnly === true;
       const resolved = contextWindow.resolveContextWindow(next);
       state.contextWindow = resolved.contextWindow;
       state.contextWindowKnown = resolved.contextWindowKnown;
@@ -974,6 +988,7 @@ async function createRunnerHandle(request, defaults, initialSession) {
       await restoreTaskOutput(state.seq);
       state.round = Number(data.round || state.round || 1);
       state.usage = data.usage && typeof data.usage === 'object' ? { ...data.usage } : state.usage;
+      if (Array.isArray(data.usageReceipts)) state.usageReceipts = data.usageReceipts;
       if (data.tokens && typeof data.tokens === 'object') {
         const tokens = data.tokens;
         const fields = Object.keys(tokens).length;
@@ -1179,7 +1194,7 @@ async function createRunnerHandle(request, defaults, initialSession) {
       next.materialUnderstandingPrompt,
       ...(opts.contextPrompts || []), taskContext, _goalBrief(opts), _languageContract()].filter(Boolean).join('\n\n');
     const completion = waitForTurn();
-    const dispatchedModelId = state.model.id;
+    const dispatchedModelId = executionModelId(state.model);
     const dispatchedEffort = state.agentExecution?.reasoningEffort || '';
     runtime.rpc('job.dispatch', {
       cli: adapterId,
@@ -1297,8 +1312,8 @@ async function createRunnerHandle(request, defaults, initialSession) {
     const dispatchedEffort = state.agentExecution?.reasoningEffort || '';
     runtime.rpc('job.comment', {
       ref: state.runnerRef, text, turnId,
-      ...(state.model.id !== state.lastExecutionModelId || adapterId === 'codex' && dispatchedEffort !== state.lastExecutionReasoningEffort
-        ? { executionSelection: { agentId: adapterId, modelName: state.model.id, reasoningEffort: dispatchedEffort } } : {}),
+      ...(executionModelId(state.model) !== state.lastExecutionModelId || adapterId === 'codex' && dispatchedEffort !== state.lastExecutionReasoningEffort
+        ? { executionSelection: { agentId: adapterId, modelName: executionModelId(state.model), reasoningEffort: dispatchedEffort } } : {}),
       sentAt: messageTime.epoch(next.sentAt),
       plugins: publicPluginBadges(next.plugins),
       promptText: [next.promptText || _conversationPrompt(text, { ...opts, accessPolicy: turnPolicy }),
@@ -1380,6 +1395,7 @@ async function createRunnerHandle(request, defaults, initialSession) {
       if (next.options.controlled) return next.options.controlled.execute(handle, next.text, next.attachments);
       const send = () => {
         if (state.disposed || state.cancelRequested || state.goalPaused || next.stopRequested) return { ok: true, cancelled: true };
+        if (state.model.historicalLocal) throw Error('原本地模型已删除或不可用，请先选择一个当前可用模型后再发送');
         const byteAttachments = (Array.isArray(next.attachments) ? next.attachments : []).some(item =>
           item && item.data != null && !path.isAbsolute(String(item.path || item.stagedPath || '')));
         if (byteAttachments) {

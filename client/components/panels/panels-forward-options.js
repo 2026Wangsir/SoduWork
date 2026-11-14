@@ -12,6 +12,7 @@ let _repoCache = [];
 let _fwdLoadSeq = 0;
 let _fwdSelection = { ai: null, mate: null };
 let _fwdModel = '';
+let _fwdModelExplicit = false;
 let _fwdLoading = { ai: false, mate: false };
 let _fwdMateRows = [];
 let _fwdMateQuery = '';
@@ -55,6 +56,7 @@ function _fwdReset(tid, force) {
   _fwdSelection = { ai: null, mate: null };
   _fwdResetMethodChoice();
   _fwdModel = '';
+  _fwdModelExplicit = false;
   _fwdLoading = { ai: false, mate: false };
   _fwdMateRows = [];
   _fwdMateQuery = '';
@@ -320,7 +322,9 @@ function _fwdChoose(tid, choice) {
     // Only an explicit Agent change can discard an incompatible local choice.
     // Directory refresh and delayed probes must preserve it until revalidated.
     if (choice?.type === 'direct' && previous?.id !== choice.id && String(_fwdModel).startsWith('local:') &&
-        !_fwdLocalModelAllowed(_fwdSubstrateOf(choice.id))) _fwdModel = '';
+        !_fwdLocalModelAllowed(_fwdSubstrateOf(choice.id))) {
+      _fwdModel = ''; _fwdModelExplicit = false;
+    }
     if (choice?.type === 'direct') _fwdManualAgent = _fwdId(choice.id);
     _fwdRememberMethodChoice(choice);
   }
@@ -367,15 +371,21 @@ function _fwdChoiceIsCurrent(choice) {
 }
 
 function _fwdLocalModelAllowed(agent) {
-  if (agent?.remote === true || agent?.locationMode === 'remote' || /^runner:/.test(String(agent?.key || agent?.id || ''))) return false;
-  const cli = String(agent?.cli || agent?.key || agent?.id || '').replace(/^local:/, '');
-  // Device-owned models are supported only by the probed native Pi transport.
-  // Other runtimes keep their managed or account model catalogs.
-  return cli === 'pi' && (agent?.localConversationAvailable === true || agent?.executionSource === 'conversation');
+  if (agent?.remote === true || agent?.locationMode === 'remote') return false;
+  const identity = String(agent?.key || agent?.id || '');
+  const cli = String(agent?.cli || identity).replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+  if (!cli || ['codex', 'claude'].includes(cli)) return false;
+  if (agent?.modelMode === 'account') return false;
+  // Device-owned models require a successful probe of the current device.
+  // A same-device Runner may carry a runner key; the local conversation probe
+  // is what distinguishes it from a remote execution target.
+  return agent?.localConversationAvailable === true || agent?.executionSource === 'conversation';
 }
 
 function _fwdCanPickModel(agent) {
   if (!agent) return false;
+  const cli = String(agent.cli || agent.key || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+  if (['codex', 'claude'].includes(cli) || agent.modelMode === 'account') return false;
   return agent.modelPick !== false || (_fwdLocalModelAllowed(agent) && agent.localModelPick === true);
 }
 
@@ -439,7 +449,11 @@ function _fwdSyncConfirm(tid) {
     ? _fwdOptions?.modelOptions
     : (_fwdOptions?.modelOptions || []).filter(row => row?.localOnly !== true && !String(row?.name || '').startsWith('local:'));
   const catalog = canPickModel ? { ...(_fwdOptions || {}), modelOptions } : {models:[], modelOptions:[], defaultModel:''};
-  const modelState = _fwpModelState(catalog, _fwdModel);
+  let modelState = _fwpModelState(catalog, _fwdModel);
+  if (canPickModel && !_fwdModelExplicit && !_fwdModel && modelState.models.length === 1) {
+    _fwdModel = modelState.models[0];
+    modelState = _fwpModelState(catalog, _fwdModel);
+  }
   const modelHtml = (canPickModel || modelState.stale) && (modelState.models.length || modelState.stale)
     ? '<label class="fwd-model"><span>本次模型</span><select id="fwdModel"' + (busy ? ' disabled' : '') + '>' +
       _fwpModelOptions(modelState, _fwpDefaultModelLabel(_fwdOptions, agent), _fwpDefaultModelTitle(_fwdOptions, agent)) +
@@ -459,6 +473,7 @@ function _fwdSyncConfirm(tid) {
   if (modelSelect) modelSelect.addEventListener('change', () => {
     if (button.dataset.idleLabel != null || (modelSelect.value && !modelState.models.includes(modelSelect.value))) return;
     _fwdModel = modelSelect.value || '';
+    _fwdModelExplicit = true;
     _fwdSetStatus('');
     _fwdSyncConfirm(tid);
     document.getElementById('fwdModel')?.focus();

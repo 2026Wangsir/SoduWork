@@ -230,7 +230,8 @@ class ClientPushCompatibilityTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 404)
         claim = self.http.post(route + "/claim", headers=self.headers(), json={"instanceId": "worker"})
         self.assertEqual(claim.status_code, 200, claim.text)
-        self.assertEqual(set(claim.json()), {"ok", "input", "trigger", "conversationId"})
+        self.assertEqual(set(claim.json()), {"ok", "input", "trigger", "conversationId", "scheduleId"})
+        self.assertEqual(claim.json()["scheduleId"], "compat-plan")
         self.assertEqual(claim.json()["input"]["runId"], "compat-run")
         self.drain(); self.quiet(target)
         for state in ("running", "succeeded"):

@@ -148,6 +148,34 @@
       return last?.kind === 'text' && last.done !== false;
     }
 
+    function analysisReceipt(message) {
+      const prefix = 'acceptance-analysis:v1:';
+      if (message?.role !== 'assistant' || message.done === false ||
+          !String(message.taskOutputKey || '').startsWith(prefix)) return null;
+      try {
+        const value = JSON.parse(decodeURIComponent(message.taskOutputKey.slice(prefix.length)));
+        if (!value || typeof value !== 'object' || !value.taskId || !value.approvalId ||
+            !value.artifactVersionId || !/^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId || '') ||
+            String(message.taskId || '') !== value.taskId) return null;
+        return value;
+      } catch (_) { return null; }
+    }
+
+    function supersededText(index, blockIndex) {
+      const messages = ctx._snap?.messages || [], message = messages[index];
+      const next = messages[index + 1], receipt = analysisReceipt(next);
+      if (!receipt || !completedReply(message)) return false;
+      const user = messages.slice(0, index).findLast(row => row.role === 'user');
+      const blocks = message.blocks || [], lastTool = blocks.findLastIndex(block => block.kind === 'toolcall');
+      const text = blocks.slice(lastTool + 1).filter(block => block.kind === 'text')
+        .map(block => String(block.text || '')).join('\n\n').trim();
+      const saved = (next.blocks || []).filter(block => block.kind === 'text')
+        .map(block => String(block.text || '')).join('\n\n').trim();
+      // The original provider output stays in the archive. Only its exact,
+      // same-turn native result replaces the repeated text on screen.
+      return user?.submissionId === receipt.turnId && blockIndex > lastTool && text === saved;
+    }
+
     function timeline(entries, messages = [], start = 0) {
       const owner = index => ctx._snap?.history?.messageIndices?.[index] ??
         ((Number(ctx._snap?.history?.messageStart) || 0) + index);
@@ -244,15 +272,21 @@
 
     function _acceptanceResultHtml(text, resultKey, sourceIndex) {
       const value = String(text || '').trim();
+      const messages = ctx._snap?.messages || [];
+      const messageIndex = sourceIndex ?? Number(String(resultKey).split(':')[0]);
+      const receipt = analysisReceipt(messages[messageIndex]);
+      const source = messages[messageIndex];
+      if (source?.role === 'assistant' && (source.done === false || source.errorMessage ||
+          /^(tool_?use|tool_?calls?|error|aborted|cancelled|canceled|length|max_tokens)$/i.test(source.stopReason || ''))) return '';
       // Models occasionally add a short preface or Markdown heading before the
       // protocol marker. Keep the whole reply in the result card instead of
       // falling back to plain Markdown with no decision controls.
       const marker = value.match(/(^|\n)[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+|>[ \t]*)?(?:#{1,6}[ \t]*)?【(验收分析结果|验收退回卡|验收确认卡)】[ \t]*/);
-      if (!marker) return '';
-      const kind = marker[2];
+      if (!marker && !receipt) return '';
+      const kind = receipt ? '验收分析结果' : marker[2];
       const analysis = kind === '验收分析结果';
       const rejected = kind === '验收退回卡';
-      const body = (value.slice(0, marker.index) + value.slice(marker.index + marker[0].length)).trim();
+      const body = marker ? (value.slice(0, marker.index) + value.slice(marker.index + marker[0].length)).trim() : value;
       const title = analysis ? '验收分析结果' : '自动验收审核结果';
       const state = analysis ? 'is-analysis' : (rejected ? 'is-rejected' : 'is-confirmed');
       const icon = rejected
@@ -262,27 +296,33 @@
         ? '分析已完成，请根据逐项依据在验收卡中确认或退回'
         : '自动验收会话已完成，结果与逐项依据已留在当前会话';
       const status = analysis ? '待人工确认' : (rejected ? '需要修改' : '已确认');
-      const taskId = String(ctx._sessionOptions?.taskRef || ctx._sessionOptions?.taskId ||
+      const taskId = String(receipt?.taskId || ctx._sessionOptions?.taskRef || ctx._sessionOptions?.taskId ||
         ctx._activeCollabTaskId || ctx._collaborationTaskId || ctx._collaborationTask?.id || '').trim();
       const taskEntry = taskId && ctx._collabTasks?.get?.(taskId);
       const approvals = taskEntry?.trace?.approvals || ctx._collaborationTrace?.approvals || [];
       const review = Array.isArray(approvals)
-        ? approvals.find(item => item && item.action === 'review' && item.status === 'pending' && !item.myDecision) ||
+        ? receipt ? approvals.find(item => item && item.action === 'review' && item.id === receipt.approvalId) :
+          approvals.find(item => item && item.action === 'review' && item.status === 'pending' && !item.myDecision) ||
           approvals.find(item => item && item.action === 'review')
         : null;
-      const approvalId = String(ctx._sessionOptions?.approvalId || review?.id || '').trim() || (taskId ? 'direct:' + taskId : '');
+      const approvalId = String(receipt?.approvalId || ctx._sessionOptions?.approvalId || review?.id || '').trim() || (taskId ? 'direct:' + taskId : '');
       const actionKey = taskId + ':' + approvalId + ':analysis:' + String(resultKey || 'latest');
       const outcome = resultOutcomes.get(resultKey);
-      const messages = ctx._snap?.messages || [];
-      const messageIndex = sourceIndex ?? Number(String(resultKey).split(':')[0]);
       const latestUser = messages.findLastIndex(message => message?.role === 'user');
       const task = taskEntry?.task || ctx._collaborationTask || {};
-      const subject = approvalId + ':' + String(review?.artifactVersionId || '');
+      const trace = taskEntry?.trace || ctx._collaborationTrace || {};
+      const artifactId = review?.artifactVersionId || (!review && trace.artifacts?.at(-1)?.id) || '';
+      const boundReview = !receipt || (String(task.id || taskId) === receipt.taskId &&
+        (review || receipt.approvalId === 'direct:' + receipt.taskId) &&
+        receipt.artifactVersionId === artifactId &&
+        (!task.requirementVersion || Number(task.requirementVersion) === Number(receipt.requirementVersion)) &&
+        messages[latestUser]?.submissionId === receipt.turnId);
+      const subject = approvalId + ':' + String(receipt?.artifactVersionId || review?.artifactVersionId || '');
       if ((review || task.status === 'done') && !resultApprovals.has(resultKey)) resultApprovals.set(resultKey, subject);
       const messageAt = Number(messages[messageIndex]?.sentAt || messages[messageIndex]?.completedAt || 0);
       const reviewAt = Number(review?.createdAt || 0);
       // Historical analysis must never acquire a later round's approval controls.
-      const actionable = analysis && taskId && !task.reviewedAt && task.canReview !== false &&
+      const actionable = analysis && boundReview && taskId && !task.reviewedAt && task.canReview !== false &&
         (review ? review.status === 'pending' && !review.myDecision && approvalId === review.id : task.status === 'done') &&
         !(messageAt && reviewAt && messageAt < reviewAt) &&
         resultApprovals.get(resultKey) === subject && Number.isInteger(messageIndex) && messageIndex > latestUser &&
@@ -429,7 +469,8 @@
       const analysisAfterLatestUser = latestUser >= 0 && activeTaskId && activeTaskId === String(entry.taskId || '').trim() &&
         messages.slice(latestUser + 1).some(message => message?.role === 'assistant' &&
           (message.blocks || []).some(block => block?.kind === 'text' &&
-            /【验收分析结果】/.test(String(block.text || ''))));
+            /【验收分析结果】/.test(String(block.text || ''))) ||
+          message?.role === 'assistant' && analysisReceipt(message)?.taskId === activeTaskId);
       /*
        * task.updated may arrive before taskTrace after acceptance elsewhere. reviewedAt is
        * authoritative completion evidence; stale approval snapshots must not restore a
@@ -495,7 +536,7 @@
       }, refresh: () => ctx._loadCollabTask(id) });
     }
 
-    return { reset, html: _acceptanceResultHtml, pendingApprovals, resultsHtml, timeline, bind, bindApproval };
+    return { reset, html: _acceptanceResultHtml, supersededText, pendingApprovals, resultsHtml, timeline, bind, bindApproval };
   }
   global.ChatAcceptanceResults = { create };
 })(window);

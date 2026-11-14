@@ -130,7 +130,7 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   // Review analysis reads requirement context and attachments without execution or plugin-run receipts.
   // Allow reviewer follow-ups without accidentally starting the requirement.
   if (requested.acceptanceOnly === true) {
-    const acceptance = await require('./acceptance-turn').prepare({ identity, taskId, instruction,
+    const acceptance = await require('./acceptance-turn').prepare({ identity, taskId, turnId, instruction,
       requested, runtime, request });
     const bundle = acceptance.deliveryBundle;
     const extraIds = [...new Set([...acceptance.referenceAttachmentIds, ...acceptance.optionalAttachmentIds])];
@@ -156,6 +156,28 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   const submissionMode = ['auto', 'manual'].includes(String(requested.submissionMode || ''))
     ? String(requested.submissionMode) : '';
   const dispatchInstructions = require('./dispatch-instructions.cjs').submitted(requested);
+  const captureModelSource = (retry = false, queuedModel) => {
+    if (spec.mode !== 'native') return { source: 'managed', name: '' };
+    const handle = runtime?.handle, selection = handle?.snapshot?.()?.modelSelection;
+    const explicitModel = retry ? (typeof queuedModel === 'string' ? queuedModel.trim() : '')
+      : String(spec.model || '').trim();
+    const name = retry && typeof queuedModel === 'string' ? queuedModel.trim()
+      : explicitModel || String(selection?.name || '').trim();
+    const image = require('../../core/model-choice').imageChoice(name);
+    const reference = image?.name || name;
+    if (!reference.startsWith('local:')) return { source: 'managed', name };
+    const agent = String(handle?.adapterId || '');
+    const managed = require('../agent-runtime/runtime-catalog').runtime(agent)?.modelMode === 'managed';
+    // A fresh task may apply its explicit model only when its queued turn
+    // starts. Resolve that selection locally instead of trusting a raw source
+    // flag or requiring the previous active model to have changed already.
+    const local = managed && (explicitModel || selection?.model?.localOnly === true && selection.name === name) &&
+      !(selection?.name === name && (selection.model?.unavailable || selection.model?.historicalLocal)) &&
+      (!image || agent === 'pi') && require('../local-model-store.cjs').resolve(reference);
+    if (!local?.localOnly) throw Error('本轮本地模型无法确认或已删除，请重新选择可用模型');
+    return { source: 'device', name, agentId: 'local:' + agent };
+  };
+  let capturedModel = captureModelSource();
 
   // Attach task receipts to the prepare -> start -> collect -> complete lifecycle so outputs from
   // follow-up turns flow back to the task. Otherwise a later correction, such as changing the output
@@ -168,7 +190,9 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
     const routing = current?.workRouting || {}, context = routing.executionContext || {};
     if (routing.selectedStrategy !== 'direct' || routing.workflowBindingId || routing.selectedWorkflowBindingId ||
       context.strategy !== 'direct' || context.agent?.id !== spec.agentId || context.runner?.mode !== 'local' ||
-      String(context.model || '') !== spec.model)
+      (capturedModel.source === 'device'
+        ? context.modelSource !== 'device' || Boolean(context.model)
+        : String(context.model || '') !== spec.model))
       throw new Error('服务端未确认本次执行选择或安排已变化，请刷新后重新选择；旧服务端需更新后再改选');
   };
   const verifyReuse = async (refresh = false, quick = false) => {
@@ -215,6 +239,8 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   let attachments = followUp || runnerContinuation ? [] : await loadTaskAttachments(identity, route,
     reworkSession ? {latestDelivery: true} : undefined);
   const scope = { conversationId, turnId };
+  const nativeReceiptScope = () => capturedModel.source === 'device'
+    ? { ...scope, modelSource: 'device', modelAgentId: capturedModel.agentId } : scope;
   // Freeze receipt ownership while preparation still has an authenticated account.
   // Queue admission is not execution; only the runtime start acknowledgement records it.
   const startReceipt = spec.mode === 'native' ? runtime?.startReceipts?.forTask(identity, taskId) : null;
@@ -230,11 +256,12 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   };
   const transition = action => freshIdentity()
     .then(id => request(id, route + '/conversation-turn', { action, ...scope, executor: spec.mode,
+      ...(capturedModel.source === 'device' ? { modelSource: 'device', agentId: capturedModel.agentId } : {}),
       ...(action === 'prepare' && dispatchInstructions ? {dispatchInstructions} : {}),
       ...(spec.continuationRef ? { continuationRef: spec.continuationRef } : {}),
       ...(submissionMode ? { submissionMode } : {}),
       ...(explicitNative && action === 'prepare' ? { executionChoice: 'native',
-        agentId: spec.agentId, model: spec.model } : {}) }));
+        agentId: spec.agentId, model: capturedModel.source === 'device' ? '' : spec.model } : {}) }));
   // Freeze bytes before the terminal receipt. The existing durable transport
   // queue retries uploads without re-executing the model or rereading files.
   let settlementFailed = false;
@@ -246,13 +273,13 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
       // The queue reports a capture failure separately from model completion.
       // Release the execution receipt so a repair is possible; never mark it complete.
       if (action !== 'fail') return;
-      return startReceipt ? startReceipt.finish(scope, {action:'fail'},
+      return startReceipt ? startReceipt.finish(nativeReceiptScope(), {action:'fail'},
         {started:executionStarted && !startAcknowledged}) : transition('fail');
     }
     try {
       const delivery = await require('./task-delivery.cjs').capture(runtime?.handle, outcome);
       return startReceipt
-        ? await startReceipt.finish(scope, {action, ...(submissionMode ? {submissionMode} : {})},
+        ? await startReceipt.finish(nativeReceiptScope(), {action, ...(submissionMode ? {submissionMode} : {})},
           {started: executionStarted && !startAcknowledged, delivery})
         : (delivery && await require('./task-delivery.cjs').send(await freshIdentity(), route, scope, delivery),
           await transition(action));
@@ -279,12 +306,13 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
   return {
     text, attachments, task: receipt.task || task,
     executor: spec.mode,
-    ...(spec.mode === 'native' && !reuse ? { modelName: String(spec.model || '') } : {}),
+    ...(spec.mode === 'native' && !reuse ? { modelName: capturedModel.source === 'device'
+      ? capturedModel.name : String(spec.model || '') } : {}),
     controlled: spec.mode === 'native' ? null : controlled.create({ task: receipt.task || task, spec, scope,
       request: async (route, body) => request(await freshIdentity(), route, body) }),
     ...(startReceipt ? { onStarted: async () => {
       executionStarted = true;
-      const recorded = await startReceipt(scope);
+      const recorded = await startReceipt(nativeReceiptScope());
       startAcknowledged = recorded.pending === false;
       return recorded;
     } } : {}),
@@ -310,16 +338,20 @@ async function prepare(identity, taskId, conversationId, turnId, instruction, re
         throw error;
       }
     },
-    beforeRetry: async () => {
+    beforeRetry: async turn => {
       // Mint a fresh receipt attempt, but retain this conversation's context.
-      const next = { ...scope, turnId: 'recovery-' + require('node:crypto').randomUUID() };
+      // Queue admission freezes a model independently of later picker changes.
+      const nextModel = captureModelSource(true, turn?.modelName);
+      const next = { conversationId: scope.conversationId, turnId: 'recovery-' + require('node:crypto').randomUUID() };
       const receipt = await request(await freshIdentity(), route + '/conversation-turn',
         { action: 'prepare', ...next, executor: spec.mode,
+          ...(nextModel.source === 'device' ? { modelSource: 'device', agentId: nextModel.agentId } : {}),
           ...(dispatchInstructions ? {dispatchInstructions} : {}),
           ...(spec.continuationRef ? { continuationRef: spec.continuationRef } : {}),
           ...(submissionMode ? { submissionMode } : {}) });
       if (receipt.turn.state !== 'queued') throw new Error('需求状态已变化，请刷新后查看结果');
       scope.turnId = next.turnId;
+      capturedModel = nextModel;
       settlementFailed = false;
       executionStarted = false;
       startAcknowledged = false;

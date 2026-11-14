@@ -7,6 +7,7 @@ capabilities, personal-plugin snapshots and truthful run receipts.
 from __future__ import annotations
 
 import math
+import copy
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
+from .model_reference_privacy import is_local_model_reference
 
 
 DIRECT_CAPABILITIES = ("browser", "computer", "office")
@@ -27,6 +29,64 @@ _PERSONAL_PLUGIN_VERSION = re.compile(
     r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 _PERSONAL_PLUGIN_CHECKSUM = re.compile(r"^[a-f0-9]{64}$")
 PERSONAL_PLUGIN_VERSION_POLICIES = ("latest", "pinned")
+MODEL_SOURCES = ("managed", "device")
+
+
+def clean_schedule_model_reference(value) -> str:
+    """Strip legacy desktop-only model references from persisted run envelopes."""
+    model = str(value or '').strip()
+    return '' if is_local_model_reference(model) else model
+
+
+def sanitize_schedule_model_payload(value):
+    """Remove legacy desktop model references from receipts and conversation envelopes."""
+    envelopes = {"route", "requested", "resolved", "conversationInput", "selection",
+                 "activeExecutionSelection", "acceptedSelection", "contextSegments"}
+
+    def clean(item, inherited=False):
+        if isinstance(item, dict):
+            source = str(item.get("modelSource") or "").strip().lower()
+            local = (source == "device" or item.get("localOnly") is True or
+                     item.get("modelLocalOnly") is True or inherited and source != "managed")
+            result = {key: copy.deepcopy(field) if key in {"pluginInputs", "arguments"} else
+                      clean(field, local and key in envelopes) for key, field in item.items()}
+            redacted = False
+            for key in ('modelName', 'model', 'modelRef', 'modelId', 'localModel'):
+                if key in result and (local or is_local_model_reference(result[key])):
+                    result[key] = ''
+                    redacted = True
+            if redacted:
+                result['modelSource'] = 'device'
+            return result
+        if isinstance(item, list):
+            return [clean(field, inherited) for field in item]
+        return item
+
+    return clean(value)
+
+
+def clean_schedule_model_source(value, *, default: str = "managed") -> str:
+    """Normalize the non-sensitive owner of an automation model selection.
+
+    ``device`` means the actual model name is retained only by the owning
+    desktop.  The Hub may persist this marker, but it must never receive the
+    opaque local model reference itself.  Missing values retain managed-model
+    semantics for schedules created before this field was introduced.
+    """
+    source = str(value or '').strip().lower() or str(default or 'managed').strip().lower()
+    if source not in MODEL_SOURCES:
+        raise ValueError("自动化模型来源无效")
+    return source
+
+
+def schedule_model_source(schedule) -> str:
+    """Return a stable source marker, including for legacy local references."""
+    if is_local_model_reference(getattr(schedule, "model_name", "")):
+        return "device"
+    source = str(getattr(schedule, "model_source", "") or "").strip().lower()
+    if source in MODEL_SOURCES:
+        return source
+    return "managed"
 
 
 def clean_personal_plugin_key(raw) -> str:
@@ -244,7 +304,9 @@ def _new_run(s, trigger: str, idempotency_key: str = ""):
     requested = {
         "assigneeId": str(getattr(s, "assignee_id", "") or ""),
         "assigneeType": str(getattr(s, "assignee_type", "") or "agent"),
-        "modelName": str(getattr(s, "model_name", "") or ""),
+        "modelName": ("" if schedule_model_source(s) == "device" else
+                      clean_schedule_model_reference(getattr(s, "model_name", ""))),
+        "modelSource": schedule_model_source(s),
         "requiredCapabilities": clean_required_capabilities(
             getattr(s, "required_capabilities", None)),
     }

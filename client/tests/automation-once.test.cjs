@@ -6,7 +6,7 @@ const now = Date.parse('2026-10-15T01:00:00Z');
 function runtime() {
   class Clock extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = {Date:Clock, Intl, setTimeout, clearTimeout}; context.window = context;
-  for (const file of ['schedule-timing.js','work-automation-bindings.js']) {
+  for (const file of ['schedule-timing.js','work-automation-bindings.js','work-automation-card-state.js']) {
     const target = path.join(panels,file);
     if (fs.existsSync(target)) vm.runInNewContext(fs.readFileSync(target,'utf8'),context);
   }

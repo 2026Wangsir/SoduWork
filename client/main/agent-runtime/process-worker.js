@@ -93,6 +93,10 @@ const peer = createRpcPeer({
         // renderer never receives this value and the runtime does not read the
         // encrypted store directly because safeStorage is host-only.
         localModel: modelRef => peer.call('localModel', [String(modelRef || '')]),
+        localAgentModel: (identity, agentId) => {
+          const id = identities.get(identity); if (!id) throw Error('执行请求没有可信的会话身份');
+          return peer.call('localAgentModel', [id, String(agentId || '')]);
+        },
         prepareLocalModels: () => peer.call('prepareLocalModels', []),
         async authFetch(identity, url, options = {}) {
           const id = identities.get(identity); if (!id) throw Error('执行请求没有可信的会话身份');

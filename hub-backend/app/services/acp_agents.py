@@ -166,7 +166,8 @@ def inject_llm_env(key: str, env: dict, llm: dict, *, mode: str = "work") -> Non
     base = str((llm or {}).get("base") or "")
     secret = str((llm or {}).get("key") or "")
     model = str((llm or {}).get("model") or "")
-    if not (base and secret and model):
+    local_only = (llm or {}).get("localOnly") is True
+    if not (base and model and (secret or local_only)):
         return
     if key == "kimi":
         # Kimi's plain KIMI_API_KEY is a config-file key, not a shell override.
@@ -181,7 +182,10 @@ def inject_llm_env(key: str, env: dict, llm: dict, *, mode: str = "work") -> Non
     # Custom authentication/bootstrap protocols remain explicit adapters below.
     fields = {"base": base, "key": secret, "model": model}
     for target, source in ((CATALOG.get(key) or {}).get("modelEnv") or {}).items():
-        env[target] = fields[source]
+        if source == "key" and not secret:
+            env.pop(target, None)
+        else:
+            env[target] = fields[source]
     if key == "qwen":
         # Qwen's internal bootstrap markers are process-local. Inheriting them
         # from a shell or IDE can replace argv, enter the updater and exit
@@ -195,10 +199,14 @@ def inject_llm_env(key: str, env: dict, llm: dict, *, mode: str = "work") -> Non
             "QWEN_CODE_LAUNCHER_PID", "QWEN_CODE_STARTUP_VERSION",
         ):
             env.pop(name, None)
-        env.update(OPENAI_API_KEY=secret, OPENAI_BASE_URL=base, OPENAI_MODEL=model,
+        env.update(OPENAI_BASE_URL=base, OPENAI_MODEL=model,
                    QWEN_MODEL=model, QWEN_CODE_NO_RELAUNCH="1",
                    QWEN_CODE_SKIP_UPDATE_CHECK_ONCE="true",
                    QWEN_ARTIFACT_NO_AUTO_OPEN="1")
+        if secret:
+            env["OPENAI_API_KEY"] = secret
+        else:
+            env.pop("OPENAI_API_KEY", None)
     elif key == "dsh":
         from . import dsh_gateway
         dsh_gateway.inject_env(env, llm)
@@ -217,7 +225,7 @@ def inject_llm_env(key: str, env: dict, llm: dict, *, mode: str = "work") -> Non
             "methodId": "gateway",
             "_meta": {"gateway": {
                 "baseUrl": base.rstrip("/"),
-                "headers": {"Authorization": "Bearer " + secret},
+                "headers": {"Authorization": "Bearer " + secret} if secret else {},
                 "providerName": "SoduWork 模型服务",
             }},
         }

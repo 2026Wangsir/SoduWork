@@ -561,10 +561,14 @@ function _agModelHtml(a) {
     return '<div class="ag-model is-own"><span class="ag-model-cap">模型</span>' +
       '<span class="ag-model-own">用它自己的账号与模型，这儿不用配</span></div>';
   }
-  const list = (_agData && _agData.models) || [];
-  if (!list.length) {
+  const availableModels = (_agData && _agData.models) || [];
+  // This panel manages the current device. Local defaults never enter Hub settings.
+  const list = availableModels;
+  const localHint = availableModels.some(model => model.localOnly === true || String(model.name || '').startsWith('local:'))
+    ? '<span class="ag-model-own">本地默认模型仅保存在当前设备，供本机执行使用</span>' : '';
+  if (!list.length && !a.modelGone) {
     return '<div class="ag-model is-none"><span class="ag-model-cap">模型</span>' +
-      '<span class="ag-model-own">还没有能用的模型，先去「我的模型」配一把 key</span></div>';
+      (localHint || '<span class="ag-model-own">还没有能用的模型，先去「我的模型」配一把 key</span>') + '</div>';
   }
   const cur = a.model || '';
   const fallback = a.modelEffective || '';
@@ -582,13 +586,15 @@ function _agModelHtml(a) {
        * Keep unavailable selected models visible and labeled rather than silently reverting the
        * user's choice.
        */
-      (a.modelGone ? '<option value="' + esc(cur) + '" selected>' + esc(cur) + '（已不可用）</option>' : '') +
-    '</select>' +
+      (a.modelGone ? '<option value="' + esc(cur) + '" selected>' +
+        (a.localModelDefault ? '原本地模型已删除或不可用' : esc(cur) + '（已不可用）') + '</option>' : '') +
+    '</select>' + localHint +
     (list.some(m => m.providerKind === 'anthropic')
       ? '<span class="ag-model-warn" role="note">企业模型对话通道只支持 OpenAI 兼容协议；列表中的 Anthropic 模型需使用支持其协议的 Agent。</span>' : '') +
     (a.modelGone
-      ? '<span class="ag-model-warn">这个模型现在用不了，派活会退回默认' +
-        (fallback ? '（' + esc(fallback) + '）' : '') + '</span>'
+      ? '<span class="ag-model-warn">' + (a.localModelDefault
+        ? '请主动选择可用模型后再执行，不会自动切换模型'
+        : '这个模型现在用不了，派活会退回默认' + (fallback ? '（' + esc(fallback) + '）' : '')) + '</span>'
       : '') +
   '</div>';
 }
@@ -838,9 +844,17 @@ async function _agRun(ak, action) {
   _agRender();
   try {
     const r = action === 'probe'
-      ? await SoduWorkAPI.agentProbe(key, '', rid)
+      ? await SoduWorkAPI.agentProbe(key, agent?.localModelDefault ? agent.model : '', rid)
       : await SoduWorkAPI.agentInstall(key, action === 'repair' ? 'update' : action, rid);
     if (scope !== _agScopeEpoch || ownerScope !== _agOwnerScope() || _agJobs[ak] !== job) return;
+    if (action === 'probe' && r?.localOnly && ['model-connectivity', 'agent-execution'].includes(r.probeKind)) {
+      // Connectivity is useful evidence, but it is not an Agent execution probe.
+      Object.assign(job, { state: 'done', ok: r.ok === true, detail: r.detail || '本地模型连接测试未完成',
+        probeKind: r.probeKind, finishedAt: Date.now(), context: r.probeKind === 'agent-execution' ? job.context : '' });
+      if (r.probeKind === 'agent-execution') _agProbeResults.set(ak, { ...job, lines: [] });
+      _agRender();
+      return;
+    }
     if (!r || !r.jobId) throw new Error('后端没给作业号');
     _agJobs[ak].jobId = r.jobId;
     if (action === 'probe' && r.model) {

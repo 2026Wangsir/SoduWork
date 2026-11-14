@@ -18,6 +18,7 @@ from ..account_conversation_models import AccountConversation, AccountConversati
 from ..conversation_handoff_models import ConversationHandoff, ConversationMessageReceipt
 from ..models import Task, Attachment, Client, TaskEvent, AiScheduleRun
 from . import conversation_content, storage
+from .schedule_run_contracts import sanitize_schedule_model_payload
 
 
 def fingerprint(value):
@@ -230,15 +231,27 @@ async def schedule(session, client, row):
     if row.owner_user_id != client.user_ref:
         raise HTTPException(403, "自动化记录不属于当前账号")
     envelope = dict((row.receipt or {}).get("conversationInput") or {})
-    if not envelope or "text" not in envelope:
+    if not envelope:
         return {"ok": True, "alreadyMigrated": True}
     version = fingerprint([row.owner_user_id, row.owner_client_id, row.receipt, row.state])
+    pointer = bool(envelope.get("contentRef"))
+    if pointer:
+        envelope = await schedule_content.load(session, client, row, envelope)
+    if not envelope or "text" not in envelope:
+        return {"ok": True, "alreadyMigrated": True}
+    cleaned = sanitize_schedule_model_payload(envelope)
+    cleaned_receipt = sanitize_schedule_model_payload(dict(row.receipt or {}))
+    if pointer and cleaned == envelope and cleaned_receipt == row.receipt:
+        return {"ok": True, "alreadyMigrated": True}
+    envelope = cleaned
+    envelope.pop("contentRef", None)
     stored = await schedule_content.save(session, client, row, envelope, required=True)
     current = await session.scalar(select(AiScheduleRun).where(AiScheduleRun.id == row.id)
         .with_for_update().execution_options(populate_existing=True))
     if not current or version != fingerprint([current.owner_user_id, current.owner_client_id, current.receipt, current.state]):
         raise HTTPException(409, "迁移期间自动化记录已更新，Hub 原文已保留")
     await assert_actor(session, captured_actor)
-    current.receipt = {**current.receipt, "conversationInput": stored}
+    current.receipt = {**sanitize_schedule_model_payload(dict(current.receipt or {})),
+                       "conversationInput": stored}
     await session.commit()
     return {"ok": True, "runId": row.id}

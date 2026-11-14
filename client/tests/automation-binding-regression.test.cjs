@@ -7,6 +7,7 @@ function runtime() {
   const helper = path.join(panels, 'work-automation-bindings.js');
   if (fs.existsSync(helper)) vm.runInNewContext(fs.readFileSync(helper, 'utf8'), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/panels/schedule-timing.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(path.join(panels, 'work-automation-card-state.js'), 'utf8'), context);
   vm.runInNewContext(fs.readFileSync(path.join(panels, 'work-automation-sheet.js'), 'utf8').replace(
     '  global.WorkAutomationSheet = { open, active, refine, close };',
     '  global.probe = { state, proposalOf, bodyOf, validate };'), context);

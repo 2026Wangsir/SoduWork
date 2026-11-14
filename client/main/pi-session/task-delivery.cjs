@@ -7,6 +7,12 @@ const artifacts = require('../conversation/artifact-runtime');
 const packages = require('../conversation/delivery-package');
 const { fetchWithDeviceAuthRetry } = require('../device-auth-request');
 
+function remoteModel(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  const image = require('../../core/model-choice').imageChoice(name);
+  return name.startsWith('local:') || image?.name.startsWith('local:') ? '' : name.slice(0, 80);
+}
+
 async function capture(handle, outcome) {
   if (!handle) return null;
   const snapshot = await artifacts.snapshotAsync(handle);
@@ -51,12 +57,13 @@ async function capture(handle, outcome) {
       contentType: item.contentType || 'application/octet-stream', data: bytes.toString('base64')};
   });
   return {outcome: outcome === 'completed' ? 'completed' : 'incomplete',
-    model: typeof handle.model === 'string' ? handle.model.slice(0, 80) : '', files};
+    model: remoteModel(handle.model), files};
 }
 
 async function send(identity, route, scope, payload) {
   const form = new FormData();
-  for (const [key, value] of Object.entries({...scope, model: payload.model, outcome: payload.outcome})) form.append(key, value);
+  // Sanitize again when replaying receipts saved by an older desktop version.
+  for (const [key, value] of Object.entries({...scope, model: remoteModel(payload.model), outcome: payload.outcome})) form.append(key, value);
   for (const file of payload.files) {
     form.append('paths', file.name); form.append('categories', file.category);
     form.append('files', new Blob([Buffer.from(file.data, 'base64')], {type: file.contentType}), file.name);

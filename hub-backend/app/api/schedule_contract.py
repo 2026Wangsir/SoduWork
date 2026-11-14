@@ -4,11 +4,15 @@ Authorization and owner selection remain in each router. Timestamp formatting is
 provided by the caller to preserve the existing tolerant personal view.
 """
 from fastapi import HTTPException
+import re
 
 
 def schedule_payload(s, *, timestamp, administrative=False) -> dict:
     from datetime import datetime, timezone
     from ..services import schedules as sch
+    from ..services.schedule_run_contracts import (
+        clean_schedule_model_reference, schedule_model_source,
+    )
     # Automation is a plain conversation. Enterprise workflow bindings are not
     # exposed, while a personal plugin remains an ordinary-chat plugin resolved
     # by the owner desktop.
@@ -33,6 +37,9 @@ def schedule_payload(s, *, timestamp, administrative=False) -> dict:
     weekdays = sch.schedule_timing.clean_weekdays(getattr(s, "weekdays", None))
     if s.every == "weekly" and not weekdays:
         weekdays = sch.schedule_timing.clean_weekdays(getattr(s, "weekday", None))
+    model_source = schedule_model_source(s)
+    model_name = ("" if model_source == "device" else
+                  clean_schedule_model_reference(getattr(s, "model_name", "")))
     payload = {"id": s.id, "title": s.title, "note": s.note, "every": s.every,
             "runAt": timestamp(getattr(s, "run_at", None)),
             "onceFired": bool(getattr(s, "once_fired", False)),
@@ -45,7 +52,10 @@ def schedule_payload(s, *, timestamp, administrative=False) -> dict:
             "endDate": str(getattr(s, "end_date", None) or ""),
             "timeZone": sch.clean_time_zone(s.time_zone),
             "assigneeId": s.assignee_id, "assigneeType": s.assignee_type,
-            "modelName": str(getattr(s, "model_name", "") or ""),
+            # A device-owned model name never crosses the Hub boundary. The
+            # source marker is enough for clients to enforce fail-closed use.
+            "modelName": model_name,
+            "modelSource": model_source,
             "repoId": s.repo_id, "flow": False, "enabled": bool(s.enabled),
             "pluginBindingId": "",
             "personalPluginKey": personal_key,
@@ -97,8 +107,53 @@ def apply_schedule_update(s, body: dict) -> None:
                  ("repoId", "repo_id"), ("ownerClientId", "owner_client_id")):
         if k in body:
             setattr(s, f, str(body.get(k) or "").strip()[:64])
-    if "modelName" in body:
-        s.model_name = str(body.get("modelName") or "").strip()[:300]
+    if "modelSource" in body or "modelName" in body:
+        from ..services.schedule_run_contracts import (
+            clean_schedule_model_reference, clean_schedule_model_source,
+            is_local_model_reference,
+        )
+        raw_model = str(body.get("modelName") or "").strip()
+        explicit_source = "modelSource" in body
+        try:
+            if explicit_source:
+                source = clean_schedule_model_source(body.get("modelSource"))
+            elif is_local_model_reference(raw_model):
+                source = "device"
+            elif (not raw_model and
+                  str(getattr(s, "model_source", "") or "").strip().lower() == "device"):
+                # Older clients receive a redacted device modelName and may
+                # send that blank value back without the source marker. Keep
+                # the existing device-owned selection until a current client
+                # explicitly chooses a managed model/source.
+                source = "device"
+            else:
+                # A supplied model name is an explicit managed selection. This
+                # also makes clearing a previous device selection unambiguous.
+                source = "managed"
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if source == "device":
+            target_assignee = str(body.get("assigneeId", getattr(s, "assignee_id", "")) or "").strip()
+            runtime_id = ""
+            if target_assignee.startswith("local:"):
+                runtime_id = target_assignee.removeprefix("local:")
+            else:
+                match = re.fullmatch(r"runner:[^:]+:([a-z][a-z0-9-]{0,39})", target_assignee)
+                runtime_id = match.group(1) if match else ""
+            from ..agent_catalog import AGENTS
+            if not runtime_id or AGENTS.get(runtime_id, {}).get("modelMode") != "managed":
+                raise HTTPException(status_code=400,
+                                    detail="本地模型只能绑定本机托管型执行底座")
+            if raw_model and not is_local_model_reference(raw_model):
+                raise HTTPException(status_code=400,
+                                    detail="本地模型只允许保存设备模型来源标记")
+            s.model_name = ""
+        else:
+            if is_local_model_reference(raw_model):
+                raise HTTPException(status_code=400,
+                                    detail="本地模型不能写入 Hub 模型名称")
+            s.model_name = clean_schedule_model_reference(raw_model)[:300]
+        s.model_source = source
     # Enterprise workflow bindings remain retired from the ordinary-conversation
     # contract. Personal plugins run in the same chat through the local worker,
     # so preserve their verifiable snapshot when supplied by the editor.
@@ -168,7 +223,7 @@ def apply_schedule_update(s, body: dict) -> None:
     if "retryDelayMinutes" in body:
         s.retry_delay_minutes = max(
             1, min(1440, int(body.get("retryDelayMinutes") or 5)))
-    if any(key in body for key in ("assigneeId", "modelName", "requiredCapabilities",
+    if any(key in body for key in ("assigneeId", "modelName", "modelSource", "requiredCapabilities",
                                    "personalPluginKey", "personalPluginVersionPolicy",
                                    "personalPluginVersion", "personalPluginChecksum")) and (
             not once_edit or before_execution != schedule_timing.execution_snapshot(s)):

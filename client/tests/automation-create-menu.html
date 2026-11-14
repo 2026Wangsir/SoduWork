@@ -1,23 +1,27 @@
 <!doctype html><html lang="zh-CN" data-theme="ruby" data-skin="ruby" data-desk-panel="workspace" data-workspace-view="schedules">
-<meta charset="utf-8"><title>自动化创建 · 隔离页面验收</title>
-<link rel="stylesheet" href="../theme/variables.css">
-<link rel="stylesheet" href="../components/panels/panels-base.css">
-<link rel="stylesheet" href="../components/panels/panels-schedules.css">
-<link rel="stylesheet" href="../components/panels/plugin-ui-host.css">
-<link rel="stylesheet" href="../components/panels/work-automation-sheet.css">
-<link rel="stylesheet" href="../components/panels/panels-chat.css">
-<link rel="stylesheet" href="../components/panels/chat-plugin-mention.css">
-<link rel="stylesheet" href="../components/workspace/workspace-shell.css">
-<link rel="stylesheet" href="../theme/workspace-experience.css">
-<link rel="stylesheet" href="../components/panels/work-composer.css">
-<link rel="stylesheet" href="../components/panels/work-intent.css">
-<link rel="stylesheet" href="../theme/workspace-page-heads.css">
-<link rel="stylesheet" href="../components/panels/automation-surface.css">
+<meta charset="utf-8"><base href="../"><title>自动化创建 · 隔离页面验收</title>
+<link rel="stylesheet" href="theme/variables.css">
+<link rel="stylesheet" href="components/panels/panels-base.css">
+<link rel="stylesheet" href="components/panels/panels-schedules.css">
+<link rel="stylesheet" href="components/panels/plugin-ui-host.css">
+<link rel="stylesheet" href="components/panels/work-automation-sheet.css">
+<link rel="stylesheet" href="components/panels/panels-chat.css">
+<link rel="stylesheet" href="components/panels/chat-plugin-mention.css">
+<link rel="stylesheet" href="components/workspace/workspace-shell.css">
+<link rel="stylesheet" href="theme/workspace-experience.css">
+<link rel="stylesheet" href="components/panels/work-composer.css">
+<link rel="stylesheet" href="components/panels/work-intent.css">
+<link rel="stylesheet" href="theme/workspace-page-heads.css">
+<link rel="stylesheet" href="components/panels/automation-surface.css">
 <style>html,body{height:100%;margin:0}body{font-family:var(--font-ui);color:var(--ink)}#fixtureNotice{position:fixed;bottom:16px;left:260px;z-index:600;background:var(--bg-0);font:13px var(--font-ui);color:var(--ink-2);padding:8px 14px;border-radius:10px;pointer-events:none}#fixtureNotice:empty{display:none}</style>
 <script>
 window.__deskPanel='workspace';window.workRoot=()=>'';let eventSink=null,seq=0;
+window.SoduworkLocalizedText={pickLocale:()=>'',currentLocale:()=> 'zh-CN',resolve:(item,field)=>String(item?.[field]||'')};
 window.calls={routes:[],sent:[],created:[],parsed:[],closed:[]};window.createFail=false;window.blocked=false;
-window.execution={substrates:[{key:'local:pi',name:'Pi',available:true,onlineSeats:1},{key:'local:codex',name:'Codex',available:true,onlineSeats:1}],repos:[]};
+window.execution={substrates:[
+ ...['pi','qwen','opencode','dsh','kimi','harness2','codex-harness'].map(cli=>({key:'local:'+cli,cli,name:cli,modelMode:'managed',modelPick:true,available:true,onlineSeats:1})),
+ ...['codex','claude'].map(cli=>({key:'local:'+cli,cli,name:cli,modelMode:'account',modelPick:false,nativeModelPick:cli==='codex',available:true,onlineSeats:1})),
+],modelOptions:[{name:'managed-model',label:'托管模型'}],defaultModel:'managed-model',repos:[]};
 window.esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 window.petSay=s=>document.getElementById('fixtureNotice').textContent=s;
 window.expandForOverlay=()=>{};window.shrinkFromOverlay=()=>{};window.makeDraggable=()=>{};
@@ -25,9 +29,10 @@ window.fetch=()=>{throw Error('Network forbidden in isolated fixture')};
 const snap=()=>({status:'idle',statusText:'',messages:[],tools:[],usage:null,pendingUi:null});
 window.SoduWorkAPI={
  listSchedules:async()=>calls.created.map((p,i)=>({...p,id:'s'+i})),
+ listScheduleTemplates:async()=>[{id:'weekly',name:'每周团队简报',note:'汇总团队工作',every:'weekly',atHour:9,atMinute:0,weekday:5,timeZone:'Asia/Shanghai'}],
  taskExecutionOptions:async()=>execution,
  listAIAgents:async()=>({agents:[{id:'pi',name:'Pi',cli:'pi'}]}),listRepos:async()=>[],
- myModels:async()=>({usable:[]}),pluginCatalog:async()=>({items:[]}),
+ myModels:async()=>({defaultModels:{pi:'local:model-0123456789abcdef0123456789abcdef',qwen:'local:model-0123456789abcdef0123456789abcdef'},usable:[{id:'local:model-0123456789abcdef0123456789abcdef',name:'local:model-0123456789abcdef0123456789abcdef',modelName:'glm5.2',label:'glm5.2',providerName:'自己模型',localOnly:true}]}),pluginCatalog:async()=>({items:[]}),
  preflightSchedule:async()=>({state:blocked?'blocked':'ready',message:blocked?'执行机未就绪':'执行条件已就绪',checks:[]}),
  parseTaskText:async(text)=>{calls.parsed.push(text);return{title:'每日工作简报',note:text,acceptanceCriteria:['保留进展、风险与明日计划']}},
  createSchedule:async(body)=>{if(createFail)throw Error('保存暂时失败，请重试');calls.created.push(body);return{...body,id:'s'+calls.created.length}},
@@ -45,46 +50,46 @@ window.WorkspaceHost={open:(view,payload={})=>{
  if(view==='schedules'){document.getElementById('composePanel')?.classList.remove('show');openSchedulePanel()}
 }};
 </script>
-<script src="../core/skin-registry.js"></script>
-<script src="../components/panels/panels-schedules-methods.js"></script>
-<script src="../components/panels/panels-schedules-cards.js"></script>
-<script src="../components/panels/schedule-timing.js"></script>
-<script src="../components/panels/panels-schedules.js"></script>
-<script src="../components/panels/panels-schedules-editor.js"></script>
-<script src="../components/panels/panels-schedules-runs.js"></script>
-<script src="../components/panels/plugin-ui-host.js"></script>
-<script src="../components/panels/work-automation-bindings.js"></script>
-<script src="../components/panels/work-automation-view.js"></script>
-<script src="../components/panels/work-automation-card-state.js"></script>
-<script src="../components/panels/work-automation-sheet.js"></script>
-<script src="../components/panels/compose-candidate-navigation.js"></script>
-<script src="../components/panels/chat-plugin-mention-model.js"></script>
-<script src="../components/panels/chat-plugin-mention.js"></script>
-<script src="../components/panels/work-intent.js"></script>
-<script src="../components/panels/work-composer.js"></script>
-<script src="../components/workspace/workspace-chat-history.js"></script>
-<script src="../components/workspace/workspace-chat-list.js"></script>
-<script src="../components/workspace/workspace-shell.js"></script>
-<script src="../components/panels/chat-dom-patch.js"></script>
-<script src="../components/panels/panels-chat-tools.js"></script>
-<script src="../components/panels/chat-task-start.js"></script>
-<script src="../components/panels/chat-task-controller.js"></script>
-<script src="../components/panels/chat-context-meter.js"></script>
-<script src="../components/panels/chat-scroll-follow.js"></script>
-<script src="../components/panels/chat-markdown.js"></script>
-<script src="../components/panels/chat-acceptance-results.js"></script>
-<script src="../components/panels/chat-message-renderer.js"></script>
-<script src="../components/panels/chat-send-queue.js"></script>
-<script src="../components/panels/panels-chat-work-actions.js"></script>
-<script src="../components/panels/chat-work-intent.js"></script>
-<script src="../components/panels/chat-draft-recovery.js"></script>
-<script src="../components/panels/chat-composer-bindings.js"></script>
-<script src="../components/panels/chat-session-controller.js"></script>
-<script src="../components/panels/panels-chat.js"></script>
-<script src="../components/panels/panels-compose-work-actions.js"></script>
-<script src="../components/panels/panels-compose-capabilities.js"></script>
-<script src="../components/panels/compose-surface.js"></script>
-<script src="../components/panels/panels-compose.js"></script>
-<script src="../core/win-bridge.js"></script>
+<script src="core/skin-registry.js"></script>
+<script src="components/panels/panels-schedules-methods.js"></script>
+<script src="components/panels/panels-schedules-cards.js"></script>
+<script src="components/panels/schedule-timing.js"></script>
+<script src="components/panels/panels-schedules.js"></script>
+<script src="components/panels/panels-schedules-editor.js"></script>
+<script src="components/panels/panels-schedules-runs.js"></script>
+<script src="components/panels/plugin-ui-host.js"></script>
+<script src="components/panels/work-automation-bindings.js"></script>
+<script src="components/panels/work-automation-view.js"></script>
+<script src="components/panels/work-automation-card-state.js"></script>
+<script src="components/panels/work-automation-sheet.js"></script>
+<script src="components/panels/compose-candidate-navigation.js"></script>
+<script src="components/panels/chat-plugin-mention-model.js"></script>
+<script src="components/panels/chat-plugin-mention.js"></script>
+<script src="components/panels/work-intent.js"></script>
+<script src="components/panels/work-composer.js"></script>
+<script src="components/workspace/workspace-chat-history.js"></script>
+<script src="components/workspace/workspace-chat-list.js"></script>
+<script src="components/workspace/workspace-shell.js"></script>
+<script src="components/panels/chat-dom-patch.js"></script>
+<script src="components/panels/panels-chat-tools.js"></script>
+<script src="components/panels/chat-task-start.js"></script>
+<script src="components/panels/chat-task-controller.js"></script>
+<script src="components/panels/chat-context-meter.js"></script>
+<script src="components/panels/chat-scroll-follow.js"></script>
+<script src="components/panels/chat-markdown.js"></script>
+<script src="components/panels/chat-acceptance-results.js"></script>
+<script src="components/panels/chat-message-renderer.js"></script>
+<script src="components/panels/chat-send-queue.js"></script>
+<script src="components/panels/panels-chat-work-actions.js"></script>
+<script src="components/panels/chat-work-intent.js"></script>
+<script src="components/panels/chat-draft-recovery.js"></script>
+<script src="components/panels/chat-composer-bindings.js"></script>
+<script src="components/panels/chat-session-controller.js"></script>
+<script src="components/panels/panels-chat.js"></script>
+<script src="components/panels/panels-compose-work-actions.js"></script>
+<script src="components/panels/panels-compose-capabilities.js"></script>
+<script src="components/panels/compose-surface.js"></script>
+<script src="components/panels/panels-compose.js"></script>
+<script src="core/win-bridge.js"></script>
 <body><div id="fixtureNotice" role="status"></div>
 <script>WorkspaceShell.mount();WorkspaceShell.setActive('schedules');openSchedulePanel();window.ready=true;</script></body></html>

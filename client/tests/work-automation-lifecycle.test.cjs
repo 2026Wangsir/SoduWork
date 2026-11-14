@@ -15,6 +15,7 @@ for (const stage of ['saving', 'saved']) test('late automation refinement cannot
   context.window = context;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/panels/schedule-timing.js'), 'utf8'), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/panels/work-automation-bindings.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/panels/work-automation-card-state.js'), 'utf8'), context);
   vm.runInNewContext(instrumented, context);
   const {state, refineNow} = context.__lifecycle;
   Object.assign(state, {layer, proposal: {title:'Confirmed source',note:'Submitted background'}, seed:{}, saved:false, saving:false});

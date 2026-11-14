@@ -214,7 +214,7 @@ test('opaque local IDs preserve model family thinking and live configuration rev
   t.mock.method(store, 'resolve', () => ({ id: ref, runtimeId: ref, modelRef: ref, name,
     provider: 'fixture-provider', providerName: 'Fixture provider', key,
     baseUrl: 'http://fixture.invalid/v1', configRevision: revision }));
-  const first = await config.fetchModel(null, ref);
+  const first = await config.fetchModel(null, ref, undefined, undefined, false, 'pi', { allowLocal: true });
   assert.equal(first.model.id, ref);
   assert.equal(first.model.wireModelId, 'qwen3');
   assert.equal(first.model.reasoning, true);
@@ -222,7 +222,7 @@ test('opaque local IDs preserve model family thinking and live configuration rev
   assert.equal(selection.piProvider(first.model).compat.thinkingFormat, 'qwen');
   const applied = [];
   const choice = selection.create({ name: ref, model: first.model,
-    resolve: value => config.fetchModel(null, value), apply: model => applied.push(model) });
+    resolve: value => config.fetchModel(null, value, undefined, undefined, false, 'pi', { allowLocal: true }), apply: model => applied.push(model) });
   revision = 2; key = '';
   assert.equal((await choice.select(ref)).ok, true);
   assert.equal(choice.needsApply(), true, 'same-reference edits must update the next turn');
@@ -231,7 +231,7 @@ test('opaque local IDs preserve model family thinking and live configuration rev
   assert.equal(applied[0].configRevision, 2);
   assert.equal(choice.needsApply(), false);
   name = 'deepseek-reasoner';
-  const second = await config.fetchModel(null, ref);
+  const second = await config.fetchModel(null, ref, undefined, undefined, false, 'pi', { allowLocal: true });
   assert.equal(second.model.reasoning, true);
   assert.equal(second.model.format, 'deepseek');
   assert.equal(selection.piProvider(second.model).compat.thinkingFormat, 'deepseek');

@@ -1,4 +1,4 @@
-"""Authenticated HTTP/SQLite coverage for Pi personal funding and immutable usage."""
+"""Authenticated HTTP/SQLite coverage for managed model funding and immutable usage."""
 import importlib.util
 import json
 import secrets
@@ -51,7 +51,7 @@ class PersonalModelQuotaTests(unittest.IsolatedAsyncioTestCase):
             "sourceId": key, "provider": provider, "model": model, "agent": "pi",
             "quotaUsageToken": token, "usage": {"input": count}, **fields})
 
-    async def test_exhaustion_allows_local_and_byok_but_not_shared_or_old_runtime(self):
+    async def test_exhaustion_allows_personal_funding_on_all_managed_runtimes(self):
         self.assertEqual((await self.config()).status_code, 200)
         await self.report(100)
         listed = await self.http.get("/api/v1/my-models", headers=self.headers)
@@ -62,7 +62,20 @@ class PersonalModelQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(private.json()["quotaScope"], "personal")
         self.assertTrue(private.json()["quotaUsageToken"])
         self.assertEqual((await self.config("shared-model")).status_code, 403)
-        self.assertEqual((await self.config(agent="harness2")).status_code, 403)
+        from app.agent_catalog import AGENTS
+        for agent, declaration in AGENTS.items():
+            if declaration["modelMode"] != "managed":
+                continue
+            with self.subTest(agent=agent):
+                configured = await self.config(agent=agent)
+                self.assertEqual(configured.status_code, 200, configured.text)
+                self.assertEqual(configured.json()["quotaScope"], "personal")
+                self.assertTrue(configured.json()["personalQuotaSupported"])
+                admitted = await self.http.get("/api/v1/client-auth/authorize-ai",
+                    params={"agent": agent, "model": "local-model"}, headers=self.headers)
+                self.assertEqual(admitted.status_code, 200, admitted.text)
+                shared = await self.config(model="shared-model", agent=agent)
+                self.assertEqual(shared.status_code, 403, shared.text)
         allowed = await self.http.get("/api/v1/client-auth/authorize-ai?agent=pi&model=local-model", headers=self.headers)
         self.assertEqual(allowed.status_code, 200, allowed.text)
         self.assertFalse(allowed.json()["quota"]["exceeded"])
@@ -91,6 +104,33 @@ class PersonalModelQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(own.status_code, 200, own.text)
         self.assertEqual(own.json()["keyFrom"], "mine")
         self.assertEqual(own.json()["quotaScope"], "personal")
+
+    async def test_runtime_bound_receipts_apply_only_to_the_authorized_executor(self):
+        for index, agent in enumerate(("qwen", "opencode", "codex-harness", "dsh", "kimi", "harness2", "custom-acp")):
+            with self.subTest(agent=agent):
+                configured = await self.config(agent=agent)
+                self.assertEqual(configured.status_code, 200, configured.text)
+                token = configured.json()["quotaUsageToken"]
+                claims = verify_claims(token, token_type="model-quota-usage")
+                self.assertEqual(claims["runtime"], agent)
+                receipt = await self.receipt(3, key="managed-" + agent, token=token,
+                    provider="custom-local", model="local-model", agent=agent)
+                self.assertEqual(receipt.status_code, 200, receipt.text)
+                mismatched = await self.receipt(1, key="mismatched-" + agent, token=token,
+                    provider="custom-local", model="local-model", agent="pi")
+                self.assertEqual(mismatched.status_code, 200, mismatched.text)
+                async with self.sessions() as session:
+                    self.assertEqual(await client_access.monthly_tokens(session, self.user.id), index + 1)
+        custom = (await self.config(agent="custom-acp")).json()
+        reported = await self.receipt(5, key="custom-device-runtime", token=custom["quotaUsageToken"],
+            provider="custom-local", model="local-model", agent="custom-device-example")
+        self.assertEqual(reported.status_code, 200, reported.text)
+        async with self.sessions() as session:
+            self.assertEqual(await client_access.monthly_tokens(session, self.user.id), 7)
+        for agent in ("codex", "claude"):
+            configured = await self.config(agent=agent)
+            self.assertFalse(configured.json()["ok"])
+            self.assertNotIn("quotaUsageToken", configured.json())
 
     async def test_zero_trial_and_allowlist_remain_authoritative(self):
         await self.override("limited", 0)

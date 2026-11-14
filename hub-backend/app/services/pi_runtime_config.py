@@ -109,7 +109,9 @@ def prepare(env: dict, data_root: str, llm: dict, context_window: int, runtime_r
         "name": "SoduWork 模型服务",
         "baseUrl": llm["base"],
         "api": "anthropic-messages" if kind == "anthropic" else "openai-completions",
-        "apiKey": "$SODUWORK_LLM_KEY",
+        # Native Pi requires a configured key even for unauthenticated local endpoints.
+        **({"apiKey": "$SODUWORK_LLM_KEY"} if llm.get("key") else
+           {"apiKey": "soduwork-local-no-key"} if llm.get("localOnly") is True else {}),
         "models": [{"id": llm["model"], "name": "公司 coding 模型",
                     "input": ["text", "image"] if runtime_images.transport_supported(llm) else ["text"],
                     "contextWindow": context_window,

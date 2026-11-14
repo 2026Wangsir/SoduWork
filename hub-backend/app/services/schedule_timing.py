@@ -208,6 +208,7 @@ def execution_snapshot(s) -> tuple:
                 str(getattr(s, "personal_plugin_checksum", "") or "")) if personal else ())
     return (str(getattr(s, "assignee_id", "") or ""),
             str(getattr(s, "model_name", "") or ""),
+            str(getattr(s, "model_source", "") or "managed"),
             str(getattr(s, "plugin_binding_id", "") or ""),
             personal, version, tuple(getattr(s, "required_capabilities", None) or []))
 

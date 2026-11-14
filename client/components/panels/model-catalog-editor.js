@@ -148,7 +148,8 @@ async function _mdCheckModel(pid, name) {
   _mdChecks.set(key, pending); _mdRender();
   try {
     if ((_mdDirty || Object.keys(_mdKeyEdits).length) && !await _mdSave(false)) throw Error('请先保存模型配置，再检测能力');
-    const report = await SoduWorkAPI.checkMyModelCapabilities({ providerId: pid, model: name, checks: ['connection', 'imageInput', 'toolCalling', 'streaming'] });
+    const report = await SoduWorkAPI.checkMyModelCapabilities({ providerId: pid, model: name,
+      localOnly: _mdProvider(pid)?.localOnly === true, checks: ['connection', 'imageInput', 'toolCalling', 'streaming'] });
     if (_mdChecks.get(key) !== pending) return;
     _mdChecks.set(key, report);
     const row = _mdMyModels.find(item => item.providerId === pid && item.name === name) || _mdProvider(pid)?.modelDefs?.find(item => item.name === name);

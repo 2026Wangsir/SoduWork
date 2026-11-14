@@ -41,8 +41,15 @@ test('local Pi sessions stay local through resume, expiration and managed model 
     baseUrl: 'http://127.0.0.1:' + server.address().port + '/v1',
     ...(name === localRef ? { id: localRef, wireModelId: 'shared-id', localOnly: true, modelRef: localRef, key: '', proxyExpiresAt: 0 }
       : { key: 'fixture-managed', mcpKey: 'fixture-mcp', quotaProvider: 'fixture-provider', proxyExpiresAt: Date.now() + 3600000 }) });
-  config.prepare = async (_, _identity, name) => {
+  config.prepare = async (_, _identity, name, options = {}) => {
     selections.push(name);
+    if (missing && name === localRef && options.allowHistorical) {
+      const model = makeModel(name);
+      model.historical = true; model.historicalLocal = true; model.modelRef = localRef;
+      model.wireModelId = localRef; model.localOnly = true; model.key = '';
+      modelPath = config.writeModels(agentDir, model);
+      return { ok: true, historical: true, provider: 'soduwork', agentDir, model };
+    }
     if (missing && name === localRef) return { ok: false, reason: 'Local model is unavailable' };
     const model = makeModel(name); modelPath = config.writeModels(agentDir, model);
     return { ok: true, provider: 'soduwork', agentDir, model };
@@ -103,6 +110,13 @@ test('local Pi sessions stay local through resume, expiration and managed model 
   await session.close(); session = null;
   missing = true;
   const unavailable = await sessions.open(options);
-  assert.equal(unavailable.ok, false, 'a removed local model cannot silently switch a resumed chat to Hub');
-  assert.equal(selections.at(-1), localRef);
+  assert.equal(unavailable.ok, true, unavailable.reason);
+  session = unavailable.session;
+  const blocked = await session.submit('Try the removed local model.', []).completion;
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.reason, /原本地模型已删除或不可用/);
+  assert.equal((await session.selectModel('managed')).ok, true);
+  assert.equal((await session.submit('Continue with the managed model.', []).completion).ok, true);
+  await session.close(); session = null;
+  assert.equal(selections.includes(localRef), true);
 });

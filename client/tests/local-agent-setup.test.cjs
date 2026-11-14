@@ -64,6 +64,139 @@ test('local setup requests only the authenticated current Runner and removes old
   assert.doesNotMatch(JSON.stringify(result), /cloud-agent|cloud-node/);
 });
 
+test('local-only Agent discovery counts device models without transmitting their references or credentials', async () => {
+  const h = await fixture([localRunner], { machines: [localMachine], models: [], modelCount: 0 });
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  h.bridge.localModels = { get: async () => ({ providers: [{ id: 'private-provider' }], usable: [
+    { name: model, label: 'Private model', localOnly: true, modality: 'chat', baseUrl: 'http://private-endpoint.invalid', key: 'private-key' },
+  ] }) };
+  const result = await h.api.localAgentSetup();
+  assert.equal(result.modelCount, 1); assert.equal(result.localModelCount, 1);
+  assert.equal(result.models[0].name, model);
+  assert.equal(Object.hasOwn(result.models[0], 'key'), false);
+  assert.equal(Object.hasOwn(result.models[0], 'baseUrl'), false);
+  assert.equal(new URL(h.calls[1].url).searchParams.get('hasLocalModel'), '1');
+  assert.doesNotMatch(JSON.stringify(h.calls), /local:model-|private-provider|private-endpoint|private-key/);
+});
+
+test('local Agent defaults stay on the device and survive a missing model without a Hub fallback', async () => {
+  const h = await fixture([localRunner], { machines: [{ ...localMachine, agents: [
+    { key: 'qwen', modelPick: true, state: 'ready' }, { key: 'codex', modelPick: false },
+  ] }], models: [{ name: 'hub-model' }], modelCount: 1 });
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  let selected = null;
+  const mutations = [];
+  h.bridge.localAgentModels = {
+    get: async () => ({ ok: true, scopeKey: 'scope-a', revision: 2,
+      selections: selected ? { qwen: { configured: true, modelName: model, unavailable: true } } : {} }),
+    set: async input => { mutations.push(plain(input)); selected = model; return { ok: true }; },
+    remove: async input => { mutations.push(plain(input)); selected = null; return { ok: true }; },
+  };
+  await h.api.setAgentModel('qwen', model);
+  assert.equal(h.calls.length, 0);
+  assert.deepEqual(mutations[0], { agentId: 'qwen', modelName: model, scopeKey: 'scope-a', expectedRevision: 2 });
+  const setup = await h.api.localAgentSetup();
+  assert.equal(setup.agents[0].model, model);
+  assert.equal(setup.agents[0].modelGone, true);
+  assert.equal(setup.agents[0].state, 'nollm');
+  assert.equal(setup.machines[0].agents[0].model, model);
+  assert.equal(setup.agents[1].model, undefined);
+  assert.doesNotMatch(JSON.stringify(h.calls), /local:model-/);
+  h.calls.length = 0;
+  await h.api.setAgentModel('qwen', 'hub-model');
+  assert.equal(h.calls.length, 1);
+  assert.equal(new URL(h.calls[0].url).pathname, '/api/v1/agent-setup/model');
+  assert.equal(JSON.parse(h.calls[0].options.body).model, 'hub-model');
+  assert.equal(selected, null);
+  assert.equal(mutations[1].scopeKey, 'scope-a');
+});
+
+test('device default availability updates all Agent readiness fields without masking runtime or account failures', async () => {
+  const managed = ['pi', 'qwen', 'opencode', 'dsh', 'kimi', 'harness2', 'codex-harness'];
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  for (const unavailable of [false, true]) {
+    const agents = managed.map(key => ({ key, modelPick: true, installed: true, present: true,
+      state: unavailable ? 'ready' : 'nollm', setupState: unavailable ? 'ready' : 'needmodel',
+      displayState: unavailable ? 'ready' : 'nollm', why: 'Hub model missing' }));
+    const h = await fixture([localRunner], { machines: [{ ...localMachine, agents }], models: [], modelCount: 0 });
+    h.bridge.localAgentModels = { get: async () => ({ ok: true, scopeKey: 'scope-a', revision: 1,
+      selections: Object.fromEntries(managed.map(key => [key, { configured: true, modelName: model, unavailable }])) }) };
+    const result = await h.api.localAgentSetup();
+    for (const agent of result.agents) {
+      assert.equal(agent.state, unavailable ? 'nollm' : 'ready');
+      assert.equal(agent.setupState, agent.state);assert.equal(agent.displayState, agent.state);
+      assert.equal(agent.model, model);assert.equal(agent.modelGone, unavailable);
+      assert.equal(agent.localModelDefault, true);
+      assert.equal(agent.why, unavailable ? '原本地默认模型已删除或不可用，请重新选择' : '');
+    }
+    assert.deepEqual(plain(result.machines[0].agents), plain(result.agents));
+  }
+  const failures = ['missing', 'setup', 'disabled', 'broken', 'unauthed', 'unknown', 'bad'];
+  for (const unavailable of [false, true]) {
+    const agents = failures.map((state, index) => ({ key: managed[index], modelPick: true,
+      state, setupState: state, why: 'Preserved non-model failure', installed: state !== 'missing' }));
+    agents.push({ key: 'custom-partial', modelPick: true, state: 'nollm', setupState: 'nollm', installed: false });
+    agents.push({ key: 'custom-runtime', modelPick: true, state: 'bad', setupState: 'nollm', installed: true });
+    agents.push({ key: 'codex', modelPick: false, state: 'unauthed', setupState: 'unauthed' });
+    agents.push({ key: 'claude', modelPick: false, state: 'ready', setupState: 'ready' });
+    const h = await fixture([localRunner], { machines: [{ ...localMachine, agents }], models: [], modelCount: 0 });
+    h.bridge.localAgentModels = { get: async () => ({ ok: true, scopeKey: 'scope-a', revision: 1,
+      selections: Object.fromEntries(agents.map(agent => [agent.key, { configured: true, modelName: model, unavailable }])) }) };
+    const result = await h.api.localAgentSetup();
+    for (const [index, agent] of result.agents.entries()) {
+      assert.equal(agent.state, agents[index].state);assert.equal(agent.setupState, agents[index].setupState);
+      assert.equal(agent.why, agents[index].why);
+      if (['codex', 'claude'].includes(agent.key)) assert.deepEqual(plain(agent), agents[index]);
+    }
+  }
+});
+
+for (const kind of ['hub', 'account']) test(`local Agent default mutation stops after ${kind} changes during lookup`, async () => {
+  const h = await fixture(), gate = deferred(), mutations = [];
+  h.bridge.localAgentModels = { get: () => gate.promise,
+    set: async value => mutations.push(value), remove: async value => mutations.push(value) };
+  const changing = h.api.setAgentModel('qwen', 'local:model-0123456789abcdef0123456789abcdef');
+  const rejected = assert.rejects(changing, stale);
+  await h.switch(kind);
+  gate.resolve({ ok: true, scopeKey: 'old-scope', revision: 1 });
+  await rejected;
+  assert.equal(mutations.length, 0);
+  assert.equal(h.calls.length, 0);
+});
+
+test('local model probes verify the current Runner and never send a model reference to Hub', async () => {
+  const h = await fixture([localRunner], { machines: [localMachine], models: [], modelCount: 0 });
+  const model = 'local:model-0123456789abcdef0123456789abcdef', probes = [];
+  h.bridge.localAgentModels = { get: async () => ({ ok: true, scopeKey: 'scope-a', selections: {} }),
+    probe: async input => { probes.push(plain(input)); return { ok: true, localOnly: true, probeKind: 'model-connectivity' }; } };
+  const result = await h.api.agentProbe('qwen', model, localRunner.runnerId);
+  assert.equal(result.ok, true);
+  assert.equal(probes[0].modelName, model);
+  assert.doesNotMatch(JSON.stringify(h.calls), /local:model-/);
+  await assert.rejects(h.api.agentProbe('qwen', model, 'remote-runner'), /当前设备测试/);
+  assert.equal(probes.length, 1);
+});
+
+test('empty Agent probes inherit only this device default and cannot fall back after its deletion', async () => {
+  const h = await fixture([localRunner], { machines: [localMachine], models: [], modelCount: 0 });
+  const model = 'local:model-0123456789abcdef0123456789abcdef', probes = [];
+  let unavailable = false;
+  h.bridge.localAgentModels = { get: async () => ({ ok: true, scopeKey: 'scope-a', revision: 3,
+    selections: { qwen: { configured: true, modelName: model, unavailable } } }),
+    probe: async input => { probes.push(plain(input)); return { ok: true, localOnly: true, probeKind: 'agent-execution' }; } };
+  assert.equal((await h.api.agentProbe('qwen', '', localRunner.runnerId)).ok, true);
+  assert.equal(probes[0].modelName, model);
+  assert.equal(probes[0].expectedRevision, 3);
+  assert.equal(h.calls.some(row => row.url.includes('/agent-setup/probe')), false);
+  unavailable = true;
+  await assert.rejects(h.api.agentProbe('qwen', '', localRunner.runnerId), /已删除或不可用/);
+  assert.equal(probes.length, 1);
+  await h.api.agentProbe('qwen', '', 'remote-runner');
+  const remote = h.calls.find(row => row.url.includes('/agent-setup/probe'));
+  assert.equal(JSON.parse(remote.options.body).model, '');
+  assert.doesNotMatch(JSON.stringify(h.calls), /local:model-/);
+});
+
 test('legacy exact identity may supplement missing machine scope without guessing from names', async () => {
   const runner = { ...localRunner, scope: undefined, isCurrentDevice: true };
   const machine = { ...localMachine, scope: undefined, isCurrentDevice: undefined };

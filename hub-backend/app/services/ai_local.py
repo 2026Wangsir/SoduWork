@@ -721,6 +721,7 @@ def _dispatch_sync_once(cfg: dict, t, files: list | None = None,
             "cli": key, "ws": ws, "state": "running", "started": time.time(), "ended": None,
             "taskId": getattr(t, "id", ""), "title": getattr(t, "title", ""),
             "model": model,
+            "modelLocalOnly": dict(cfg.get("llm") or {}).get("localOnly") is True,
             "reasoningEffort": reasoning_effort,
             # Delivery mode belongs to the node; a development task's requirements node still returns its document.
             "artifactMode": artifact_mode,

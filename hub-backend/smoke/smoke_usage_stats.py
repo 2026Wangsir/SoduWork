@@ -98,9 +98,27 @@ def main():
     src3 = inspect.getsource(execution_sessions.ingest_runner_snapshots)
     chk("runner 心跳里的 usage 会落库", '"usage"' in src3)
     chk("runner 心跳里的 firstStarted 会落库", "firstStarted" in src3)
-    runner_src = open("runner_main.py", encoding="utf-8").read()
-    chk("★runner 真的把 usage 报上来了", '"usage": dict(run.get("usage") or {})' in runner_src)
-    chk("★runner 也报模型了（以前那列永远是空的）", '"model": run.get("model") or ""' in runner_src)
+    from unittest.mock import patch
+    from app.services import local_base
+    from runner_main import Runner
+    machine = Runner.__new__(Runner)
+    machine._agent_inventory, machine._session_marks = [], {}
+    tracked = {"ref": "usage-push", "taskId": "fixture-task", "cli": "qwen",
+               "model": "hub-model", "state": "done", "seq": 1,
+               "cfg": {"llm": {"model": "hub-model"}}}
+    _accumulate_usage(tracked, {"input": 7, "output": 3})
+    with patch.object(ai_local, "console_list_sync", return_value={"runs": [tracked]}), \
+         patch.object(ai_local, "session_sync", return_value={"seq": 1, "items": []}), \
+         patch.dict(local_base._RUNS, {"usage-push": tracked}):
+        snapshots, _ = machine._session_snapshots()
+        chk("Runner reports Hub-funded usage", snapshots[0]["usage"]["total_tokens"] == 10)
+        chk("Runner reports the managed model", snapshots[0]["model"] == "hub-model")
+        tracked["cfg"]["llm"] = {"model": "private-wire-model", "localOnly": True}
+        tracked["model"] = "private-wire-model"
+        _accumulate_usage(tracked, {"input": 900, "output": 100})
+        snapshots, _ = machine._session_snapshots()
+        chk("Runner retains local model identity on device", snapshots[0]["model"] == "")
+        chk("Runner excludes local usage from Hub totals", snapshots[0]["usage"]["total_tokens"] == 10)
 
     # Exercise actual continuation and segment-transition entry points rather than source layout.
     from unittest.mock import Mock, patch

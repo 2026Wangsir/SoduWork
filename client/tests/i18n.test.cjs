@@ -259,7 +259,7 @@ test('localized slash actions resolve to the same work contract and preserve req
   const read = name => fs.readFileSync(path.join(__dirname, '../components/panels', name), 'utf8');
   vm.runInContext(read('plugin-ui-host.js'), context);
   context.PluginUIHost = window.PluginUIHost;
-  for (const file of ['work-entry-sheet.js', 'work-automation-sheet.js']) vm.runInContext(read(file), context);
+  for (const file of ['work-entry-sheet.js', 'work-automation-card-state.js', 'work-automation-sheet.js']) vm.runInContext(read(file), context);
   for (const [en, zh, actionId] of [
     ['issue', '需求', 'work.requirement.create'], ['request', '创建需求', 'work.requirement.create'], ['task', '任务', 'work.requirement.create'],
     ['automation', '自动化', 'work.automation.create'],

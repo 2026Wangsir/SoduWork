@@ -22,6 +22,7 @@ from ..conversation_handoff_models import ConversationHandoff as Handoff
 from ..models import Attachment, Client, OrgUnit, Task, User
 from . import ai_exec, ai_remote, dispatch_identity, portable_workspace, rbac, runner_hub, storage
 from .execution_host_policy import cloud_runner_allowed
+from .schedule_run_contracts import is_local_model_reference
 from . import handoff_agent_policy
 
 CAPABILITY = "handoff1"
@@ -384,6 +385,8 @@ def clean_options(raw):
         out[key] = value.strip()
     if not re.fullmatch(r"[0-9a-f]{64}", out["sha256"]) or (out["assigneeId"] and not out["assigneeId"].startswith("runner:")):
         raise HTTPException(400, "请提供完整文件摘要和有效的执行机标识")
+    if is_local_model_reference(out["model"]):
+        raise HTTPException(409, "本地模型不能转交到其他执行机")
     # Keep old explicit requests byte-for-byte compatible for durable retry hashes.
     if "agentId" in raw:
         if not isinstance(raw["agentId"], str) or raw["agentId"] not in AGENTS:

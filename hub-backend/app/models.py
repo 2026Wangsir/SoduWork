@@ -629,6 +629,9 @@ class AiSchedule(Base):
     assignee_id: Mapped[str] = mapped_column(String(64), default="")     # Runtime key, for example local:pi.
     assignee_type: Mapped[str] = mapped_column(String(16), default="agent")
     model_name: Mapped[str] = mapped_column(String(300), default="")
+    # Managed models are resolved by the Hub/Agent; device models remain in the
+    # owning desktop's encrypted store and are represented here only by source.
+    model_source: Mapped[str] = mapped_column(String(16), default="managed", server_default="managed")
     repo_id: Mapped[str] = mapped_column(String(36), default="")         # Documentation and research tasks may omit a repository.
     flow: Mapped[bool] = mapped_column(Boolean, default=False)           # Whether to follow the development workflow.
     # Empty selects direct assignment; otherwise start from an immutable plugin binding.

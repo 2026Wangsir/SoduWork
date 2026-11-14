@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..db import get_session
-from ..deps import current_ai_client, authenticated_client, current_client, enforce_client_quota
+from ..deps import current_ai_client, authenticated_client, current_client, enforce_client_access, enforce_client_quota
 from ..models import Client, Task, User
 from ..realtime import hub
 from ..schemas import BatchUpdate, TaskCreate, TaskUpdate, task_to_api
@@ -568,7 +568,13 @@ async def conversation_task_turn(
     if task is None:
         raise HTTPException(404, "需求不存在或不属于当前设备")
     if str(body.get("action") or "prepare") not in {"complete", "fail", "wait", "cancel"}:
-        await enforce_client_quota(session, client)
+        if conversation_turns.receipt_model_source(task, body) == "device":
+            # This endpoint records an authenticated native queue receipt. It
+            # cannot issue model tickets or launch a remote executor; those
+            # independent entry points retain their model quota admission.
+            await enforce_client_access(session, client)
+        else:
+            await enforce_client_quota(session, client)
     actor = await _actor_user(session, client)
     receipt = await conversation_turns.apply(session, task, body, _actor_label(actor, client))
     await session.commit()
@@ -630,9 +636,13 @@ async def conversation_task_delivery(
         if categories:
             prepared_categories[name] = categories[index]
     try:
+        from ..services.model_reference_privacy import is_local_model_reference
+        # Legacy desktops may include a device-only reference on delivery receipts.
+        # Keep the deliverable while excluding that reference from Hub persistence.
+        provider = "" if is_local_model_reference(model) else model[:80]
         result = await conversation_turns.deliver_artifacts(
             session, task, conversation_id=conversation_id[:180],
-            turn_id=turn_id[:120], provider=model[:80], files=prepared,
+            turn_id=turn_id[:120], provider=provider, files=prepared,
             categories=prepared_categories,
             outcome=normalized_outcome)
     except HTTPException:

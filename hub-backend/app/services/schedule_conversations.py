@@ -12,7 +12,11 @@ from . import schedule_access
 from .schedule_execution import required_skill_names
 from .schedule_run_contracts import (
     automation_conversation_title,
+    clean_schedule_model_reference,
+    schedule_model_source,
+    sanitize_schedule_model_payload,
     clean_required_capabilities,
+    is_local_model_reference,
     personal_plugin_spec,
 )
 
@@ -127,6 +131,9 @@ async def prepare(session, schedule, client, repo, run_id, adapter, personal):
     # here as well so that bypassing the scheduler cannot silently drop the
     # selected personal plugin before the desktop opens the chat.
     personal_spec = dict(personal or {}) or personal_plugin_spec(schedule)
+    model_source = schedule_model_source(schedule)
+    model_name = ('' if model_source == 'device' else
+                  clean_schedule_model_reference(getattr(schedule, 'model_name', '')))
     envelope = {'runId': run.id, 'title': title, 'conversationTitle': conversation_title,
                 'text': instruction, 'attachments': [],
                 'adapterId': adapter, 'cwd': cwd,
@@ -135,7 +142,8 @@ async def prepare(session, schedule, client, repo, run_id, adapter, personal):
                 # contract. Empty means the selected runtime resolves its own
                 # normal default; do not silently reuse a model attached to
                 # the Agent or to the ordinary chat composer.
-                'modelName': str(getattr(schedule, 'model_name', '') or ''),
+                'modelName': model_name,
+                'modelSource': model_source,
                 'personalPlugin': personal_spec}
     if repo:
         # Keep project context as conversation metadata. It scopes plugin
@@ -210,9 +218,14 @@ async def claim(session, client, run_id, instance):
     run = await locked_run(session, client, run_id)
     from .schedule_device_liveness import expire_run
     await expire_run(session, run)
-    receipt = dict(run.receipt or {})
+    raw_receipt = dict(run.receipt or {})
+    receipt = sanitize_schedule_model_payload(raw_receipt)
+    receipt_changed = receipt != raw_receipt
+    if receipt_changed:
+        run.receipt = receipt
     if run.state in ('succeeded', 'failed', 'cancelled'):
-        await session.commit()
+        if receipt_changed:
+            await session.commit()
         return {'ok': True, 'terminal': True, 'state': run.state,
                 'errorCode': receipt.get('errorCode', ''),
                 'conversationId': receipt.get('conversationId', '')}
@@ -221,12 +234,42 @@ async def claim(session, client, run_id, instance):
         # A restarted client without the executing session only observes it.
         # Claiming its lease and acknowledging "running" would keep a vanished
         # execution alive indefinitely, including after uninstall/reinstall.
+        if receipt_changed:
+            await session.commit()
         return {'ok': True, 'observeOnly': True, 'state': run.state,
                 'conversationId': receipt['conversationId']}
     if receipt.get('worker') != instance and float(receipt.get('leaseUntil') or 0) > now:
+        if receipt_changed:
+            await session.commit()
         return {'ok': False, 'busy': True}
     from . import schedule_content
-    envelope = await schedule_content.load(session, client, run, dict(receipt.get('conversationInput') or {}))
+    original_input = dict(receipt.get('conversationInput') or {})
+    envelope = await schedule_content.load(session, client, run, original_input)
+    cleaned_envelope = sanitize_schedule_model_payload(envelope)
+    if cleaned_envelope != envelope:
+        # Old clients could persist a desktop-only reference in the inline receipt.
+        # Return a clean envelope and repair the durable copy before committing
+        # the lease. This also replaces an old endpoint payload instead of
+        # repeatedly reading the sensitive reference on every claim.
+        pointer = bool((receipt.get('conversationInput') or {}).get('contentRef'))
+        cleaned_envelope.pop('contentRef', None)
+        if pointer:
+            try:
+                receipt['conversationInput'] = await schedule_content.save(
+                    session, client, run, cleaned_envelope, required=True)
+            except Exception:
+                # Keep the endpoint pointer when it cannot be rewritten. The
+                # worker still receives the cleaned envelope, while the Hub
+                # receipt does not become a second copy of the full prompt.
+                receipt['conversationInput'] = sanitize_schedule_model_payload(original_input)
+        else:
+            receipt['conversationInput'] = cleaned_envelope
+    envelope = cleaned_envelope
+    route = dict(receipt.get('route') or {})
+    requested = dict(route.get('requested') or {})
+    if is_local_model_reference(requested.get('modelName')):
+        route['requested'] = sanitize_schedule_model_payload(requested)
+        receipt['route'] = route
     previous_worker = str(receipt.get('worker') or '')
     if previous_worker and previous_worker != instance:
         # Preserve the handoff edge so the original worker can publish the
@@ -238,7 +281,7 @@ async def claim(session, client, run_id, instance):
     receipt.update(worker=instance, leaseUntil=now + RESERVATION_LEASE_SECONDS)
     run.receipt = receipt
     await session.commit()
-    return {'ok': True, 'input': envelope,
+    return {'ok': True, 'input': envelope, 'scheduleId': str(run.schedule_id or ''),
             'trigger': run.trigger,
             'conversationId': receipt.get('conversationId', '')}
 

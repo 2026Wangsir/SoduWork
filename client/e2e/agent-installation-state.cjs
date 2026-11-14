@@ -5,25 +5,34 @@ if (typeof electron === 'string') {
   const env = { ...process.env };
   for (const key of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'ELECTRON_NO_ATTACH_CONSOLE',
     'CHROME_CRASHPAD_PIPE_NAME', 'CHROME_CRASHPAD_PIPE_HANDLE']) delete env[key];
-  require('node:child_process').spawn(electron, [__filename], { env, windowsHide: true, stdio: 'inherit' })
+  require('node:child_process').spawn(electron, [__filename, ...process.argv.slice(2)], { env, windowsHide: true, stdio: 'inherit' })
     .on('exit', code => { process.exitCode = code ?? 1; });
 } else {
   const { app, BrowserWindow } = electron;
   app.disableHardwareAcceleration();
   const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
   const assert = require('node:assert/strict'), { pathToFileURL } = require('node:url');
-  const client = path.resolve(__dirname, '..'), out = path.resolve(client, '../outputs/agent-local-cloud-20261030/ui');
+  const client = path.resolve(__dirname, '..'), out = path.resolve(process.argv[2] || path.join(client, '../outputs/agent-local-cloud-20261030/ui'));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-agent-state-'));
   app.setPath('userData', profile);
-  const report = { ok: false, cases: [], errors: [] };
+  const report = { ok: false, cases: [], errors: [], networkRequests: [],
+    boundary: 'Real Electron/Chromium, production Agent/Runner UI and API. Hub responses, installation jobs, runtime inventory and secure-store IPC are fixtures; no real model inference or installed-runtime execution.' };
   let win;
-  const js = s => win.webContents.executeJavaScript(s, true);
+  const js = s => win.webContents.executeJavaScript(s, true).catch(error => {
+    report.failedScript = s.slice(0, 320); throw error;
+  });
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const waitDOM = expression => js(`new Promise((resolve,reject)=>{let timer;
+    const observer=new MutationObserver(check);function check(){if(${expression}){observer.disconnect();clearTimeout(timer);resolve(true);}}
+    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true});
+    timer=setTimeout(()=>{observer.disconnect();reject(Error('UI did not settle: '+${JSON.stringify(expression)}));},5000);check();})`);
   app.whenReady().then(async () => {
     fs.mkdirSync(out, { recursive: true });
     win = new BrowserWindow({ show: false, width: 1280, height: 1000,
       webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false } });
-    win.webContents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_r, done) => done({cancel:true}));
+    win.webContents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (request, done) => {
+      report.networkRequests.push(request.url); done({cancel:true});
+    });
     const file = path.join(profile, 'state.html');
     fs.writeFileSync(file, '<!doctype html><html data-desk-panel="agents" data-window-menu=""><meta charset="utf-8"><base href="' + pathToFileURL(client + path.sep).href + '"><body></body></html>');
     await win.loadFile(file);
@@ -35,7 +44,7 @@ if (typeof electron === 'string') {
     // Resolve the isolated Agent surface from the desktop entry's production declarations.
     const scripts = Array.from(fs.readFileSync(path.join(client,'desk.html'),'utf8')
       .matchAll(/<script\s+src=["']([^"']+)["']/g), match => match[1])
-      .filter(file => /\/(?:agent-brand|panels-agents|codex-auth-dialog)\.js$/.test(file));
+      .filter(file => /\/(?:agent-brand|panels-agents|panels-runners|codex-auth-dialog)\.js$/.test(file));
     for (const file of scripts)
       await js(`new Promise((resolve,reject)=>{const e=document.createElement('script');e.src=${JSON.stringify(pathToFileURL(path.join(client,file)).href)};e.onload=()=>resolve(true);e.onerror=()=>reject(Error('Script failed'));document.body.appendChild(e)})`);
     const agents = [
@@ -105,9 +114,99 @@ if (typeof electron === 'string') {
     assert.equal(await js('requests.length'),before);
     fs.writeFileSync(path.join(out,'cloud-only-empty-600.png'),(await win.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());
     report.cases.push({cloudExcluded:true,noLegacyFallback:true,hiddenTargetBlocked:true});
+
+    const managed = ['pi','qwen','opencode','dsh','kimi','harness2','codex-harness'];
+    const localRef = 'local:model-0123456789abcdef0123456789abcdef';
+    const remainingRef = 'local:model-fedcba9876543210fedcba9876543210';
+    await js(`closeAgentsPanel();window.hubCalls=[];window.localWrites=[];window.defaultSelections={};window.defaultRevision=0;
+      window.managedKeys=${JSON.stringify(managed)};window.localRef=${JSON.stringify(localRef)};window.remainingRef=${JSON.stringify(remainingRef)};
+      window.localRows=[{name:localRef,label:'Private model',providerId:'private',localOnly:true,modality:'chat'}];
+      window.localRunner={runnerId:'fixture-local',label:'Local-only model device',scope:'current-instance',owned:true,
+        online:true,accepting:true,mode:'accepting',agents:managedKeys.map(key=>({key,name:key,state:'ready'}))};
+      window.hubAgents=[...managedKeys,'codex','claude'].map(key=>({key,name:key,installed:true,present:true,
+        state:'ready',setupState:'ready',modelPick:managedKeys.includes(key)}));
+      window.User={id:'fixture-device',name:'Fixture'};window.__SODUWORK_TEST_HUB_CONFIG__={allowSwitch:true};
+      localStorage.setItem('soduwork_work_hub_url','http://fixture-hub.invalid:8989');
+      window.soduWorkAPI={deviceAuthBootstrap:async()=>({ok:true,stored:true,clientId:'fixture-device',
+          user:{id:'fixture-owner'},session:'fixture-session',expiresIn:1800}),runnerStatus:async()=>({connected:true,running:true}),
+        localModels:{get:async()=>({providers:[{id:'private'}],usable:localRows})},
+        localAgentModels:{get:async()=>({ok:true,scopeKey:'fixture-scope',revision:defaultRevision,selections:defaultSelections}),
+          set:async input=>{if(input.scopeKey!=='fixture-scope'||input.expectedRevision!==defaultRevision||!managedKeys.includes(input.agentId))throw Error('Invalid local mutation');
+            localWrites.push({...input});defaultSelections[input.agentId]={configured:true,modelName:input.modelName,unavailable:false};
+            defaultRevision++;return{ok:true};}}};
+      window.fetch=async(url,options={})=>{hubCalls.push({url:String(url),method:options.method||'GET',body:options.body||''});
+        const target=new URL(url);if(options.method&&options.method!=='GET')throw Error('Unexpected Hub write');
+        if(target.pathname.endsWith('/runners'))return new Response(JSON.stringify({runners:[localRunner]}));
+        if(target.pathname.endsWith('/agent-setup')){if(target.searchParams.get('hasLocalModel')!=='1')throw Error('Missing local capability');
+          return new Response(JSON.stringify({models:[],modelCount:0,machines:[{...localRunner,env:{ok:true},agents:hubAgents}]}));}
+        throw Error('Unexpected Hub endpoint: '+target.pathname);};void 0;`);
+    for (const file of ['core/api-work-plugins.js', 'api.js'])
+      await js(fs.readFileSync(path.join(client, file), 'utf8') + '\nvoid 0;');
+    await js('SoduWorkAPI.registerClient()');
+    await js('openAgentsPanel();void 0;');
+    await waitDOM(`document.querySelectorAll('.ag-row').length===9&&_agData.localModelCount===1`);
+    assert.equal(await js('_agData.modelCount'),1);
+    assert.equal(await js(`document.querySelectorAll('.ag-row[data-agstate="ready"]').length`),9);
+    for (const key of managed) {
+      await js(`document.querySelector('[data-atoggle="fixture-local~${key}"]').click();void 0;`);
+      await waitDOM(`document.querySelector('.ag-drawer [data-amodel="${key}"]')`);
+      assert.equal(await js(`document.querySelectorAll('.ag-drawer option[value="${localRef}"]').length`),1);
+      await js(`{const select=document.querySelector('.ag-drawer [data-amodel="${key}"]');select.value=localRef;
+        select.dispatchEvent(new Event('change',{bubbles:true}));}void 0;`);
+      await waitDOM(`document.querySelector('.ag-drawer [data-amodel="${key}"]')?.value===localRef&&
+        !document.querySelector('.ag-drawer [data-amodel="${key}"]').disabled&&_agData.agents.find(a=>a.key==='${key}')?.localModelDefault`);
+      assert.equal(await js(`defaultSelections['${key}'].modelName`),localRef);
+      report.cases.push({localOnlyAgent:key,ready:true,defaultSavedLocally:true});
+      await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));void 0;`);
+    }
+    for (const key of ['codex','claude']) {
+      await js(`document.querySelector('[data-atoggle="fixture-local~${key}"]').click();void 0;`);
+      assert.equal(await js(`document.querySelectorAll('.ag-drawer [data-amodel]').length`),0);
+      assert.match(await js(`document.querySelector('.ag-drawer .ag-model').textContent`),/自己的账号与模型/);
+      await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));void 0;`);
+      report.cases.push({accountAgent:key,localModelsExcluded:true});
+    }
+    await js(`for(const agent of hubAgents.filter(a=>a.modelPick))Object.assign(agent,{state:'nollm',setupState:'nollm',displayState:'nollm'});
+      _agLoad(true);void 0;`);
+    await waitDOM(`_agData.agents.filter(a=>a.localModelDefault&&a.setupState==='ready').length===7`);
+    assert.equal(await js(`document.querySelectorAll('.ag-row[data-agstate="ready"]').length`),9);
+    report.cases.push({availableLocalDefaults:7,staleHubModelStatusCorrected:true});
+    await js(`for(const agent of hubAgents.filter(a=>a.modelPick))Object.assign(agent,{state:'ready',setupState:'ready',displayState:'ready'});
+      localRows=[{name:remainingRef,label:'Other private model',providerId:'private',localOnly:true,modality:'chat'}];
+      for(const value of Object.values(defaultSelections))value.unavailable=true;defaultRevision++;_agLoad(true);void 0;`);
+    await waitDOM(`_agData.agents.filter(a=>a.localModelDefault&&a.modelGone).length===7`);
+    for (const key of managed) {
+      await js(`document.querySelector('[data-atoggle="fixture-local~${key}"]').click();void 0;`);
+      assert.equal(await js(`document.querySelector('.ag-drawer [data-amodel]').value`),localRef);
+      assert.match(await js(`document.querySelector('.ag-drawer option:checked').textContent`),/本地模型已删除或不可用/);
+      assert.match(await js(`document.querySelector('.ag-drawer').textContent`),/主动选择可用模型.*不会自动切换模型/);
+      assert.equal(await js(`document.querySelector('[data-ak="fixture-local~${key}"]').dataset.agstate`),'nollm');
+      await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));void 0;`);
+    }
+    assert.equal(await js('localWrites.length'),7);
+    report.cases.push({deletedDefaults:7,preservedOriginalReference:true,availableAlternativeNotSelected:true});
+    await js(`document.querySelector('[data-agtab="runners"]').click();void 0;`);
+    await waitDOM(`document.querySelector('#rn-card-fixture-local')`);
+    assert.match(await js(`document.querySelector('#agBody').textContent`),/1 个节点在线，1 个可接单/);
+    assert.equal(await js('_agData.runners[0].agents.length'),7);
+    assert.equal(await js(`document.querySelector('#rn-card-fixture-local .rn-state').textContent`),'可接任务');
+    assert.equal(await js(`document.querySelector('#rn-card-fixture-local .rn-chips em').textContent`),'+2');
+    fs.writeFileSync(path.join(out,'local-only-runner.png'),(await win.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());
+    const hubCalls = await js('hubCalls');
+    assert(hubCalls.every(call=>call.method==='GET'));
+    assert.doesNotMatch(JSON.stringify(hubCalls),/local:model-|private|fixture-scope/);
+    assert.deepEqual(report.networkRequests,[]);
+    report.cases.push({localOnlyRunnerReady:true,managedAgentCount:7,hubWrites:0,localDefaultWrites:7});
     report.errors = await js('errors'); assert.deepEqual(report.errors,[]);
     report.ok = true;
-  }).catch(e=>{report.errors.push(String(e.stack||e));process.exitCode=1;}).finally(()=>{
+  }).catch(async e=>{report.errors.push(String(e.stack||e));process.exitCode=1;
+    if(win&&!win.isDestroyed()) {
+      report.diagnostics=await win.webContents.executeJavaScript(
+        `({errors:window.errors,body:document.body.innerText,hubCalls:window.hubCalls,localWrites:window.localWrites})`,true).catch(()=>null);
+      const capture=await win.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true}).catch(()=>null);
+      if(capture)fs.writeFileSync(path.join(out,'failure.png'),capture.toPNG());
+    }
+  }).finally(()=>{
     fs.writeFileSync(path.join(out,'ui-report.json'),JSON.stringify(report,null,2));
     console.log(JSON.stringify({ok:report.ok,layouts:report.cases.length,errors:report.errors}));
     if(win&&!win.isDestroyed()) win.destroy(); app.exit(report.ok ? 0 : 1);

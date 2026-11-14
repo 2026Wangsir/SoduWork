@@ -31,6 +31,11 @@ RELEASE_SMOKES = tuple(sorted((
     "test_runner_inventory_scope.py",
     "test_token_quota.py",
     "test_personal_model_quota.py",
+    "test_remote_local_model_privacy.py",
+    "test_private_agent_probe.py",
+    "test_runner_usage_receipts.py",
+    "test_schedule_conversations.py",
+    "test_schedule_local_models.py",
     "test_im_primitives.py",
     "test_im_transport.py",
     "test_im_archive.py",
@@ -57,6 +62,8 @@ RELEASE_SMOKES = tuple(sorted((
     # Run every case under its module deadline rather than repeat all five in
     # one aggregate process that exceeds the same 300-second deadline.
     "test_requirement_review_access.py",
+    "test_local_requirement_delivery.py",
+    "test_requirement_creator_migration.py",
     "test_requirement_maintenance.py",
     "test_requirement_maintenance_policy.py",
     "test_handoff_maintenance_boundary.py",

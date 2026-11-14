@@ -61,6 +61,29 @@ test('historical model recovery can bypass a stale Agent preference without chan
   } finally { global.fetch = original; config.invalidate(); }
 });
 
+test('Pi and Runner resume never bypass an unavailable device-owned default', async t => {
+  const failure = { ok: false, code: 'LOCAL_AGENT_DEFAULT_UNAVAILABLE', reason: 'Local Agent default is unavailable' };
+  const calls = [];
+  t.mock.method(require('../main/local-model-privacy.cjs'), 'prepare', async () => {});
+  const pi = require('../main/pi-session/session-open').create({
+    loadSdk: async () => ({ ok: true, sdk: {} }), _openTiming() {},
+    goalContract: { normalize: () => ({ intent: 'chat' }) },
+    modelConfig: { configuredModel: () => '', prepare: async (...args) => { calls.push(args); return failure; } },
+  });
+  const result = await pi.open({ app: {}, identity, modelName: '', resumedConversation: true });
+  assert.equal(result.code, failure.code);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][3].ignoreAgentPreference, undefined);
+  const adapter = createRunnerRuntimeAdapter({ runtimeSpec: runtimeCatalog.runtime('qwen'),
+    runnerRuntime: { rpc: async () => { throw Error('Cannot launch an unavailable model'); } },
+    modelConfig: { fetchModel: async (...args) => { calls.push(args); return failure; } } });
+  await assert.rejects(adapter.resumeSession({ runtimeId: 'missing-default', identity,
+    native: { runner: { openOptions: { ref: 'old-chat', resumePath: 'old-run', resumedConversation: true,
+      cwd: os.tmpdir(), modelName: '' } } } }), /Local Agent default is unavailable/);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][6].ignoreAgentPreference, undefined);
+});
+
 test('every Runner gateway adapter resolves its own default at open and after model changes; account runtimes bypass it', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soduwork-runtime-default-'));
   try {

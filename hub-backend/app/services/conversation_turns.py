@@ -13,6 +13,33 @@ SUBMISSION_MODES = {"manual", "auto"}
 
 MAX_DELIVERY_FILES = 60
 
+
+def receipt_model_source(task, body) -> str:
+    """Classify native bookkeeping without granting model execution authority."""
+    from .model_reference_privacy import is_local_model_reference
+    if is_local_model_reference(body.get("model")):
+        raise HTTPException(422, "本地模型引用不能写入 Hub 需求回执")
+    current = dict((task.work_routing or {}).get("conversationTurn") or {})
+    same = (current.get("turnId") == str(body.get("turnId") or "")[:120] and
+            current.get("conversationId") == str(body.get("conversationId") or "")[:180])
+    saved = str(current.get("modelSource") or "managed")
+    source = str(body.get("modelSource") or (saved if same else "managed"))
+    if source not in {"device", "managed"}:
+        raise HTTPException(422, "需求执行模型来源无效")
+    if same and source != saved:
+        raise HTTPException(409, "当前执行轮次的模型来源已确定，请新建轮次后重新选择")
+    if source == "device":
+        from .model_quota import managed_runtime
+        agent = body.get("agentId") or (current.get("modelAgentId") if same else "")
+        if (str(body.get("executor") or "native") != "native" or
+                body.get("continuationRef") or not managed_runtime(agent)):
+            raise HTTPException(422, "设备模型回执只支持本机托管型执行底座")
+        if str(body.get("model") or "").strip():
+            raise HTTPException(422, "设备模型回执只允许通用来源标记")
+        if same and current.get("modelAgentId") and managed_runtime(agent) != current["modelAgentId"]:
+            raise HTTPException(409, "当前执行轮次的底座已确定，请新建轮次后重新选择")
+    return source
+
 def execution_instruction(value, claimed=None):
     text = str(value or "").strip()
     if len(text) > 50000:
@@ -346,6 +373,7 @@ async def _cancel_turn_review(session, task, *, ref: str, turn_id: str, actor: s
 
 
 async def apply(session, task, body, actor=""):
+    model_source = receipt_model_source(task, body)
     action = str(body.get("action") or "prepare")
     turn_id = str(body.get("turnId") or "")[:120]
     conversation_id = str(body.get("conversationId") or "")[:180]
@@ -432,10 +460,14 @@ async def apply(session, task, body, actor=""):
                 executionContext={"schemaVersion": 1, "strategy": "direct", "agent": {"id": aid, "cli": aid[6:]},
                     "runner": {"mode": "local"}, "location": {"mode": "local"},
                     "model": str(body.get("model") or "")[:160],
+                    **({"modelSource": "device"} if model_source == "device" else {}),
                     **({"repo": previous_context["repo"]} if previous_context.get("repo") else {})})
         if submission_mode:
             routing["executionSubmissionMode"] = submission_mode
         current = {"turnId": turn_id, "conversationId": conversation_id, "state": "queued", "executor": executor}
+        if model_source == "device":
+            from .model_quota import managed_runtime
+            current.update(modelSource="device", modelAgentId=managed_runtime(body.get("agentId")))
         if continuation_ref:
             current["continuationRef"] = continuation_ref
         dispatch_instructions.record(session, task.id, instructions, current, actor)

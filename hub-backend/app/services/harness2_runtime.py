@@ -102,14 +102,15 @@ def prepare_executor_config(env: dict) -> None:
             env.pop(key, None)
 
 
-def environment(env: dict, cfg: dict, runtime_ref: str = "") -> dict:
+def environment(env: dict, cfg: dict, runtime_ref: str = "", *, artifact_root: str | None = None) -> dict:
     """Extend the common Runner environment without configuring another agent."""
     from .harness2_lifecycle import disabled_issue
     if issue := disabled_issue():
         raise RuntimeError(issue)
     from .local_base import _store_dir
     llm = dict(cfg.get("llm") or {})
-    if not all(str(llm.get(key) or "").strip() for key in ("base", "key", "model")):
+    if not (str(llm.get("base") or "").strip() and str(llm.get("model") or "").strip() and
+            (str(llm.get("key") or "").strip() or llm.get("localOnly") is True)):
         raise RuntimeError("Google Harness² 没有可用模型，请先配置或授权模型。")
     if (llm.get("kind") or "openai-compat") not in {"openai", "openai-compat", "anthropic"}:
         raise RuntimeError("Google Harness² 当前支持 OpenAI 兼容或 Anthropic 模型接口。")
@@ -127,7 +128,8 @@ def environment(env: dict, cfg: dict, runtime_ref: str = "") -> dict:
             result[CONTINUE_ENV] = "1"
     # Internal generated evidence belongs to the already isolated Runner archive.
     # The existing Runner owns native session identity, continuation and history.
-    root = (Path(_store_dir(runtime_ref)) / "harness2" if runtime_ref
+    root = (Path(artifact_root) / "harness2" if artifact_root else
+            Path(_store_dir(runtime_ref)) / "harness2" if runtime_ref
             else Path(tempfile.gettempdir()) / "soduwork-harness2-probes")
     result[MODEL_ENV] = json.dumps(llm, ensure_ascii=False)
     result[ROOT_ENV] = str(root)

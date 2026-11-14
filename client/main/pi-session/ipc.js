@@ -1117,14 +1117,14 @@ function install({ app, ipcMain, BrowserWindow, identityOf, sendIdentityOf, capa
       sentAt: Number.isFinite(rawOptions?.sentAt) && rawOptions.sentAt > 0 ? Math.min(rawOptions.sentAt, Date.now()) : Date.now(),
       projectId: String(taskTurn ? taskTurn.task.projectId || '' : rawOptions && rawOptions.projectId || '').slice(0, 36),
       repoId: String(taskTurn ? taskTurn.task.repoId || '' : rawOptions && rawOptions.repoId || '').slice(0, 36),
-      submissionId: String(rawOptions && rawOptions.submissionId || '')
+      submissionId: String(taskTurn?.acceptanceOnly ? taskTurn.submissionId : rawOptions && rawOptions.submissionId || '')
         .replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64),
     };
     if (typeof authorizeAI === 'function') {
       // Resolve ownership for each captured turn, not the session's current
       // model: queued turns can alternate between local and managed services.
-      // Pi can attribute personal funding per call. Other runtimes retain the
-      // strict account gate until they provide equally reliable usage receipts.
+      // Native runtimes retain each call's signed funding receipt so local and
+      // Hub-owned models follow the same admission policy at turn boundaries.
       const agent = s.adapterId || 'pi';
       const modelMode = require('../agent-runtime/runtime-catalog').runtime(agent)?.modelMode;
       sendOptions.beforeTurn = require('../conversation/quota-admission.cjs').beforeTurn(

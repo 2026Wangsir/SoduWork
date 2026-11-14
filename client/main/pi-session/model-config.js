@@ -2,8 +2,8 @@
 
    GET /api/v1/ai-proxy/config returns short-lived, purpose-bound proxy tickets instead of gateway keys.
    Tickets work only with the backend OpenAI-compatible endpoint; the backend supplies the shared
-   model-service key. All production conversations obtain model configuration here, and credentials
-   are never exposed to the renderer.
+   model-service key. Managed conversations resolve Hub configuration or device-owned models here;
+   credentials are never exposed to the renderer.
 
    Keep plaintext credentials off disk: managed models.json contains only the
    $SODUWORK_PROXY_KEY variable reference; local no-key models use a non-secret
@@ -83,8 +83,12 @@ function historicalModel(app, identity, modelName = '') {
   const id = String(modelName || stored?.row?.id || configuredModel(app) || 'history').trim() || 'history';
   const baseUrl = String(stored?.provider?.baseUrl || '').trim() ||
     String(identity?.hub || '').replace(/\/+$/, '') + '/api/v1/ai-proxy/v1';
+  const localHistory = String(modelName || '').startsWith('local:');
   const model = {
-    baseUrl, key: 'history-only', id,
+    // Keep a deleted local selection as a read-only placeholder. It must never
+    // become a Hub model or acquire credentials from a same-name replacement.
+    baseUrl: localHistory ? localPrivacy.LOCAL_ENDPOINT : baseUrl, key: localHistory ? '' : 'history-only', id,
+    ...(localHistory ? { modelRef: id, wireModelId: id, localOnly: true, historicalLocal: true } : {}),
     label: String(stored?.row?.name || stored?.row?.label || id),
     input: Array.isArray(stored?.row?.input) && stored.row.input.length ? stored.row.input : ['text'],
     contextWindow: Number(stored?.row?.contextWindow) || DEFAULT_CTX,
@@ -95,20 +99,47 @@ function historicalModel(app, identity, modelName = '') {
 }
 
 /*
- * Resolve the authorized model endpoint from Hub and return a readable failure reason when
- * unavailable.
+ * Resolve an authorized Hub endpoint or a device-owned model in an explicit
+ * local execution context, returning a readable failure when unavailable.
  */
 async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl = global.fetch, force = false,
   agentId = 'pi', options = {}) {
   modelName = String(modelName || '').trim();
   const requestedAgent = String(agentId || 'pi').trim().toLowerCase().replace(/^local:/, '');
+  const runtimeSpec = require('../agent-runtime/runtime-catalog').runtime(requestedAgent);
+  // Only on-device calls may inherit a device-owned preference. Cloud and
+  // controlled execution keep their explicit server-owned model selection.
+  if (!modelName && !options.ignoreAgentPreference && runtimeSpec?.modelMode === 'managed' &&
+      (options.allowLocal === true || requestedAgent === 'pi' && options.app)) {
+    try {
+      const runtime = runtimeContext.current?.();
+      const defaults = require('../local-agent-model-store.cjs');
+      const preferred = typeof runtime?.localAgentModel === 'function'
+        ? await runtime.localAgentModel(identity, requestedAgent)
+        : defaults.configured() ? defaults.fromIdentity(identity, requestedAgent) : null;
+      if (preferred?.configured) {
+        if (preferred.unavailable) {
+          if (options.allowHistorical && options.app && String(preferred.modelName || '').startsWith('local:')) {
+            return historicalModel(options.app, identity, preferred.modelName);
+          }
+          return { ok: false, code: 'LOCAL_AGENT_DEFAULT_UNAVAILABLE',
+            reason: 'Agent 原本地默认模型已删除或不可用，请主动选择可用模型' };
+        }
+        modelName = preferred.modelName;
+      }
+    } catch (_) { return { ok: false, code: 'LOCAL_AGENT_DEFAULT_UNAVAILABLE',
+      reason: '本机 Agent 默认模型无法读取，请检查账号和本地模型设置' }; }
+  }
   if (require('./image-model').imageChoice(modelName)) {
     return { ok: false, reason: '图片模型不能作为对话推理模型；请使用 Pi 直接生图，或在对话中使用图片插件' };
   }
   if (String(modelName || '').startsWith('local:')) {
-    if (requestedAgent !== 'pi') {
-      return { ok: false, reason: '本地模型仅支持本机 Pi 对话，请选择托管模型' };
-    }
+    // Local references may only be resolved by a managed runtime in this
+    // desktop process. Account runtimes (Codex/Claude) and cloud execution
+    // must continue to use their own model or Hub-issued configuration.
+    const localAllowed = runtimeSpec?.modelMode === 'managed' &&
+      (options.allowLocal === true || requestedAgent === 'pi' && options.app);
+    if (!localAllowed) return { ok: false, reason: '本地模型仅支持明确的本机受管底座调用，不能用于云端或账号型底座' };
     let local = null;
     try {
       const runtime = runtimeContext.current?.();
@@ -116,12 +147,16 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
         ? await runtime.localModel(modelName)
         : localModels.resolve(modelName);
     } catch (_) { local = null; }
-    if (!local) return { ok: false, reason: '本地模型不存在或凭据未配置，请在「我的模型」中刷新' };
+    if (!local) {
+      if (options?.allowHistorical && options.app) return historicalModel(options.app, identity, modelName);
+      return { ok: false, reason: '本地模型不存在或凭据未配置，请在「我的模型」中刷新' };
+    }
     const thinking = thinkingCapabilities.profile({ ...local, id: local.name });
     return { ok: true, localOnly: true, model: {
       baseUrl: local.baseUrl, key: local.key, id: local.runtimeId || local.modelRef,
       wireModelId: local.name, label: local.label || local.name,
-      provider: local.provider, providerName: local.providerName, keyFrom: 'local', modelRef: local.modelRef,
+      provider: local.provider, providerName: local.providerName, authMode: local.authMode,
+      keyFrom: 'local', modelRef: local.modelRef,
       configRevision: local.configRevision,
       input: ['text'], modality: local.modality || 'chat', maxOutputTokens: local.config?.maxOutputTokens,
       ...contextWindow.resolveContextWindow({ contextWindow: local.ctxWindow, modelName: local.name, provider: local.provider }),
@@ -191,7 +226,8 @@ async function fetchModel(identity, modelName = '', timeoutMs = 8000, fetchImpl 
     if (!d || !d.ok) return { ok: false, reason: custom && d?.reason === '此底座不使用企业模型配置，请检查执行底座'
       ? '后台尚不支持新底座的模型配置，请更新后台后重试' : (d && d.reason) || '后台没给出可用的模型' };
     if (!d.key || !d.model) return { ok: false, reason: '后台回的配置不完整（缺 key 或 model）' };
-    if (d.quotaScope === 'personal' && (agent !== 'pi' || d.quotaVersion !== 2 ||
+    const managed = custom || require('../agent-runtime/runtime-catalog').runtime(requestedAgent)?.modelMode === 'managed';
+    if (d.quotaScope === 'personal' && (!managed || d.quotaVersion !== 2 ||
         d.personalQuotaSupported !== true || typeof d.quotaUsageToken !== 'string' || !d.quotaUsageToken ||
         !String(d.providerKey || d.provider || '').trim())) {
       return { ok: false, reason: '服务端需要升级后才能校验个人 Token 额度' };
@@ -281,6 +317,7 @@ function writeModels(dir, model) {
   // The bootstrap file must not reveal even a private model-family hint.
   if (localRef) model = { id: localRef, label: localPrivacy.LOCAL_LABEL,
     baseUrl: localPrivacy.LOCAL_ENDPOINT, localOnly: true, modelRef: localRef,
+    ...(model.modality ? { modality: model.modality } : {}),
     reasoning: false, contextWindow: DEFAULT_CTX, input: ['text'] };
   const thinking = thinkingCapabilities.profile(model);
   const want = {
@@ -302,6 +339,7 @@ function writeModels(dir, model) {
         models: [{
           id: localRef || model.id, name: model.localOnly ? localPrivacy.LOCAL_LABEL : model.label,
           ...(localRef ? { localRef } : {}),
+          ...(model.modality ? { modality: model.modality } : {}),
           input: model.input || ['text'],
           reasoning: Boolean(thinking.reasoning),
           ...(thinking.reasoning && thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
@@ -387,7 +425,7 @@ function warmupGateway(baseUrl, apiKey, modelId, fetchImpl = global.fetch) {
 
 /* Prepare the environment required to start a Pi session. */
 async function fetchSelection(identity, name = '', timeoutMs = 8000, fetchImpl = global.fetch, force = false, agentId = 'pi', options = {}) {
-  if (require('./image-model').imageChoice(name)) return require('./image-model').resolve(identity, name, fetchImpl, force);
+  if (require('./image-model').imageChoice(name)) return require('./image-model').resolve(identity, name, fetchImpl, options);
   return fetchModel(identity, name, timeoutMs, fetchImpl, force, agentId, options);
 }
 
