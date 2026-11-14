@@ -1732,9 +1732,14 @@
       });
       mark(true); return acceptTaskResult(r);
     },
-    async mySkills() {
-      try { var v = await jfetch('/skills'); mark(true); return v || { skills: [] }; }
-      catch (e) { markFromError(e); return { skills: [] }; }
+    async mySkills(options) {
+      var strict = options?.strict === true, scope = skillMutationScope();
+      try {
+        var v = await jfetch('/skills', strict ? { taskScope: scope.key } : undefined);
+        if (strict && (scope.key !== taskStorageKey('ops') || scope.epoch !== _skillScopeEpoch)) throw staleTaskScope();
+        if (strict && (!v || !Array.isArray(v.skills))) throw new Error('技能目录响应无效，请刷新后重试');
+        mark(true); return v || { skills: [] };
+      } catch (e) { markFromError(e); if (strict) throw e; return { skills: [] }; }
     },
     async setMySkills(names) {
       var scope = skillMutationScope();

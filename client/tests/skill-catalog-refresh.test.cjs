@@ -145,6 +145,37 @@ const mutations = [a => a.createMySkill({ name: 'code-motion-film' }),
   a => a.deleteMySkill('code-motion-film', 'checksum'), a => a.setMySkills(['code-motion-film']),
   a => a.refreshMySkills()];
 
+test('strict skill reads preserve authoritative identity and propagate lookup failures', async () => {
+  const f = apiFixture(); await f.signIn('alice');
+  const catalog = { skills: [{ name: 'fixture', scope: 'personal', checksum: 'a'.repeat(64), enabled: true }], enabled: ['fixture'] };
+  f.fetch = async () => Response.json(catalog);
+  assert.deepEqual(JSON.parse(JSON.stringify(await f.api.mySkills({ strict: true }))), catalog);
+  f.fetch = async () => new Response('{"detail":"catalog unavailable"}', { status: 503 });
+  await assert.rejects(f.api.mySkills({ strict: true }), error => error.status === 503);
+  assert.deepEqual(Array.from((await f.api.mySkills()).skills), []);
+  f.fetch = async () => { throw new Error('Network unavailable'); };
+  await assert.rejects(f.api.mySkills({ strict: true }), /Network unavailable/);
+});
+
+test('strict skill reads reject malformed catalogs instead of reporting no installation', async () => {
+  const f = apiFixture(); await f.signIn('alice');
+  for (const payload of [null, {}, { skills: null }, { skills: {} }]) {
+    f.fetch = async () => Response.json(payload);
+    await assert.rejects(f.api.mySkills({ strict: true }), /技能目录/);
+  }
+});
+
+test('strict skill reads reject responses after account changes including returning to the original account', async () => {
+  for (const returnToA of [false, true]) {
+    const f = apiFixture(); await f.signIn('alice');
+    let complete; f.fetch = () => new Promise(resolve => { complete = resolve; });
+    const pending = f.api.mySkills({ strict: true }); await flush();
+    await f.signIn('bob'); if (returnToA) await f.signIn('alice');
+    complete(Response.json({ skills: [{ name: 'stale-private-skill', enabled: true }] }));
+    await assert.rejects(pending, error => error.code === 'STALE_TASK_SCOPE');
+  }
+});
+
 test('successful skill mutations notify mounted pickers; failed and silent refresh requests do not', async () => {
   const f = apiFixture(); await f.signIn('alice'); f.notifications.length = 0;
   for (const mutate of mutations) await mutate(f.api);

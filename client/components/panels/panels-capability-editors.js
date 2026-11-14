@@ -106,11 +106,12 @@
       '<div class="cap-checks">' + checks.map(function (check) {
         return '<span class="cap-check' + (check.ok ? '' : ' warn') + '">' + h(check.label) + '</span>';
       }).join('') + '</div>' +
+      '<p class="cap-notice" id="capImportState" role="status"></p>' +
       packageMarkup(preview.files || []) +
       (skill.hasScripts ? '<div class="cap-notice">' + ICON.warn +
         '<span>这个 Skill 包含脚本。脚本不会在导入时执行，只会在任务获得相应权限并被 AI 选择后运行。</span></div>' : ''),
       '<button class="btn-mini" id="capModalCancel">取消</button><span class="push"></span>' +
-      '<button class="btn-mini primary" id="capImportDo">安装并启用</button>'
+      '<button class="btn-mini primary" id="capImportDo" disabled>正在检查安装状态…</button>'
     );
     const marker = {};
     layer._skillView = marker;
@@ -118,18 +119,58 @@
     layer.querySelector('.cap-modal').classList.add('cap-skill-detail-modal');
     bindPackage(layer, preview.files || [], (path, offset) => SoduWorkAPI.previewSkillContent(file, path, offset),
       undefined, () => isCurrent() && !layer.hidden && layer._skillView === marker);
-    layer.querySelector('#capImportDo').addEventListener('click', async function () {
+    const button = layer.querySelector('#capImportDo');
+    const stateNote = layer.querySelector('#capImportState');
+    const active = () => isCurrent() && !layer.hidden && layer._skillView === marker;
+    let state = null;
+    function showState(next) {
+      state = next;
+      button.disabled = ['enabled', 'disabled', 'blocked'].includes(next.kind);
+      button.textContent = ({ install: '安装并启用', replace: '替换并启用', enabled: '已安装并启用',
+        disabled: '已安装（未启用）', blocked: '不能覆盖内置技能', error: '重新检查安装状态' })[next.kind];
+      stateNote.textContent = ({ install: '', replace: '已安装同名技能，但内容与此包不同。继续将替换当前版本并启用。',
+        enabled: '此技能包已安装并启用，可在「技能」页管理。', disabled: '此技能包已安装，可在「技能」页启用。',
+        blocked: '不能用导入包覆盖内置技能，请修改技能名称。', error: '无法确认安装状态，请重新检查后再操作。' })[next.kind];
+    }
+    async function checkState() {
+      button.disabled = true;
+      button.textContent = '正在检查安装状态…';
+      try {
+        // A failed read must never turn an installed package into an apparent first install.
+        const catalog = await SoduWorkAPI.mySkills({ strict: true });
+        if (!active()) return null;
+        if (!Array.isArray(catalog?.skills) || !skill.name || !skill.checksum) throw Error('Invalid skill status');
+        const existing = catalog.skills.find(item => item.name === skill.name);
+        const own = existing?.scope === 'personal';
+        if (own && !existing.checksum) throw Error('Missing installed skill checksum');
+        const next = { kind: existing?.sourceKey === 'builtin' ? 'blocked'
+          : !own ? 'install' : existing.checksum !== skill.checksum ? 'replace'
+          : existing.enabled ? 'enabled' : 'disabled', checksum: own ? existing.checksum : '' };
+        showState(next);
+        return next;
+      } catch (error) {
+        if (active()) showState({ kind: 'error' });
+        return null;
+      }
+    }
+    button.addEventListener('click', async function () {
       const button = this;
-      if (button.disabled || !isCurrent() || layer.hidden || layer._skillView !== marker) return;
+      if (button.disabled || !active()) return;
+      const previous = state;
+      const current = await checkState();
+      // A changed selection or version requires another explicit action on the refreshed state.
+      if (!current || !active() || button.disabled || previous?.kind !== current.kind ||
+          previous?.checksum !== current.checksum) return;
       button.disabled = true;
       layer._installPending = true;
-      button.textContent = '正在安装…';
+      button.textContent = current.kind === 'replace' ? '正在替换…' : '正在安装…';
       try {
         await SoduWorkAPI.importMySkill(file);
       } catch (error) {
-        if (isCurrent()) say(errorText(error, '技能没有安装成功'));
-        button.disabled = false;
-        button.textContent = '安装并启用';
+        if (active()) {
+          say(errorText(error, '技能没有安装成功'));
+          showState({ kind: 'error' });
+        }
         return;
       } finally {
         layer._installPending = false;
@@ -142,6 +183,7 @@
       try { await load(); }
       catch (error) { if (isCurrent()) say(errorText(error, '技能已安装，目录刷新失败，请点击刷新重试')); }
     });
+    checkState();
   }
 
 

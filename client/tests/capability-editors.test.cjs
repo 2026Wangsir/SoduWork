@@ -76,25 +76,27 @@ test('skill installation commits once and keeps refresh failures separate from i
   let imports = 0, resolveImport, scope = 'alice';
   const file = new File(['fixture'], 'weekly.skill');
   const editor = globals.window.SoduWorkCapabilityEditors.create({
-    api: { taskStorageKey: () => scope, importMySkill: async got => {
+    api: { taskStorageKey: () => scope, mySkills: async () => ({ skills: [] }), importMySkill: async got => {
       assert.equal(got, file); imports++; await new Promise(resolve => { resolveImport = resolve; });
     } }, h: String, say: message => messages.push(message), errorText: (_error, fallback) => fallback,
     openModal: (title, subtitle) => { assert.equal(title, '安装技能'); assert.match(subtitle, /个人技能库/); layer.hidden = false; return layer; },
     closeModal: () => { assert.equal(layer._installPending, false); layer.hidden = true; },
     load: async () => { throw Error('offline'); },
   });
-  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly', hasScripts: true }, files: [],
+  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly', checksum: 'new-version', hasScripts: true }, files: [],
     checks: [{ key: 'scripts', ok: false, label: 'Contains scripts' }] });
+  await new Promise(resolve => setImmediate(resolve));
   const button = node('#capImportDo');
   const pending = button.click();
   await button.click();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(imports, 1);
   assert.equal(layer._installPending, true);
   resolveImport(); await pending;
   assert.equal(layer.hidden, true);
   assert.match(messages[0], /技能已安装并启用/);
   assert.match(messages[1], /目录刷新失败/);
-  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly' }, files: [] });
+  editor.openImportPreview(file, { ok: true, skill: { name: 'weekly', checksum: 'new-version' }, files: [] });
   button.disabled = false; scope = 'bob';
   await button.click();
   assert.equal(imports, 1, 'A prior account preview cannot install into the next account');
@@ -124,7 +126,7 @@ test('skill preview reads remain bound to their account while installation is pe
     layer.hidden = true; layer._skillView = null;
   };
   const editor = globals.window.SoduWorkCapabilityEditors.create({
-    api: { taskStorageKey: () => scope,
+    api: { taskStorageKey: () => scope, mySkills: async () => ({ skills: [] }),
       previewSkillContent: async (_file, path) => {
         calls.push({ scope, path });
         if (path === 'SKILL.md') return { kind: 'text', text: 'Initial preview' };
@@ -135,11 +137,12 @@ test('skill preview reads remain bound to their account while installation is pe
     openModal: () => layer, closeModal, load: async () => {},
   });
   editor.openImportPreview(new File(['fixture'], 'weekly.skill'), {
-    ok: true, skill: { name: 'weekly' }, files: files.map(path => ({ path })),
+    ok: true, skill: { name: 'weekly', checksum: 'new-version' }, files: files.map(path => ({ path })),
   });
   await new Promise(resolve => setImmediate(resolve));
   const pendingRead = buttons[1].onclick();
   const pendingImport = node('#capImportDo').click();
+  await new Promise(resolve => setImmediate(resolve));
   scope = 'bob'; closeModal();
   assert.equal(layer.hidden, false, 'The installation keeps its dialog mounted while committing');
   assert.equal(layer._installPending, true);
@@ -151,4 +154,86 @@ test('skill preview reads remain bound to their account while installation is pe
   assert.deepEqual(rendered, ['Initial preview'], 'An old response cannot paint into the mounted dialog after switching accounts');
   finishImport(); await pendingImport;
   assert.equal(layer.hidden, true);
+});
+
+function importHarness() {
+  const nodes = new Map(), globals = { window: {} };
+  vm.runInNewContext(read('components/panels/panels-capability-editors.js'), globals);
+  const node = selector => {
+    if (!nodes.has(selector)) nodes.set(selector, { disabled: false, classList: { add() {} },
+      addEventListener(type, fn) { this[type] = fn; }, querySelector: node, querySelectorAll: () => [] });
+    return nodes.get(selector);
+  };
+  const layer = { hidden: false, querySelector: node };
+  const state = { skills: [], imports: 0, scope: 'alice', read: null };
+  const editor = globals.window.SoduWorkCapabilityEditors.create({
+    api: { taskStorageKey: () => state.scope, mySkills: async options => {
+      assert.equal(options.strict, true);
+      return state.read ? state.read() : { skills: state.skills };
+    }, importMySkill: async () => { state.imports++; } },
+    h: String, say() {}, errorText: e => e.message,
+    openModal: () => { layer.hidden = false; return layer; },
+    closeModal: () => { layer.hidden = true; }, load: async () => {},
+  });
+  const open = () => editor.openImportPreview(new File(['fixture'], 'weekly.skill'), {
+    ok: true, skill: { name: 'weekly', checksum: 'new-version' }, files: [],
+  });
+  return { state, layer, open, button: node('#capImportDo'), note: node('#capImportState') };
+}
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('reopened packages reflect exact personal content and enabled state without reinstalling', async () => {
+  for (const [entry, label, disabled] of [
+    [{ scope: 'personal', checksum: 'new-version', enabled: true }, '已安装并启用', true],
+    [{ scope: 'personal', checksum: 'new-version', enabled: false }, '已安装（未启用）', true],
+    [{ scope: 'personal', checksum: 'old-version', enabled: true }, '替换并启用', false],
+    [{ scope: 'company', checksum: 'new-version', enabled: true }, '安装并启用', false],
+    [{ scope: 'company', sourceKey: 'builtin', checksum: 'new-version' }, '不能覆盖内置技能', true],
+  ]) {
+    const h = importHarness();
+    h.state.skills = [{ name: 'weekly', ...entry }]; h.open();
+    assert.equal(h.button.disabled, true, 'No mutation before an authoritative status read');
+    await settle();
+    assert.equal(h.button.textContent, label); assert.equal(h.button.disabled, disabled);
+    if (disabled) await h.button.click();
+    assert.equal(h.state.imports, 0);
+    if (label === '替换并启用') {
+      assert.match(h.note.textContent, /替换当前版本/);
+      await h.button.click(); assert.equal(h.state.imports, 1);
+    }
+  }
+});
+
+test('failed status reads require a successful retry before allowing installation', async () => {
+  const h = importHarness();
+  h.state.read = async () => { throw Error('offline'); };
+  h.open(); await settle();
+  assert.equal(h.button.textContent, '重新检查安装状态');
+  await h.button.click(); assert.equal(h.state.imports, 0);
+  h.state.read = null;
+  await h.button.click();
+  assert.equal(h.button.textContent, '安装并启用'); assert.equal(h.state.imports, 0);
+  await h.button.click(); assert.equal(h.state.imports, 1);
+});
+
+test('a status change before confirmation refreshes the action without replacing newer content', async () => {
+  const h = importHarness(); h.open(); await settle();
+  h.state.skills = [{ name: 'weekly', scope: 'personal', checksum: 'another-version', enabled: true }];
+  await h.button.click();
+  assert.equal(h.state.imports, 0); assert.equal(h.button.textContent, '替换并启用');
+  h.state.skills[0].checksum = 'latest-version';
+  await h.button.click(); assert.equal(h.state.imports, 0);
+  await h.button.click(); assert.equal(h.state.imports, 1);
+});
+
+test('late status responses cannot update another account, a closed preview, or a replacement dialog', async () => {
+  for (const invalidate of [h => { h.state.scope = 'bob'; }, h => { h.layer.hidden = true; },
+    h => { h.layer._skillView = {}; }]) {
+    const h = importHarness(); let finish;
+    h.state.read = () => new Promise(resolve => { finish = resolve; });
+    h.open(); invalidate(h);
+    finish({ skills: [] }); await settle();
+    assert.equal(h.button.disabled, true);
+    await h.button.click(); assert.equal(h.state.imports, 0);
+  }
 });

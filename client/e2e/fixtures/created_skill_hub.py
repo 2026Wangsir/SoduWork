@@ -22,6 +22,19 @@ async def main():
         raise RuntimeError("Requires an isolated temporary directory")
     app, tokens, _sessions, cleanup = await fixture(root)
     app.include_router(plugin_client_catalog.router)
+    mutations = {"imports": 0, "selections": 0}
+
+    @app.middleware("http")
+    async def observe_mutations(request, call_next):
+        if request.method == "POST" and request.url.path == "/api/v1/skills/import":
+            mutations["imports"] += 1
+        if request.method == "PUT" and request.url.path == "/api/v1/skills":
+            mutations["selections"] += 1
+        return await call_next(request)
+
+    @app.get("/fixture/mutations")
+    async def mutation_counts():
+        return dict(mutations)
 
     @app.get("/fixture/auth")
     async def auth():

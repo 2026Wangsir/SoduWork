@@ -18,7 +18,7 @@ if (typeof electron === 'string') {
   const out = path.resolve(process.argv[2] || path.join(repo, 'outputs/created-skill-install'));
   const name = 'created-skill-fixture';
   const source = path.join(root, name);
-  const references = 'Read the supplied sample and preserve its meaning.\n';
+  let references = 'Read the supplied sample and preserve its meaning.\n';
   const report = { ok: false, cases: [], errors: [] };
   fs.mkdirSync(out, { recursive: true });
   app.setPath('userData', path.join(root, 'profile')); app.disableHardwareAcceleration();
@@ -35,6 +35,17 @@ if (typeof electron === 'string') {
       headers: { Authorization: 'Device ' + account.session } });
     assert.equal(response.ok, true, 'Fixture request failed: ' + route);
     return response.json();
+  }
+  async function mutations() {
+    const response = await fetch(base + '/fixture/mutations');
+    assert.equal(response.ok, true);
+    return response.json();
+  }
+  async function expectInstallAction(label, disabled) {
+    await until(() => js(`(() => {
+      const layer = document.getElementById('capModalLayer'), button = document.getElementById('capImportDo');
+      return layer && !layer.hidden && button?.textContent === ${JSON.stringify(label)} && button.disabled === ${disabled};
+    })()`), 'installation action: ' + label);
   }
   async function click(selector) {
     const point = await js(`(() => {
@@ -147,6 +158,7 @@ if (typeof electron === 'string') {
     })()`);
     await click('[data-install-plugin-draft]');
     await until(() => js('document.querySelector("#capModalTitle")?.textContent === "安装技能"'), 'skill installation dialog');
+    await expectInstallAction('安装并启用', false);
     assert.equal((await request('/capabilities')).skills.some(item => item.name === name), false);
     fs.writeFileSync(path.join(out, 'install-skill.png'), (await win.webContents.capturePage()).toPNG());
     report.cases.push('Generated .skill exposes the production conversation action and opens Install Skill before saving');
@@ -159,16 +171,63 @@ if (typeof electron === 'string') {
     assert.equal((await request('/capabilities', { session: tokens.bob })).skills.some(item => item.name === name), false);
     assert.equal(fs.existsSync(path.join(app.getPath('userData'), 'personal-plugins.json')), false);
     assert.equal((await request('/plugins/catalog')).items.some(item => item.key === name || item.key === 'skill-' + name), false);
+    assert.equal((await mutations()).imports, 1);
     report.cases.push('Confirmation imports an enabled private skill with both files, without adding a personal or Hub plugin');
+    await click('[data-install-plugin-draft]');
+    await expectInstallAction('已安装并启用', true);
+    assert.equal((await mutations()).imports, 1, 'Reopening an installed package must not import it again');
+    fs.writeFileSync(path.join(out, 'reopened-installed-skill.png'), (await win.webContents.capturePage()).toPNG());
+    report.cases.push('Reopening the conversation card recognizes the identical enabled personal skill and disables installation');
+    await click('#capModalClose');
     await js('openCapabilityPanel()');
     await click('[data-cap-tab="skills"]');
     await until(() => js(`!!document.querySelector('[data-skill-details="${name}"]')`), 'installed skill in the production Skills tab');
     assert.equal(await js(`document.querySelector('[data-skill="${name}"]').getAttribute('aria-pressed')`), 'true');
     fs.writeFileSync(path.join(out, 'installed-skill.png'), (await win.webContents.capturePage()).toPNG());
     report.cases.push('The production Skills tab lists and enables the generated skill after installation');
+    await click(`[data-skill="${name}"]`);
+    await until(async () => (await request('/capabilities')).skills.some(item => item.name === name && !item.enabled), 'personal skill disabled');
+    await click('#capClose');
+    await click('[data-install-plugin-draft]');
+    await expectInstallAction('已安装（未启用）', true);
+    assert.equal((await mutations()).imports, 1, 'Inspecting a disabled installed skill must not enable it');
+    assert.equal((await request('/skills/' + name + '/details')).checksum, details.checksum);
+    fs.writeFileSync(path.join(out, 'reopened-disabled-skill.png'), (await win.webContents.capturePage()).toPNG());
+    await click('#capModalClose');
+    await js('openCapabilityPanel()');
+    await click('[data-cap-tab="skills"]');
+    await until(() => js(`document.querySelector('[data-skill="${name}"]')?.getAttribute('aria-pressed') === 'false'`), 'disabled skill in catalog');
+    await click(`[data-skill="${name}"]`);
+    await until(async () => (await request('/capabilities')).skills.some(item => item.name === name && item.enabled), 'installed skill re-enabled');
+    await click('#capClose');
+    assert.equal((await mutations()).imports, 1, 'Re-enabling an installed skill must not overwrite its package');
+    assert.equal((await request('/skills/' + name + '/details')).checksum, details.checksum);
+    report.cases.push('A disabled identical skill stays installed without mutations and can be re-enabled from the Skills tab');
+    references += 'Compare the result against the original before returning it.\n';
+    fs.writeFileSync(path.join(source, 'references/rules.md'), references);
+    const replacementDelivery = path.join(root, 'replacement-delivery');
+    const replacement = require('../../skills/skill-studio/scripts/skill-package.cjs').build({
+      source, out: replacementDelivery, targets: 'soduwork' });
+    fs.copyFileSync(path.join(replacementDelivery, replacement.exports[0].file), packagePath);
+    await click('[data-install-plugin-draft]');
+    await expectInstallAction('替换并启用', false);
+    assert.equal((await mutations()).imports, 1, 'A same-name changed package must await replacement confirmation');
+    assert.equal((await request('/skills/' + name + '/details')).checksum, details.checksum);
+    fs.writeFileSync(path.join(out, 'replacement-skill.png'), (await win.webContents.capturePage()).toPNG());
+    await click('#capImportDo');
+    await until(async () => (await request('/skills/' + name + '/details')).checksum !== details.checksum, 'explicit same-name replacement');
+    await until(() => js('document.getElementById("capModalLayer").hidden'), 'replacement completion');
+    assert.equal((await mutations()).imports, 2);
+    await click('[data-install-plugin-draft]');
+    await expectInstallAction('已安装并启用', true);
+    assert.equal((await mutations()).imports, 2, 'Reopening the replacement must not repeat its installation');
+    await click('#capModalClose');
+    report.cases.push('A same-name different-checksum package requires Replace and Enable, then reopens as already installed');
     const prepared = await js(`soduWorkAPI.sendFixture({ text: 'Apply the supplied rules', skills: [${JSON.stringify(name)}] })`);
     assert.equal(prepared.pi && prepared.runner, true);
-    report.cases.push('Fresh account authorization and immutable synchronization prepare the unchanged SKILL.md and reference for Pi and Runner');
+    report.cases.push('Fresh account authorization and immutable synchronization prepare the current SKILL.md and replacement reference for Pi and Runner');
+    report.mutations = await mutations();
+    assert.deepEqual(report.mutations, { imports: 2, selections: 2 });
     report.ok = true;
   }).catch(async error => {
     report.error = error.stack;
