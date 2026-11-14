@@ -130,6 +130,8 @@
         if (nativeMode(state) && nativeView === 'effort' && pop.querySelector('.cp-effort-card')) paintNativeEffort(state);
         else renderThinking(state);
       }
+      if ((!selectedName || selectedModel?.unavailable) && !['codex', 'claude'].includes(state.adapterId) &&
+          !catalogLoads && catalogScope !== scope) void loadModels();
     }
     function nativeSelection(state) {
       return { modelName: state.selection?.name || state.selection?.model?.id || state.model?.id || '',
@@ -216,11 +218,12 @@
       await loadModels();
     });
     async function loadModels() {
-      if (lifecycle.signal.aborted) return;
+      if (lifecycle.signal.aborted) return false;
       catalogLoads++;
       const current = options.state(), scope = modelScope(), token = ++generation;
       const selectedAtStart = current.selection?.name || current.selection?.model?.id || current.model?.id || '';
       const valid = () => !lifecycle.signal.aborted && token === generation && scope === modelScope();
+      let managedChoiceBlocked = false;
       try {
         const adapter = current.adapterId || 'pi';
         const catalog = await global.soduWorkAPI.conversationSession.runtimes();
@@ -236,37 +239,66 @@
           rows = nativeModels.map(row => ({ name: row.id, label: row.label || row.id }));
         }
         else {
-          if (!Array.isArray(response?.usable)) throw new Error('Model catalog unavailable');
+          if (response?.ok === false || !Array.isArray(response?.usable)) throw new Error('Model catalog unavailable');
           const subtitle = row => [row.providerName, row.keyFrom === 'mine' ? '自己的额度' : ''].filter(Boolean).join(' · ');
-          const allowed = row => !current.cloudHandoff || (row.localOnly !== true && !String(row.name || '').startsWith('local:'));
-          rows = (response.usable || []).filter(allowed).map(row => ({ name: row.name, label: row.label || row.name, subtitle: subtitle(row) }));
+          const deviceLocal = row => row.localOnly === true || String(row.name || '').startsWith('local:');
+          const allowed = row => row && row.available !== false && row.unavailable !== true &&
+            !/^(?:unavailable:|local:unavailable$)/.test(String(row.name || '')) &&
+            (!current.cloudHandoff || !deviceLocal(row));
+          rows = (response.usable || []).filter(allowed)
+            .sort((a, b) => Number(deviceLocal(b)) - Number(deviceLocal(a)))
+            .map(row => ({ name: row.name, label: row.label || row.name, subtitle: subtitle(row) }));
           if (adapter === 'pi' && global.SoduWorkModelChoice) rows.push(...(response.mediaUsable?.image || []).filter(allowed).map(row => ({
             name: SoduWorkModelChoice.imageKey(row), label: '生成图片 · ' + (row.label || row.name), subtitle: subtitle(row),
           })));
           const latest = options.state(), selection = latest.selection || {}, selected = selection.name || selection.model?.id || latest.model?.id || '';
           const localReference = selected.startsWith('local:') ? selected : global.SoduWorkModelChoice?.imageChoice(selected)?.name;
-          const remainsAvailable = rows.some(row => row.name === selected || !selected.startsWith('local:') &&
+          const availableRow = rows.find(row => row.name === selected || !selected.startsWith('local:') &&
             localReference?.startsWith('local:') && global.SoduWorkModelChoice?.imageChoice(row.name)?.name === localReference);
-          if (!latest.cloudHandoff && selected === selectedAtStart && localReference?.startsWith('local:') && !remainsAvailable) {
-            // Preserve the exact reference; only an explicit user selection can replace it.
-            options.modelAvailabilityChanged?.({ ...selection, name: selected, model: {
-              ...(selection.model || latest.model || {}), id: localReference, localOnly: true,
-              unavailable: true, historicalLocal: true, label: '原本地模型已删除或不可用',
-            } });
+          if (selected !== selectedAtStart || selecting) { render(); return false; }
+          if (!availableRow && response.managedCatalogUnavailable === true && selected && !localReference?.startsWith('local:')) {
+            // A partial local directory cannot establish that a Hub choice was deleted.
+            managedChoiceBlocked = true;
+          } else if (!availableRow || (selection.model || latest.model)?.unavailable) {
+            if (!rows.length) {
+              options.modelAvailabilityChanged?.({ ...selection, name: selected, model: {
+                ...(selection.model || latest.model || {}), unavailable: true,
+                label: '暂无可用模型，请检查模型配置',
+              } });
+              catalogScope = scope; render(); return false;
+            }
+            // A successful directory read proves the old choice is absent.
+            // Switch through the normal IPC so runtime state and persistence
+            // match the displayed replacement; never infer deletion on errors.
+            const target = availableRow || rows[0];
+            const request = (async () => {
+              const result = latest.draftOnly
+                ? await options.draft.selectModel(target.name, target.label)
+                : await global.soduWorkAPI.conversationSession.selectModel(latest.ref, target.name);
+              if (lifecycle.signal.aborted || scope !== modelScope() || !result?.ok) return false;
+              const live = options.state(), liveName = live.selection?.name || live.selection?.model?.id || live.model?.id || '';
+              if (liveName !== selected && liveName !== target.name) return false;
+              options.modelSelected(result.selection);
+              if (result.thinking) options.thinkingChanged?.(result.thinking);
+              return true;
+            })();
+            modelRequest = request; selecting = true;
+            try { if (!await request) return false; }
+            finally { if (modelRequest === request) { modelRequest = null; selecting = false; } }
+            if (!valid()) { render(); return false; }
           }
         }
         catalogScope = scope;
-        // Catalog refreshes must never choose a replacement model.
         render();
-        if (pop.hidden) return;
+        if (pop.hidden) return !managedChoiceBlocked;
         if (nativeMode(options.state()) && nativeView === 'effort') {
           if (pop.querySelector('.cp-effort-card')) paintNativeEffort();
           else { renderNativeEffort(); pop.querySelector('[data-native-list]')?.focus({ preventScroll: true }); }
-          return;
+          return true;
         }
         if (!rows.length) {
           pop.querySelector('.nmodel-options').innerHTML = '<p class="nmodel-message">' +
-            (native ? (current.cloudHandoff ? '云端 Agent 暂未提供模型列表。' : '该 Agent 暂未提供可切换的模型。') : '暂无可用模型，请检查模型服务授权。') + '</p>'; return;
+            (native ? (current.cloudHandoff ? '云端 Agent 暂未提供模型列表。' : '该 Agent 暂未提供可切换的模型。') : '暂无可用模型，请检查模型服务授权。') + '</p>'; return native;
         }
         const listNode = pop.querySelector('.nmodel-options'), scroll = listNode?.scrollTop || 0;
         const focusedName = pop.contains(document.activeElement) ? document.activeElement?.dataset?.modelName : '';
@@ -274,9 +306,11 @@
         if (focusedName) Array.from(pop.querySelectorAll('[data-model-name]')).find(row => row.dataset.modelName === focusedName)?.focus({ preventScroll: true });
         if (listNode) listNode.scrollTop = scroll;
         renderThinking(options.state()); positionModels();
+        return !managedChoiceBlocked;
       } catch (_) {
         if (valid() && !pop.hidden && pop.querySelector('.nmodel-options')) pop.querySelector('.nmodel-options').innerHTML =
           '<p class="nmodel-message">模型列表暂不可用，请关闭后重试。</p>';
+        return false;
       } finally { catalogLoads--; }
     }
     const offModels = global.soduWorkAPI?.conversationSession?.onModelsChanged?.(() => { void loadModels(); });
@@ -449,9 +483,13 @@
     async function waitForAccess() {
       // Capture pending choices before other awaits can clear a failed result.
       const model = modelRequest, effort = effortRequest;
-      return (await (runtimePicker?.wait() || true)) && (await (sessionControls?.wait() || true)) &&
+      const ready = (await (runtimePicker?.wait() || true)) && (await (sessionControls?.wait() || true)) &&
         (await (model || true)) && (await (modelRequest || true)) && (await (effort || true)) && (await (effortRequest || true)) &&
         (await (options.draft?.ready() || true));
+      if (!ready || ['codex', 'claude'].includes(options.state().adapterId)) return ready;
+      // Recheck at send time: deletion may happen after the picker was opened.
+      const scope = modelScope();
+      return await loadModels() && scope === modelScope();
     }
     return { render, positionContext, waitForAccess, destroy() { offModels?.(); global.clearInterval?.(modelTimer); effortEpoch++; pendingEffort = null; options.draft?.destroy(); runtimePicker?.destroy(); sessionControls?.destroy(); close(); closeContext(); lifecycle.abort(); drag = null; }, isDragging: () => Boolean(drag), reset() { runtimePicker?.reset(); sessionControls?.reset(); close(); closeContext(); drag = null; render(); } };
   }

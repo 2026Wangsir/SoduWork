@@ -141,7 +141,7 @@ if (typeof electron === 'string') {
     assert.equal(await js(`calls.some(row=>['open','bind','send'].includes(row.kind))`),false);
     assert.match(await js(`document.querySelector('.fwd-directory-hint').textContent`), /独立的会话目录/);
     // Exercise the production assignment UI with API-compatible catalogs. The
-    // A new selection pins its sole model; users can still explicitly return to the default.
+    // An empty selection resolves to the first available model at this boundary.
     await js(`(async()=>{window.originalOptions=SoduWorkAPI.taskExecutionOptions;
       SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),
         models:[],modelOptions:[{name:'only-model',providerId:'fixture-provider',providerName:'Example provider'}],defaultModel:'only-model',defaultModels:{pi:'only-model'}});
@@ -152,11 +152,11 @@ if (typeof electron === 'string') {
     assert.equal(await js(`document.querySelector('#fwdModel option[value="only-model"]').textContent`),'only-model · Example provider');
     assert.equal(await js(`document.querySelector('#fwdModel').value`),'only-model');
     await js(`{const select=document.querySelector('#fwdModel');select.value='';select.dispatchEvent(new Event('change'));}void 0;`);
-    assert.equal(await js('_fwdModel'),'', 'an explicit return to the default is not replaced by automatic selection');
+    assert.equal(await js('_fwdModel'),'only-model', 'an empty selection resolves to the first available model');
     await js(`{const select=document.querySelector('#fwdModel');select.value='only-model';select.dispatchEvent(new Event('change'));}void 0;`);
     assert.equal(await js('_fwdModel'),'only-model');
     assert.equal(await js(`document.querySelector('#fwdConfirm').disabled`),false);
-    report.cases.push({name:'single-model catalog automatically selects its exact model and preserves an explicit return to the default',ok:true,
+    report.cases.push({name:'single-model catalog resolves both initial and cleared selections to the available model',ok:true,
       screenshot:await screenshot('03-explicit-default-model')});
     await js(`(async()=>{SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),models:['review-model'],
       modelOptions:[{name:'catalog-model'},{name:'review-model'}],defaultModel:'catalog-model',defaultModels:{pi:'review-model'}});
@@ -165,7 +165,7 @@ if (typeof electron === 'string') {
     assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').textContent`),'跟随底座默认');
     assert.equal(await js(`document.querySelector('#fwdModel option[value=""]').title`),'跟随底座默认 · review-model');
     assert.equal(await js(`document.querySelectorAll('#fwdModel option[value="catalog-model"]').length`),1);
-    assert.equal(await js(`document.querySelector('#fwdModel').value`),'');
+    assert.equal(await js(`document.querySelector('#fwdModel').value`),'catalog-model');
     report.cases.push({name:'Agent-specific default is named independently from the explicitly selectable catalog default',ok:true});
     await js(`(async()=>{SoduWorkAPI.taskExecutionOptions=originalOptions;RequirementAssignment.close();await RequirementAssignment.open(taskFixture.id);})()`);
     await waitDOM(`Boolean(document.querySelector('#fwdAgentSelect'))&&!document.querySelector('#fwdList .fwd-loading')`);
@@ -300,21 +300,28 @@ if (typeof electron === 'string') {
         await waitDOM(`!document.querySelector('#fwdConfirm')`);
       }
     }
-    for (const scenario of ['hub-only', 'local-only', 'local-no-default']) {
+    for (const scenario of ['hub-only', 'local-only', 'local-no-default', 'local-multiple']) {
       const taskId = 'isolated-single-model-' + scenario, local = scenario !== 'hub-only';
       const expected = local ? privateRef : 'managed-model';
       await js(`RequirementAssignment.close();ctx.reset();calls.length=0;
         taskFixture.id=${JSON.stringify(taskId)};taskFixture.note='Single model instruction';
         window.completed=new Promise(resolve=>window.resolveCompleted=resolve);
-        soduWorkAPI.localModels.get=async()=>({usable:${local ? '[{id:matrixLocal,name:matrixLocal,label:"Private model",localOnly:true,modality:"text"}]' : '[]'}});
+        soduWorkAPI.localModels.get=async()=>({usable:${local ? '[{id:matrixLocal,name:matrixLocal,label:"Private model",localOnly:true,modality:"text"}' + (scenario === 'local-multiple' ? ',{name:"local:model-fedcba9876543210fedcba9876543210",localOnly:true,modality:"chat"}' : '') + ']' : '[]'}});
         SoduWorkAPI.taskExecutionOptions=async()=>({...await originalOptions(),substrates:[],models:[],
-          modelOptions:${local ? '[]' : '[{name:"managed-model",providerId:"hub-provider",localOnly:false}]'},
+          modelOptions:${local && scenario !== 'local-multiple' ? '[]' : '[{name:"managed-model",providerId:"hub-provider",localOnly:false}]'},
           defaultModel:${JSON.stringify(scenario === 'local-only' ? '' : 'unavailable:default')},
           defaultModelErrors:{pi:'No Hub default is configured'}});
         RequirementAssignment.open(taskFixture.id);void 0;`);
       await waitDOM(`!_fwdLocalLoading&&document.querySelector('#fwdModel')?.value===${JSON.stringify(expected)}&&!document.querySelector('#fwdConfirm').disabled`);
       assert.equal(await js('_fwdModel'), expected, 'the sole usable model replaces an unresolved default only in a new selection');
       assert.equal(await js(`Boolean(document.querySelector('#fwdModel option[value="unavailable:default"]'))`), false);
+      if (scenario === 'local-multiple') {
+        await js(`_fwdModel='local:model-fedcba9876543210fedcba9876543210';_fwdModelExplicit=true;
+          _fwdOptions.modelOptions=_fwdOptions.modelOptions.filter(row=>row.name!==_fwdModel);
+          _fwdSyncConfirm(taskFixture.id);void 0;`);
+        assert.equal(await js('_fwdModel'), expected, 'a deleted explicit model resolves to the first remaining local model');
+        assert.equal(await js('document.querySelector("#fwdModel").value'), expected);
+      }
       await click('#fwdConfirm');
       const outcome = await js(`Promise.race([completed,new Promise((_,reject)=>setTimeout(()=>reject(Error('No singleton enqueue completion')),5000))])`);
       assert.equal(outcome.ok, true);

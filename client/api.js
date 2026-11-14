@@ -1480,11 +1480,16 @@
       if (!sameDomainScope(scope)) throw staleTaskScope();
       var localDefaults = options?.localDefaults === false ? null : await localAgentDefaults(scope);
       localCatalog = localCatalog || { providers: [], usable: [], myModels: [], mediaUsable: {} };
-      var r;
-      try { r = await domainRead('models', '/my-models'); }
+      var r, managedCatalogUnavailable = false;
+      try {
+        r = await domainRead('models', '/my-models');
+        if (r?.ok === false) throw new Error('Hub 模型目录暂时无法读取');
+        managedCatalogUnavailable = !Array.isArray(r?.usable);
+      }
       catch (error) {
         if (error?.code === 'STALE_TASK_SCOPE') throw error;
         if (!(localCatalog.providers || []).length) throw error;
+        managedCatalogUnavailable = true;
         r = { providers: [], usable: [], myModels: [], mediaUsable: {}, defaultModels: {} };
       }
       r = r || { providers: [], usable: [], myModels: [], mediaUsable: {} };
@@ -1501,6 +1506,9 @@
       }
       return {
         ...r,
+        // Keep offline local access without representing an unreadable Hub
+        // catalog as proof that a saved Hub model was deleted.
+        managedCatalogUnavailable,
         defaultModels, defaultModelErrors,
         providers: (localCatalog.providers || []).concat(managedProviders),
         usable: (localCatalog.usable || []).concat(managedModels(r.usable)),
@@ -1713,8 +1721,8 @@
       // local metadata so Agent management can advertise the current Runner's
       // real capability without sending credentials, endpoints, or references
       // to the Hub.
-      var localCatalog = null;
-      try { localCatalog = await localModelCatalog(); } catch (_) { localCatalog = null; }
+      // An unreadable secure store does not prove that a model was deleted.
+      var localCatalog = await localModelCatalog();
       currentRequest();
       var localDefaults = await localAgentDefaults(modelScope);
       currentRequest();
@@ -1756,9 +1764,24 @@
       if (!machine) return unavailable();
       machine = Object.assign({}, machine, { runnerId: selectedId, scope: 'current-instance', isCurrentDevice: true });
       var agents = Array.isArray(machine.agents) ? machine.agents : [];
+      var hubModels = Array.isArray(data.models) ? data.models : [];
+      var models = localRows.concat(hubModels);
+      var firstModel = models[0];
       agents = agents.map(function (agent) {
         var selected = localDefaults?.selections?.[agent.key];
-        if (!selected?.configured || agent.modelPick === false || ['codex', 'claude'].includes(agent.key)) return agent;
+        if (agent.modelPick === false || ['codex', 'claude'].includes(agent.key)) return agent;
+        var savedModel = selected?.configured ? selected.modelName : agent.model || '';
+        var missing = selected?.configured ? selected.unavailable : agent.modelGone ||
+          (savedModel && !models.some(row => row.name === savedModel));
+        // Use the first available model only when no valid preference remains.
+        // Resolve from the displayed local-first catalog without rewriting it.
+        var automatic = agent.modelPick === true && firstModel && (!savedModel || missing);
+        if (automatic && (firstModel.localOnly !== true ||
+            localDefaults && global.soduWorkAPI?.localAgentModels?.probe)) {
+          selected = { configured: true, modelName: firstModel.name, unavailable: false,
+            automatic: true, localOnly: firstModel.localOnly === true };
+        }
+        if (!selected?.configured) return agent;
         var modelStates = ['ready', 'ok', 'nollm', 'needmodel'];
         var states = [agent.setupState, agent.displayState, agent.state].filter(Boolean);
         var modelOnly = agent.installed !== false && agent.present !== false &&
@@ -1770,14 +1793,13 @@
         var readiness = modelOnly ? { state: state, setupState: state, displayState: state,
           ...(selected.unavailable ? { why: '原本地默认模型已删除或不可用，请重新选择' }
             : modelMissing ? { why: '' } : {}) } : {};
-        return { ...agent, model: selected.modelName, modelEffective: selected.modelName,
-          modelGone: selected.unavailable, localModelDefault: true,
-          configRevision: 'local:' + String(localCatalog?.revision ?? 'unavailable'),
+        return { ...agent, model: savedModel, modelEffective: selected.modelName,
+          ...(selected.automatic ? { modelAutomatic: true } : {}),
+          modelGone: selected.unavailable, localModelDefault: selected.localOnly !== false,
+          ...(selected.localOnly !== false ? { configRevision: 'local:' + String(localCatalog?.revision ?? 'unavailable') } : {}),
           ...readiness };
       });
       machine = { ...machine, agents };
-      var hubModels = Array.isArray(data.models) ? data.models : [];
-      var models = hubModels.concat(localRows);
       // Never reuse first-machine compatibility fields returned by an older Hub.
       var hubModelCount = typeof data.modelCount === 'number' ? data.modelCount : null;
       return { machines: [machine], agents: agents, env: machine.env || {}, execution: 'runner',
@@ -1805,25 +1827,39 @@
     /* Run a minimal real task using the same effective-key resolution as normal dispatch. */
     async agentProbe(key, model, runnerId) {
       var scope = domainScope(), defaults = !model || isLocalModelChoice(model) ? await localAgentDefaults(scope) : null;
+      var probeAgent = null;
       var preferred = !model && defaults?.selections?.[key];
-      if (isLocalModelChoice(model) || preferred?.configured) {
+      var inherited = !model && defaults && !['codex', 'claude'].includes(key);
+      if (isLocalModelChoice(model) || preferred?.configured || inherited) {
         if (!defaults) throw new Error('本地模型测试不可用，请更新客户端');
         var setup = await this.localAgentSetup();
         if (!sameDomainScope(scope)) throw staleTaskScope();
         var isCurrentRunner = runnerId && (setup.machines || []).some(row => row.runnerId === runnerId && row.isCurrentDevice === true);
+        var agent = isCurrentRunner && (setup.agents || []).find(agent => agent.key === key);
         if (isLocalModelChoice(model) && !isCurrentRunner) throw new Error('本地模型只能在当前设备测试');
-        if (isCurrentRunner) {
-          if (preferred?.unavailable) throw new Error('原本地默认模型已删除或不可用，请重新选择');
+        var inheritedModel = !model;
+        if (isCurrentRunner && inheritedModel) {
+          if (agent?.modelGone || preferred?.unavailable && !agent?.modelAutomatic) {
+            throw new Error('原本地默认模型已删除或不可用，请重新选择');
+          }
+          model = agent?.modelEffective || preferred?.modelName || '';
+          if (agent) {
+            // Bind test evidence to the freshly resolved model and runtime.
+            probeAgent = Object.fromEntries(['key', 'version', 'bin', 'model', 'modelEffective',
+              'modelGone', 'configRevision', 'runtimeRevision'].map(field => [field, agent[field]]));
+          }
+        }
+        if (isCurrentRunner && isLocalModelChoice(model)) {
           var tested = await global.soduWorkAPI.localAgentModels.probe({ agentId: key,
-            modelName: model || preferred.modelName, scopeKey: defaults.scopeKey,
-            ...(preferred ? { expectedRevision: defaults.revision } : {}) });
+            modelName: model, scopeKey: defaults.scopeKey,
+            ...(inheritedModel ? { expectedRevision: defaults.revision } : {}) });
           if (!sameDomainScope(scope)) throw staleTaskScope();
-          return tested;
+          return { ...tested, ...(probeAgent && tested.modelName === model ? { probeAgent } : {}) };
         }
       }
       var r = await jfetch('/agent-setup/probe', { method: 'POST', taskScope: taskStorageKey('ops'),
         body: JSON.stringify({ key: key, model: model || '', runnerId: runnerId || '' }) });
-      mark(true); return r;
+      mark(true); return { ...r, ...(probeAgent && !r?.fellBackFrom ? { probeAgent } : {}) };
     },
     async agentJob(jid) {
       var r = await jfetch('/agent-setup/job/' + encodeURIComponent(jid), { taskScope: taskStorageKey('ops') });

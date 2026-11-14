@@ -67,6 +67,27 @@ test('model and config reads use shared snapshots and successful writes invalida
   assert.deepEqual(reads, ['models', 'config']);
   assert.deepEqual(invalidated, ['models', 'models', 'models', 'config']);
 });
+
+test('offline local catalogs disclose unreadable Hub models without inventing their deletion', async () => {
+  const localName = 'local:model-' + 'a'.repeat(32);
+  for (const response of [
+    { ok: false, status: 503, online: true, body: { detail: 'Unavailable' } },
+    { ok: true, value: { ok: false, usable: [{ name: 'invalid-hub-model' }] } },
+    { ok: true, value: { providers: [] } },
+  ]) {
+    const f = await fixture({
+      clientDomainRead: async () => response,
+      localModels: { get: async () => ({ providers: [{ id: 'private' }],
+        usable: [{ name: localName, providerId: 'private', localOnly: true }] }) },
+    });
+    const result = await f.api.myModels();
+    assert.equal(result.managedCatalogUnavailable, true);
+    assert.deepEqual(Array.from(result.usable, row => row.name), [localName]);
+  }
+  const f = await fixture({ clientDomainRead: async () => ({ ok: true,
+    value: { providers: [], usable: [], myModels: [] } }) });
+  assert.equal((await f.api.myModels()).managedCatalogUnavailable, false);
+});
 test('message cache preserves conditional response shape and leaves pagination requests unchanged', async () => {
   const f = await fixture({clientDomainRead: async domain => {
     assert.equal(domain, 'team-messages-received');

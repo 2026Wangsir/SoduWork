@@ -53,7 +53,7 @@ const proposal = { title: '原始计划', note: '完整要求', acceptance: ['�
   retryLimit: 2, retryDelayMinutes: 5, enabled: true, requiredCapabilities: [] };
 const restored = extra => ({ version: 1, cardId: 'card-a', phase: 'draft', proposal, ...extra });
 
-test('a recovered automation catalog selects its sole model without replacing a previously explicit deleted choice', async () => {
+test('a recovered automation catalog replaces a deleted model with its first available model', async () => {
   const f = fixture(), name = 'local:model-0123456789abcdef0123456789abcdef';
   f.api.myModels = async () => { throw Error('Temporary secure catalog failure'); };
   await f.sheet.open({ proposal: { ...proposal, modelName: '' } });
@@ -64,7 +64,7 @@ test('a recovered automation catalog selects its sole model without replacing a 
   const removed = 'local:model-fedcba9876543210fedcba9876543210';
   f.probe.state.proposal.modelName = removed;
   await f.probe.refreshAgents({ disabled: false });
-  assert.equal(f.probe.state.proposal.modelName, removed);
+  assert.equal(f.probe.state.proposal.modelName, name);
 });
 
 test('an older automation catalog response cannot overwrite a newer refresh and its automatic single model', async () => {
@@ -116,7 +116,7 @@ test('automation option loading preserves managed and native model choices', asy
   assert.equal(loaded.modelOptions[0].name, 'local:model-0123456789abcdef0123456789abcdef');
   assert.equal(loaded.modelOptions[0].localOnly, true);
   assert.equal(loaded.modelOptions[1].name, 'configured-model');
-  assert.equal(loaded.defaultModel, 'configured-model');
+  assert.equal(loaded.defaultModel, 'local:model-0123456789abcdef0123456789abcdef');
   assert.equal(loaded.agents[0].modelPick, true);
   assert.equal(loaded.agents[0].nativeModelPick, false);
   assert.equal(loaded.agents[1].nativeModelPick, true);
@@ -158,7 +158,7 @@ for (const source of ['local', 'Hub']) test('new automation cards choose their o
   assert.equal(f.context.WorkAutomationCardState.defaultModelFor(catalogs, 'local:codex'), 'account-model');
 });
 
-test('automation cards use per-Agent local defaults without substituting a deleted preference', async () => {
+test('automation cards default to the first local model while explicit available choices remain selectable', async () => {
   const f = fixture(), first = 'local:model-0123456789abcdef0123456789abcdef', preferred = 'local:model-fedcba9876543210fedcba9876543210';
   f.api.taskExecutionOptions = async () => ({ substrates: [
     { key: 'local:qwen', cli: 'qwen', modelPick: true },
@@ -168,11 +168,11 @@ test('automation cards use per-Agent local defaults without substituting a delet
     defaultModels: { qwen: preferred }, defaultModelErrors: {} };
   f.api.myModels = async () => catalog;
   let loaded = await f.context.WorkAutomationCardState.loadOptions({});
-  assert.equal(loaded.defaultModel, preferred);
+  assert.equal(loaded.defaultModel, first);
   assert.equal(f.context.WorkAutomationCardState.defaultModelFor(loaded, 'runner:other:qwen'), 'managed-model');
   catalog.usable = [{ name: first, localOnly: true }]; catalog.defaultModelErrors.qwen = 'Deleted';
   loaded = await f.context.WorkAutomationCardState.loadOptions({});
-  assert.equal(loaded.defaultModel, preferred);
+  assert.equal(loaded.defaultModel, first);
 });
 
 test('automation cards preserve concrete local and remote Runner identities and query only local account catalogs', async () => {

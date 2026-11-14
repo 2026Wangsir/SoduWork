@@ -134,7 +134,7 @@
         requirementVersion: sourceRequirement.requirementVersion } } : {}),
     });
     const resolved = global.WorkAutomationBindings.resolve(parsed, fallback, next, context);
-    if (!resolved.modelName) resolved.modelName = global.WorkAutomationCardState.defaultModelFor(context, resolved.assigneeId);
+    resolved.modelName = global.WorkAutomationCardState.defaultModelFor(context, resolved.assigneeId, resolved.modelName);
     return resolved;
   }
 
@@ -213,7 +213,7 @@
     const context = { seed: s, agents: got[0]?.agents || [], repos: got[0]?.repos || [], methods: got[1] || [],
       modelOptions: got[0]?.modelOptions || [], defaultModel: got[0]?.defaultModel || '',
       hubDefaultModel: got[0]?.hubDefaultModel, defaultModels: got[0]?.defaultModels || {},
-      defaultModelErrors: got[0]?.defaultModelErrors || {} };
+      defaultModelErrors: got[0]?.defaultModelErrors || {}, modelCatalogError: got[0]?.modelCatalogError === true };
     if (visible()) Object.assign(state, context, { agentReason: got[0]?.reason || '' });
     ready = true;
     // Restoration refreshes candidates only; preserve the original date and manual settings without invoking the model again.
@@ -270,7 +270,10 @@
   function modelSource(agent) {
     const source = agent?.nativeModelPick ? agent.modelOptions : state.modelOptions;
     const rows = Array.isArray(source) ? source.slice() : [];
-    return localModelAgent(agent) ? rows : rows.filter(item => item?.localOnly !== true && !String(item?.name || '').startsWith('local:'));
+    return localModelAgent(agent) ? rows.sort((a, b) =>
+      Number(b?.localOnly === true || String(b?.name || '').startsWith('local:')) -
+      Number(a?.localOnly === true || String(a?.name || '').startsWith('local:')))
+      : rows.filter(item => item?.localOnly !== true && !String(item?.name || '').startsWith('local:'));
   }
 
   function canPickModel(agent) {
@@ -279,13 +282,12 @@
     // Some local Pi runtimes own their default model (modelPick=false) while
     // still exposing this desktop's encrypted local catalog as an explicit
     // override. Keep that local choice available without enabling it remotely.
-    return localModelAgent(agent) && modelSource(agent).some(item =>
-      item?.localOnly === true || String(item?.name || '').startsWith('local:'));
+    return localModelAgent(agent);
   }
 
   function modelEntries(current, agentId) {
     const agent = agentById(agentId);
-    const selected = String(current || '').trim();
+    const selected = global.WorkAutomationCardState.defaultModelFor(state, agentId, current);
     if (!canPickModel(agent)) {
       return [{ name: '', label: tx('由底座自身管理模型') }];
     }
@@ -303,7 +305,7 @@
   }
 
   function modelRows(current, agentId) {
-    const selected = String(current || '').trim();
+    const selected = global.WorkAutomationCardState.defaultModelFor(state, agentId, current);
     return modelEntries(current, agentId).map(item => '<option value="' + esc(item.name) + '"' +
       (item.name === selected ? ' selected' : '') + (item.stale || item.placeholder ? ' disabled' : '') + '>' +
       esc(item.label || item.name) + '</option>').join('');
@@ -326,7 +328,8 @@
     const select = form?.elements.modelName;
     const agent = form?.elements.assigneeId;
     if (!select || !agent) return;
-    const current = preferred !== undefined ? String(preferred || '').trim() : String(select.value || '').trim();
+    const current = global.WorkAutomationCardState.defaultModelFor(state, agent.value,
+      preferred !== undefined ? preferred : select.value);
     select.replaceChildren(...modelEntries(current, agent.value).map(item => {
       const option = document.createElement('option'); option.value = item.name;
       option.textContent = item.label || item.name; option.selected = item.name === current;
@@ -556,9 +559,13 @@
   }
 
   function bodyOf(value, catalogs = state) {
+    value = { ...value, modelName: global.WorkAutomationCardState.defaultModelFor(catalogs, value.assigneeId, value.modelName) };
     const bindingError = global.WorkAutomationBindings.validate(value, catalogs);
     if (bindingError) throw new Error(bindingError);
     const selectedAgent = (catalogs.agents || []).find(item => String(item.id) === String(value.assigneeId || ''));
+    if (catalogs.modelCatalogError && localModelAgent(selectedAgent)) {
+      throw new Error('本地模型配置暂时无法读取，请刷新后重试');
+    }
     const availableModels = selectedAgent?.nativeModelPick ? selectedAgent.modelOptions || [] : (catalogs.modelOptions || []).filter(item =>
       localModelAgent(selectedAgent) || item?.localOnly !== true && !String(item?.name || '').startsWith('local:'));
     if (value.modelName && !availableModels.some(item => String(item.name || item.id || '') === value.modelName)) {
@@ -708,6 +715,7 @@
   }
 
   function validate(value, catalogs = state) {
+    value = { ...value, modelName: global.WorkAutomationCardState.defaultModelFor(catalogs, value.assigneeId, value.modelName) };
     const bindingError = global.WorkAutomationBindings.validate(value, catalogs);
     if (bindingError) return bindingError;
     const timingError = global.ScheduleTiming.validate(value);
@@ -831,12 +839,11 @@
       state.hubDefaultModel = result.hubDefaultModel;
       state.defaultModels = result.defaultModels || {};
       state.defaultModelErrors = result.defaultModelErrors || {};
+      state.modelCatalogError = result.modelCatalogError === true;
       state.agentReason = result.reason;
       if (!state.proposal.assigneeId) state.proposal.assigneeId =
         (state.agents.find(item => item.available !== false) || state.agents[0] || {}).id || '';
-      if (!state.proposal.modelName || String(state.proposal.modelName).startsWith('unavailable:')) {
-        state.proposal.modelName = global.WorkAutomationCardState.defaultModelFor(state, state.proposal.assigneeId);
-      }
+      state.proposal.modelName = global.WorkAutomationCardState.defaultModelFor(state, state.proposal.assigneeId, state.proposal.modelName);
       render();
     } finally { button.disabled = false; }
   }
@@ -862,7 +869,9 @@
     }
     if (event.target.name === 'assigneeId' && event.type === 'change') {
       const value = valueFromForm();
-      const modelName = global.WorkAutomationCardState.defaultModelFor(state, value.assigneeId);
+      const target = agentById(value.assigneeId);
+      const modelName = global.WorkAutomationCardState.defaultModelFor(state, value.assigneeId,
+        target?.nativeModelPick || !canPickModel(target) ? '' : value.modelName);
       refreshModelField(modelName);
       state.proposal = { ...value, modelName };
     }

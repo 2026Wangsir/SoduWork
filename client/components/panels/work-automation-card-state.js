@@ -55,7 +55,8 @@
       reset() { epoch++; records.clear(); },
     };
   }
-  function defaultModelFor(catalogs, agentId) {
+  function defaultModelFor(catalogs, agentId, current) {
+    const selected = String(current || '').trim();
     const agent = (catalogs.agents || []).find(item => String(item.id) === String(agentId || ''));
     const runtime = String(agent?.cli || agent?.adapterId || agentId || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
     const local = agent && !['codex', 'claude'].includes(runtime) && agent.mode !== 'remote' && agent.locationMode !== 'remote';
@@ -65,15 +66,14 @@
       String(item?.name || item?.id || '').trim() && item?.available !== false && item?.unavailable !== true &&
       !/^(?:unavailable:|local:unavailable$)/.test(String(item?.name || item?.id || '')) &&
       (local || item?.localOnly !== true && !String(item?.name || '').startsWith('local:')));
-    if (options.length === 1) return String(options[0].name || options[0].id || '');
-    if (local && (Object.hasOwn(catalogs.defaultModels || {}, runtime) || catalogs.defaultModelErrors?.[runtime])) {
-      const selected = String(catalogs.defaultModels?.[runtime] || '').trim();
-      if (catalogs.defaultModelErrors?.[runtime]) return selected;
-      if (selected) return selected;
-    }
-    if (agent?.nativeModelPick || agent?.modelPick === false && !local) return '';
-    const preferred = String(catalogs.hubDefaultModel ?? catalogs.defaultModel ?? '').trim();
-    return preferred && options.some(item => item.name === preferred) ? preferred : String(options[0]?.name || '');
+    if (local && !agent?.nativeModelPick) options.sort((a, b) =>
+      Number(b.localOnly === true || String(b.name || b.id || '').startsWith('local:')) -
+      Number(a.localOnly === true || String(a.name || a.id || '').startsWith('local:')));
+    if (selected === 'local:unavailable') return selected;
+    if (agent?.nativeModelPick) return selected || (options.length === 1 ? String(options[0].name || options[0].id || '') : '');
+    if (local && catalogs.modelCatalogError) return selected;
+    return options.some(item => String(item.name || item.id || '') === selected) ? selected
+      : String(options[0]?.name || options[0]?.id || selected);
   }
   async function loadOptions(seed) {
     const A = global.SoduWorkAPI;
@@ -90,7 +90,7 @@
         const managedModelOptions = Array.isArray(result?.modelOptions) ? result.modelOptions.slice() :
           (Array.isArray(result?.models) ? result.models.map(name => ({ name, label: name })) : []);
         const localModelOptions = [];
-        let defaultModels = {}, defaultModelErrors = {};
+        let defaultModels = {}, defaultModelErrors = {}, modelCatalogError = false;
         if (typeof A.myModels === 'function') {
           try {
             const catalog = await A.myModels();
@@ -112,7 +112,7 @@
             // A scope change means the whole snapshot belongs to another
             // account/device. Do not silently fall back to the stale identity.
             if (error?.code === 'STALE_TASK_SCOPE') throw error;
-            /* A transient local catalog failure must not hide the managed Hub catalog. */
+            modelCatalogError = true;
           }
         }
         const modelOptions = localModelOptions.concat(managedModelOptions);
@@ -156,7 +156,7 @@
           modelOptions: nativeModels[item.key] || (Array.isArray(item.modelOptions) ? item.modelOptions.slice() : []),
         }));
         const loaded = { agents, repos: result?.repos || [], reason: String(result?.availability?.agentReason || ''),
-          modelOptions, defaultModels, defaultModelErrors, hubDefaultModel: String(result?.defaultModel || '') };
+          modelOptions, defaultModels, defaultModelErrors, modelCatalogError, hubDefaultModel: String(result?.defaultModel || '') };
         return { ...loaded, defaultModel: defaultModelFor(loaded, (agents.find(item => item.available !== false) || agents[0])?.id) };
       } catch (error) {
         current();

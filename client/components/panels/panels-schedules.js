@@ -20,6 +20,7 @@ let _schModelOptions = [];
 let _schLocalModelOptions = [];
 let _schDefaultModel = '';
 let _schAgentDefaultModels = {}, _schAgentDefaultErrors = {};
+let _schModelCatalogError = false;
 let _schNativeModelOptions = Object.create(null);
 let _schRepos = [];
 let _schTemplates = [];
@@ -666,7 +667,7 @@ function _wireSchForm() {
       assigneeClientId: _schAgents.find(item => String(item.id) === String(document.getElementById('schWho').value))?.clientId || '',
       modelName: mode === 'direct' && _schAgentAllowsModel(document.getElementById('schWho')?.value,
         document.getElementById('schModel')?.value)
-        ? (document.getElementById('schModel')?.value || '') : '',
+        ? _schResolveModelFor(document.getElementById('schWho')?.value, document.getElementById('schModel')?.value) : '',
       repoId: document.getElementById('schRepo').value,
       flow: false,
       /* Enterprise workflow bindings stay out of the ordinary-chat contract. A
@@ -695,6 +696,10 @@ function _wireSchForm() {
     if (!line || !SoduWorkAPI.preflightSchedule) return;
     clearTimeout(probeTimer);
     const seq = ++probeSeq;
+    if (_schModelCatalogError && _schLocalModelAgent(_schAgents.find(item => item.id === document.getElementById('schWho')?.value))) {
+      _schRenderPreflight(line, { state: 'blocked', message: '本地模型配置暂时无法读取，请刷新后重试' });
+      return;
+    }
     const timingError = _schTimingError(readBody());
     if (timingError) {
       _schRenderPreflight(line, {state:'blocked', message:timingError});
@@ -706,6 +711,9 @@ function _wireSchForm() {
     probeTimer = setTimeout(async () => {
       if (!isCurrent() || line !== document.getElementById('schReady')) return;
       try {
+        if (_schModelCatalogError && _schLocalModelAgent(_schAgents.find(item => item.id === document.getElementById('schWho')?.value))) {
+          throw new Error('本地模型配置暂时无法读取，请刷新后重试');
+        }
         const result = await SoduWorkAPI.preflightSchedule(readBody());
         if (!isCurrent() || seq !== probeSeq || line !== document.getElementById('schReady')) return;
         _schRenderPreflight(line, result);
@@ -865,16 +873,20 @@ function _wireSchForm() {
   });
   document.getElementById('schWho').addEventListener('change', async event => {
     if (event.catalogRefresh) { _schRefreshModelField(); scheduleProbe(); return; }
-    // A different substrate may have a different model namespace. Never carry
-    // the previous substrate's explicit model into the new selection.
-    _schRefreshModelField(_schDefaultModelFor(event.target.value));
+    // Managed substrates share model choices; account runtimes own a separate catalog.
+    const target = _schAgents.find(item => item.id === event.target.value);
+    _schRefreshModelField(target?.nativeModelPick || !_schAgentAllowsModel(event.target.value)
+      ? _schDefaultModelFor(event.target.value) : document.getElementById('schModel')?.value);
     const selected = document.getElementById('schWho').value;
     await _schLoadNativeModelOptions(_schAgents.filter(item => item.id === selected));
     if (!isCurrent() || document.getElementById('schWho').value !== selected) return;
     _schRefreshModelField();
     scheduleProbe();
   });
-  document.getElementById('schModel')?.addEventListener('change', scheduleProbe);
+  document.getElementById('schModel')?.addEventListener('change', event => {
+    event.currentTarget.dataset.modelTouched = 'true';
+    scheduleProbe();
+  });
   document.querySelectorAll('#schCaps input').forEach(input => input.addEventListener('change', () => {
     input.closest('label').classList.toggle('on', input.checked);
     scheduleProbe();
@@ -908,6 +920,9 @@ function _wireSchForm() {
     }
     if (!body.assigneeId) {
       if (typeof petSay === 'function') petSay('先选把活交给谁'); return;
+    }
+    if (_schModelCatalogError && _schLocalModelAgent(_schAgents.find(item => item.id === body.assigneeId))) {
+      if (typeof petSay === 'function') petSay('本地模型配置暂时无法读取，请刷新后重试'); return;
     }
     const modelOptions = typeof _schModelOptionsFor === 'function'
       ? _schModelOptionsFor(body.assigneeId) : _schModelOptions;

@@ -232,7 +232,7 @@ async function _schLoadExecutionAgents(context) {
         if (scope === _schScope) {
           _schModelOptions = _schNormalizeModelOptions(result);
           _schLocalModelOptions = [];
-          _schAgentDefaultModels = {}; _schAgentDefaultErrors = {};
+          _schAgentDefaultModels = {}; _schAgentDefaultErrors = {}; _schModelCatalogError = false;
           _schDefaultModel = String((result && result.defaultModel) ||
             (_schModelOptions[0] && _schModelOptions[0].name) || '').trim();
           if (typeof SoduWorkAPI.myModels === 'function') {
@@ -247,6 +247,7 @@ async function _schLoadExecutionAgents(context) {
             } catch (_) {
               if (scope !== _schScope) return [];
               _schLocalModelOptions = [];
+              _schModelCatalogError = true;
             }
           }
         }
@@ -262,7 +263,7 @@ async function _schLoadExecutionAgents(context) {
         if (scope !== _schScope) return [];
         _schModelOptions = []; _schDefaultModel = '';
         _schLocalModelOptions = [];
-        _schAgentDefaultModels = {}; _schAgentDefaultErrors = {};
+        _schAgentDefaultModels = {}; _schAgentDefaultErrors = {}; _schModelCatalogError = false;
         /* Fall back to legacy agent lists only when the unified-contract API fails. */
       }
     }
@@ -371,30 +372,26 @@ function _schAgentAllowsModel(agentId, currentModel) {
   const localOverride = _schLocalModelAgent(agent) && _schLocalModelOptions.length > 0;
   const savedLocal = _schLocalModelAgent(agent) &&
     (/^local:model-[a-f0-9]{32}$/.test(String(currentModel || '').trim()) || currentModel === 'local:unavailable');
-  return !agent || localOverride || savedLocal || agent.modelPick !== false || agent.nativeModelPick === true;
+  return !agent || _schLocalModelAgent(agent) || localOverride || savedLocal || agent.modelPick !== false || agent.nativeModelPick === true;
+}
+
+function _schResolveModelFor(agentId, current) {
+  const selected = String(current || '').trim();
+  const agent = _schAgents.find(item => String(item.id) === String(agentId || ''));
+  const options = _schModelOptionsFor(agentId);
+  if (selected === 'local:unavailable') return selected;
+  if (agent?.nativeModelPick) return selected || (options.length === 1 ? options[0].name : '');
+  if (!_schAgentAllowsModel(agentId, selected)) return '';
+  if (_schModelCatalogError && _schLocalModelAgent(agent)) return selected;
+  return options.some(item => item.name === selected) ? selected : String(options[0]?.name || selected);
 }
 
 function _schDefaultModelFor(agentId) {
-  const options = _schModelOptionsFor(agentId);
-  const agent = _schAgents.find(item => String(item.id) === String(agentId || ''));
-  if (agent?.modelPick === false && !agent.nativeModelPick && !_schLocalModelAgent(agent)) return '';
-  // A new draft has no historical selection to protect. Resolve a single
-  // usable choice explicitly even when the Agent has no configured default.
-  if (options.length === 1) return String(options[0].name || '');
-  const runtime = String(agent?.cli || agentId || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
-  if (_schLocalModelAgent(agent) && (Object.hasOwn(_schAgentDefaultModels, runtime) || _schAgentDefaultErrors[runtime])) {
-    const selected = String(_schAgentDefaultModels[runtime] || '').trim();
-    if (_schAgentDefaultErrors[runtime]) return selected;
-    if (selected) return selected;
-  }
-  const preferred = String(_schDefaultModel || '').trim();
-  return (preferred && options.some(item => item.name === preferred))
-    ? preferred : String((options[0] && options[0].name) || '').trim();
+  return _schResolveModelFor(agentId, '');
 }
 
 function _schModelFieldHtml(current, agentId) {
-  const selected = current === undefined || current === null
-    ? '' : String(current || '').trim();
+  const selected = _schResolveModelFor(agentId, current);
   if (!_schAgentAllowsModel(agentId, selected)) {
     return '<label class="sch-f-lbl" for="schModel">' + esc(_schEditorTx('模型')) +
       '</label><select class="sch-in" id="schModel" disabled>' +
@@ -416,9 +413,7 @@ function _schRefreshModelField(preferred) {
   let current = preferred !== undefined ? String(preferred || '').trim() :
     String(select.value || '').trim();
   const agent = document.getElementById('schWho');
-  if (!_schEditing?.id && (!current || current.startsWith('unavailable:'))) {
-    current = _schDefaultModelFor(agent?.value);
-  }
+  current = _schResolveModelFor(agent?.value, current);
   if (!_schAgentAllowsModel(agent && agent.value, current)) {
     const option = document.createElement('option'); option.value = '';
     option.textContent = _schEditorTx('由底座自身管理模型');
@@ -429,9 +424,8 @@ function _schRefreshModelField(preferred) {
   }
   const options = _schModelOptionsFor(agent && agent.value);
   select.innerHTML = _schModelOptionsHtml(current, options);
-  // Do not replace the explicit model with the substrate default. If the
-  // catalog is temporarily unavailable, retain the saved value so the user
-  // can still see and edit the automation instead of losing its selection.
+  // Keep an explicit available choice. Catalog read failures retain the draft
+  // and block saving rather than being interpreted as model deletion.
   select.disabled = !options.length && !current;
 }
 
@@ -510,6 +504,11 @@ async function _schPrepareEditor(value, source) {
     if (request !== _schEditorRequest || !document.getElementById('schPanel')?.classList.contains('show')) return false;
     // Capture edited fields before replacing catalog-dependent controls.
     const current = save?.scheduleDraft?.();
+    // A loading shell may show a partial directory. Only user changes or a
+    // saved draft may become explicit choices after the full catalog arrives.
+    if (current && document.getElementById('schModel')?.dataset.modelTouched !== 'true') {
+      current.modelName = String(draft.modelName || '');
+    }
     const focused = content?.contains(document.activeElement) ? document.activeElement.id : '';
     const selection = document.activeElement?.selectionStart;
     const selectionEnd = document.activeElement?.selectionEnd;
@@ -572,7 +571,7 @@ function _schResetScope() {
   _schRows = null; _schLoading = null; _schLoadError = '';
   _schAgents = []; _schAgentReason = ''; _schAgentLoading = null;
   _schModelOptions = []; _schLocalModelOptions = []; _schDefaultModel = '';
-  _schAgentDefaultModels = {}; _schAgentDefaultErrors = {};
+  _schAgentDefaultModels = {}; _schAgentDefaultErrors = {}; _schModelCatalogError = false;
   _schNativeModelOptions = Object.create(null);
   _schRepos = []; _schTemplates = [];
   _schPluginCache = Object.create(null); _schPluginLoading = Object.create(null);

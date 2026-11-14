@@ -63,7 +63,7 @@ function pluginSelection(spec, catalog) {
   return { pluginId: plugin.pluginId, version: plugin.version, checksum: plugin.checksum };
 }
 
-function createWorker({ identityOf, request, journal, conversation, catalog, localModelOf,
+function createWorker({ identityOf, request, journal, conversation, catalog, localModelOf, selectModel,
   instanceId = crypto.randomUUID(), onError = () => {}, now = Date.now }) {
   let ticking = false, stopped = false;
   let authBlockedUntil = 0, authBlockedIdentity = '', authNoticeSent = false;
@@ -174,7 +174,7 @@ function createWorker({ identityOf, request, journal, conversation, catalog, loc
       const localReference = requestedModel.startsWith('local:') ||
         String(imageChoice(requestedModel)?.name || '').startsWith('local:');
       if (modelSource === 'device') {
-        // A device-owned model has no usable Hub fallback. New Hubs always
+        // A device-owned model needs a verified local mapping. New Hubs always
         // return scheduleId in the claim receipt; an older protocol must stop
         // here instead of opening a managed-model conversation.
         if (!claimed.scheduleId) throw Error('当前 Hub 不支持本地模型自动化，请升级 Hub 后重试');
@@ -191,7 +191,13 @@ function createWorker({ identityOf, request, journal, conversation, catalog, loc
       if (modelSource === 'device' && !String(localModel || '').trim()) {
         throw Error('本地模型选择不可用，请在自动化设置中重新选择');
       }
-      const modelName = String(modelSource === 'device' || legacyLocal ? localModel : (requestedModel || '')).trim();
+      const selectedModel = String(modelSource === 'device' || legacyLocal ? localModel : (requestedModel || '')).trim();
+      const modelName = typeof selectModel === 'function'
+        ? await selectModel(identity, input.adapterId, selectedModel) : selectedModel;
+      const modelIdentity = await identityOf();
+      if (stopped || !modelIdentity || identityKey(modelIdentity) !== identityKey(identity)) {
+        throw Error('客户端停止或连接环境已切换，本次会话未创建');
+      }
       const options = {
         ...(record && record.conversationId ? { chatId: record.conversationId } : {}),
         ...(input.conversationTitle ? { sessionTitle: String(input.conversationTitle).trim().slice(0, 240) } : {}),
@@ -333,6 +339,10 @@ function install({ app, ipcMain, identityOf, conversation, platformConnections }
       request: require('./pi-session/task-input').request,
       journal: diskJournal(path.join(app.getPath('userData'), 'automation-conversations')),
       conversation, catalog: spec => require('./jiyong-scheduled-plugins.cjs').catalog(app,identityOf,spec),
+      selectModel: require('./automation-model-selection.cjs').createSelector({
+        localCatalog: () => require('./local-model-store.cjs').get(),
+        request: require('./pi-session/task-input').request,
+      }),
       localModelOf: async (identity, scheduleId, modelSource) => {
         if (!scheduleId) return '';
         const result = localAutomationModels.get({ hub: identity.hub, clientId: identity.clientId,

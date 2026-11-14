@@ -221,6 +221,61 @@ class ConversationProtocolTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, '未在当前企业开放'):
                 await schedule_execution.validate_execution(self.session, self.schedule)
 
+    async def test_owner_desktop_run_defers_a_removed_model_to_the_private_catalog(self):
+        self.schedule.model_name = 'removed-model'
+        with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
+                patch('app.services.model_catalog.choices', new=AsyncMock(return_value={'list': []})):
+            result = await schedules.run_one(self.session, self.schedule, schedule_run_id='run')
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['executionMode'], chats.PROTOCOL)
+        self.assertEqual(self.run.receipt['conversationInput']['modelName'], 'removed-model')
+        self.assertEqual(self.schedule.model_name, 'removed-model')
+
+    async def test_owner_desktop_run_keeps_catalog_failure_closed(self):
+        self.schedule.model_name = 'selected-model'
+        with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
+                patch('app.services.model_catalog.choices', new=AsyncMock(side_effect=RuntimeError('offline'))):
+            result = await schedules.run_one(self.session, self.schedule, schedule_run_id='run')
+        self.assertFalse(result['ok'])
+        self.assertIn('目录暂时无法读取', result['error'])
+        self.assertNotIn('conversationInput', self.run.receipt)
+
+    async def test_run_time_missing_model_deferral_is_limited_to_owner_managed_desktop(self):
+        self.schedule.model_name = 'removed-model'
+        with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
+                patch('app.services.model_catalog.choices', new=AsyncMock(return_value={'list': []})):
+            for runtime, spec in AGENTS.items():
+                if spec.get('modelMode') != 'managed':
+                    continue
+                for target in ('local:' + runtime, 'runner:desktop:' + runtime):
+                    with self.subTest(target=target):
+                        self.schedule.assignee_id = target
+                        with patch('app.services.runner_hub.get', return_value=SimpleNamespace(client_id=self.client.id)):
+                            await schedule_execution.validate_execution(
+                                self.session, self.schedule, allow_missing_model=True)
+                self.schedule.assignee_id = 'runner:remote:' + runtime
+                for runner in (None, SimpleNamespace(client_id='other-device'), SimpleNamespace(client_id='')):
+                    with self.subTest(runtime=runtime, runner=runner), \
+                            patch('app.services.runner_hub.get', return_value=runner):
+                        with self.assertRaisesRegex(ValueError, '未在当前企业开放'):
+                            await schedule_execution.validate_execution(
+                                self.session, self.schedule, allow_missing_model=True)
+
+    async def test_account_runtimes_and_private_names_never_use_missing_model_deferral(self):
+        with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \
+                patch('app.services.agent_route_selection.model_readiness', return_value={
+                    'ok': False, 'detail': 'native selection invalid'}):
+            for runtime in ('codex', 'claude'):
+                self.schedule.assignee_id = 'local:' + runtime
+                self.schedule.model_name = 'native-model'
+                with self.subTest(runtime=runtime), self.assertRaisesRegex(ValueError, 'native selection invalid'):
+                    await schedule_execution.validate_execution(
+                        self.session, self.schedule, allow_missing_model=True)
+            self.schedule.assignee_id = 'local:pi'
+            self.schedule.model_name = 'local:model-' + 'a' * 32
+            with self.assertRaisesRegex(ValueError, '设备模型来源标记'):
+                await schedule_execution.validate_execution(self.session, self.schedule, allow_missing_model=True)
+
     async def test_save_validation_accepts_explicit_model_for_selected_agent(self):
         self.schedule.model_name = 'selected-model'
         with patch('app.services.ai_exec.load', new=AsyncMock(return_value={})), \

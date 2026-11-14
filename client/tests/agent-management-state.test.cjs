@@ -68,6 +68,45 @@ test('local discovery uses its dedicated API and preserves the actual Runner dia
   assert.match(f.body.innerHTML, /Local Runner reconnecting/);
 });
 
+test('Agent probes resolve current defaults instead of pinning a stale displayed model', async () => {
+  for (const automatic of [false, true]) {
+    const f = fixture(), calls = [];
+    f.context._agRender = () => {};
+    f.context.local = machine([{ ...base, modelPick: true, localModelDefault: true,
+      modelAutomatic: automatic, model: 'deleted-model', modelEffective: 'deleted-model' }]);
+    f.run('_agData={machines:[local]}');
+    f.context.SoduWorkAPI.agentProbe = async (...args) => {
+      calls.push(args);
+      return { ok: true, localOnly: true, probeKind: 'agent-execution' };
+    };
+    await f.context._agRun('computer~opencode', 'probe');
+    assert.deepEqual(calls, [['opencode', '', 'computer']]);
+  }
+});
+
+test('a changed probe selection refreshes the catalog and never certifies another current model', async () => {
+  for (const next of ['tested-model', 'newer-model']) {
+    const f = fixture();
+    f.context._agRender = () => {};
+    const before = { ...base, modelEffective: 'deleted-model' };
+    const tested = { ...base, modelEffective: 'tested-model', configRevision: 'local:2' };
+    f.context.local = machine([before]);
+    f.run('_agData={machines:[local]}');
+    f.context.SoduWorkAPI.agentProbe = async () => ({ ok: true, localOnly: true,
+      probeKind: 'agent-execution', probeAgent: tested, modelName: 'tested-model' });
+    let refreshes = 0;
+    f.context._agLoad = async () => {
+      refreshes++;
+      f.context.current = { ...tested, modelEffective: next };
+      f.run('_agData={machines:[{...local,agents:[current]}]}');
+    };
+    await f.context._agRun('computer~opencode', 'probe');
+    assert.equal(refreshes, 1);
+    assert.equal(f.context._agState(f.context.current, 'computer~opencode'), next === 'tested-model' ? 'ok' : 'ready');
+    assert.equal(f.context._agState(before, 'computer~opencode'), 'ready');
+  }
+});
+
 test('Pi cannot be uninstalled when old runners omit bundled metadata or its payload is broken', async () => {
   const f = fixture(); let calls = 0;
   f.context.SoduWorkAPI.agentInstall = async () => { calls++; return { jobId: 'unexpected' }; };

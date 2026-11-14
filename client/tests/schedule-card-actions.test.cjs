@@ -158,7 +158,7 @@ test('automation editor persists an explicit model alongside the selected Agent'
   assert.match(editor, /modelOptions|_schModelOptionsHtml/);
   assert.match(editor, /schModel/);
 });
-test('changing the execution base replaces the previous model with its own default before repainting options', () => {
+test('changing managed bases retains available explicit models while deleted models use the first replacement', () => {
   const c = context(); vm.runInContext(editor, c);
   let value = 'pi-model', markup = '';
   const select = { disabled: false, get value() { return value; }, set value(next) { value = next; },
@@ -174,21 +174,23 @@ test('changing the execution base replaces the previous model with its own defau
     _schAgentDefaultModels={pi:'pi-model',qwen:'qwen-model'};_schEditing='new';`, c);
   c._schRefreshModelField(); assert.equal(select.value, 'pi-model');
   who.value = 'local:qwen';
-  c._schRefreshModelField(c._schDefaultModelFor(who.value));
-  assert.equal(select.value, 'qwen-model', 'an explicit substrate change resolves that substrate default');
+  c._schRefreshModelField();
+  assert.equal(select.value, 'pi-model', 'a managed substrate change preserves an available explicit model');
   select.value = 'manual-model'; c._schRefreshModelField();
   assert.equal(select.value, 'manual-model', 'a catalog repaint cannot replace a user-selected model');
   for (const removed of ['local:model-0123456789abcdef0123456789abcdef', 'local:unavailable']) {
     c.removed = removed;
     vm.runInContext(`_schEditing={id:'saved',modelName:removed};_schModelOptions=[{name:'qwen-model'}];`, c);
     select.value = removed; c._schRefreshModelField();
-    assert.equal(select.value, removed, 'a saved unavailable selection cannot inherit the only replacement');
-    assert.ok(select.innerHTML.includes('value="' + removed + '" selected disabled'));
+    const expected = removed === 'local:unavailable' ? removed : 'qwen-model';
+    assert.equal(select.value, expected, 'only an unresolved ownership sentinel requires explicit recovery');
+    assert.ok(select.innerHTML.includes('value="' + expected + '" selected'));
+    if (removed === 'local:unavailable') assert.ok(select.innerHTML.includes(' selected disabled'));
   }
   vm.runInContext(`_schEditing='new';_schAgentDefaultModels={};_schAgentDefaultErrors={qwen:'No default'};`, c);
   select.value = ''; c._schRefreshModelField();
   assert.equal(select.value, 'qwen-model', 'a new empty draft selects its sole usable model');
-  assert.match(source, /_schRefreshModelField\(_schDefaultModelFor\(event\.target\.value\)\)/);
+  assert.match(source, /target\?\.nativeModelPick[\s\S]{0,200}document\.getElementById\('schModel'\)\?\.value/);
 });
 test('starting a run waits for and opens its ordinary conversation id', async () => {
   const c={globalThis:null,_schScope:0,_schRunRows:{},closeSchedulePanel(){c.closed=true;},setTimeout:fn=>{fn();return 0;},WorkspaceHost:{open:(...args)=>{c.opened=args;return true;}},SoduWorkAPI:{listScheduleRuns:async()=>[{id:'run-1',conversationId:'chat-1',conversationTitle:'自动化 · Work · 2026-10-26 10:20'}]}};

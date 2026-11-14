@@ -103,7 +103,7 @@ test('device-local models stay available to every local managed runtime and neve
   assert.equal(f.picker.value().modelName, 'managed-model');
   f.location('local'); f.agent('qwen'); const other = f.picker.refresh(); f.requests[2].resolve(catalog); await other;
   assert.match(f.nodes.cpModelPop.innerHTML, /local:private:model/);
-  assert.equal(f.picker.value().modelName, 'managed-model');
+  assert.equal(f.picker.value().modelName, 'local:private:model');
 });
 
 test('a new local-only composer selects its sole model when the default is unavailable', async () => {
@@ -117,7 +117,25 @@ test('a new local-only composer selects its sole model when the default is unava
   assert.equal(await f.picker.ready(), true);
 });
 
-test('deleting a local Agent default cannot select another local model or block the independent cloud default', async () => {
+test('missing draft choices select the first local model regardless of Agent defaults and preserve valid manual choices', async () => {
+  const f = fixture(); f.start();
+  const usable = [{ name: 'hub-first' }, { name: 'local:first', localOnly: true }, { name: 'local:second', localOnly: true }];
+  f.requests[0].resolve({ usable, defaultModels: { pi: 'gone' }, defaultModelErrors: { pi: 'Gone' } });
+  assert.equal(await f.picker.ready(), true);
+  assert.equal(f.picker.value().modelName, 'local:first');
+  f.choose('hub-first');
+  const kept = f.picker.refresh(true); f.requests[1].resolve({ usable }); await kept;
+  assert.equal(f.picker.value().modelName, 'hub-first');
+  const failed = f.picker.refresh(true); f.requests[2].reject(Error('Secure storage unavailable')); await failed;
+  assert.equal(f.picker.value().modelName, 'hub-first');
+  const removed = f.picker.refresh(true); f.requests[3].resolve({ usable: usable.slice(1) }); await removed;
+  assert.equal(f.picker.value().modelName, 'local:first');
+  const reset = f.picker.resetNewDraft();
+  f.requests[4].resolve({ usable, defaultModels: { pi: 'local:second' } }); await reset;
+  assert.equal(f.picker.value().modelName, 'local:first');
+});
+
+test('deleting a local Agent default selects an available replacement while cloud choices stay independent', async () => {
   const f = fixture(); f.start();
   f.requests[0].resolve({ usable: [{ name: 'local:default', localOnly: true }, { name: 'local:other', localOnly: true }],
     defaultModels: { pi: 'local:default' } });
@@ -128,8 +146,7 @@ test('deleting a local Agent default cannot select another local model or block 
   const refresh = f.picker.refresh(true);
   f.requests[1].resolve({ usable: [{ name: 'local:other', localOnly: true }], defaultModels: { pi: 'local:default' },
     defaultModelErrors: { pi: '原本地默认模型已删除或不可用' } }); await refresh;
-  assert.equal(f.picker.value().modelName, 'local:default'); assert.equal(await f.picker.ready(), false);
-  assert.match(f.picker.label(), /已删除或不可用/);
+  assert.equal(f.picker.value().modelName, 'local:other'); assert.equal(await f.picker.ready(), true);
   f.location('cloud'); const cloud = f.picker.refresh();
   assert.equal(f.requests[2].options.localDefaults, false);
   f.requests[2].resolve({ usable: [{ name: 'hub-model' }], defaultModels: { pi: 'hub-model' } }); await cloud;
@@ -137,8 +154,32 @@ test('deleting a local Agent default cannot select another local model or block 
   f.location('local'); const local = f.picker.refresh();
   f.requests[3].resolve({ usable: [{ name: 'local:other', localOnly: true }], defaultModels: { pi: 'local:default' },
     defaultModelErrors: { pi: '原本地默认模型已删除或不可用' } }); await local;
-  assert.equal(await f.picker.ready(), false);
+  assert.equal(await f.picker.ready(), true);
   f.choose('local:other'); assert.equal(await f.picker.ready(), true);
+});
+
+test('a partial or rejected directory cannot replace a selected Hub model but permits explicit local choices', async () => {
+  const f = fixture(); f.start(); f.reply(0, 'hub-selected'); await f.picker.ready();
+  const partial = { usable: [{ name: 'local:first', localOnly: true }], managedCatalogUnavailable: true };
+  let refresh = f.picker.refresh(true); f.requests[1].resolve(partial); await refresh;
+  assert.equal(f.picker.value().modelName, 'hub-selected');
+  assert.equal(await f.picker.ready(), false);
+  assert.equal(f.nodes.cpModelName.textContent, 'hub-selected');
+  refresh = f.picker.refresh(true); f.requests[2].resolve({ ok: false, usable: partial.usable }); await refresh;
+  assert.equal(f.picker.value().modelName, 'hub-selected');
+  f.choose('local:first'); assert.equal(await f.picker.ready(), true);
+  refresh = f.picker.resetNewDraft(); f.requests[3].resolve(partial); await refresh;
+  assert.equal(f.picker.value().modelName, 'local:first'); assert.equal(await f.picker.ready(), true);
+});
+
+test('a first managed directory failure cannot release Send with an empty implicit model', async () => {
+  for (const malformed of [false, true]) {
+    const f = fixture(); f.start(); const ready = f.picker.ready();
+    if (malformed) f.requests[0].resolve({ ok: false, usable: [{ name: 'untrusted' }] });
+    else f.requests[0].reject(Error('Secure storage unavailable'));
+    assert.equal(await ready, false);
+    assert.equal(f.picker.value().modelName, '');
+  }
 });
 
 for (const source of ['local', 'Hub']) test('a fresh composer chooses its sole ' + source + ' model instead of an inherited deleted default', async () => {
@@ -151,8 +192,8 @@ for (const source of ['local', 'Hub']) test('a fresh composer chooses its sole '
   f.choose(name);
   const refresh = f.picker.refresh(true);
   f.requests[1].resolve({ usable: [{ name: 'replacement', label: 'Replacement model' }], defaultModels: { pi: 'replacement' } }); await refresh;
-  assert.equal(f.picker.value().modelName, name, 'an explicit choice is protected after deletion, even with one replacement');
-  assert.equal(await f.picker.ready(), false);
+  assert.equal(f.picker.value().modelName, 'replacement', 'a deleted explicit choice selects an available replacement');
+  assert.equal(await f.picker.ready(), true);
 });
 
 test('an inherited default can recover to a sole model after a failed initial catalog without replacing a manual draft choice', async () => {
@@ -165,13 +206,13 @@ test('an inherited default can recover to a sole model after a failed initial ca
   assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'only-hub');
 });
 
-test('an explicit new conversation resets the old manual selection while ordinary redraws preserve its deleted placeholder', async () => {
+test('ordinary refresh replaces a deleted draft choice and a new conversation resets draft state', async () => {
   const f = fixture(); f.start(); f.reply(0, 'local:old'); await f.picker.ready(); f.choose('local:old');
   const removed = f.picker.refresh(true);
   f.requests[1].resolve({ usable: [{ name: 'sole-new', label: 'Sole new model' }] }); await removed;
-  assert.equal(await f.picker.ready(), false); assert.equal(f.picker.value().modelName, 'local:old');
+  assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'sole-new');
   await f.picker.refresh();
-  assert.equal(await f.picker.ready(), false); assert.equal(f.picker.value().modelName, 'local:old');
+  assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'sole-new');
   const created = f.picker.resetNewDraft(); f.reply(2, 'sole-new'); await created;
   assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'sole-new');
 });

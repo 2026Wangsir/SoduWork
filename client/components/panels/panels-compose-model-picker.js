@@ -10,9 +10,8 @@
   });
   const states = new Map();
   let enterpriseModels = [];
-  let enterpriseDefaults = {};
-  let enterpriseDefault = '';
   let enterpriseDefaultErrors = {};
+  let managedCatalogUnavailable = false;
   let loadPromise = null;
   let loadChanged, signalLoadChange;
   let imageModels = [];
@@ -82,6 +81,7 @@
   }
 
   function currentLabel(row, selected) {
+    if (selected.catalogUnavailable) return selected.modelName;
     if (selected.unavailable) return tx(deviceLocal({ name: selected.modelName }) ||
       global.SoduWorkModelChoice?.imageChoice(selected.modelName)?.name.startsWith('local:')
       ? '原本地模型已删除或不可用，请重新选择' : '原模型已不可用，请重新选择');
@@ -101,39 +101,29 @@
   function clearStaleManagedSelection(row) {
     if (row.modelMode !== 'managed') return;
     const selected = state(row.id);
+    selected.catalogUnavailable = false;
     const chatMatch = enterpriseModels.some((item) => item.name === selected.modelName);
     const imageMatch = !cloud() && row.id === 'pi' && imageModels.some((item) =>
       global.SoduWorkModelChoice && SoduWorkModelChoice.imageKey(item) === selected.modelName);
     if (!chatMatch && !imageMatch) {
+      const localSelection = deviceLocal({ name: selected.modelName }) ||
+        global.SoduWorkModelChoice?.imageChoice(selected.modelName)?.name.startsWith('local:');
+      // A local-only fallback directory cannot prove a Hub model was deleted.
+      if (managedCatalogUnavailable && selected.modelName && !localSelection) {
+        selected.catalogUnavailable = true;
+        return;
+      }
       const available = enterpriseModels.map(item => item.name);
       if (!cloud() && row.id === 'pi' && global.SoduWorkModelChoice) {
         available.push(...imageModels.map(item => SoduWorkModelChoice.imageKey(item)));
       }
-      // This picker belongs to the new-conversation form. A catalog default
-      // is not a manual choice, including a failed default from an older load.
-      if (!selected.modelChosen && available.length === 1) {
-        selected.modelName = available[0]; selected.unavailable = false; selected.thinkingLevel = '';
-        return;
-      }
-      // A model can be removed from personal model settings while this renderer remains active.
-      // Do not keep sending that stale name as an explicit per-turn override.
-      const defaultName = Object.hasOwn(enterpriseDefaults, row.id)
-        ? enterpriseDefaults[row.id] : enterpriseDefault;
-      const localSelection = deviceLocal({ name: selected.modelName }) ||
-        global.SoduWorkModelChoice?.imageChoice(selected.modelName)?.name.startsWith('local:');
-      if (selected.modelChosen || selected.unavailable || localSelection || enterpriseDefaultErrors[row.id] ||
-          deviceLocal({ name: defaultName }) && !enterpriseModels.some(item => item.name === defaultName)) {
-        selected.unavailable = true;
-        if (!localSelection && !selected.modelChosen) selected.modelName = '';
-        selected.thinkingLevel = '';
-        return;
-      }
-      // Prefer a device-owned model when the selected runtime has no usable
-      // Hub default. The reference remains local to this desktop process.
-      selected.modelName = enterpriseModels.find(item => item.name === defaultName)?.name ||
-        enterpriseModels.find(deviceLocal)?.name || '';
+      // New and removed choices use the first available row, with
+      // device-owned models first. Valid current choices stay unchanged.
+      const next = available[0];
+      selected.unavailable = !next;
+      if (next) { selected.modelName = next; selected.modelChosen = false; }
       selected.thinkingLevel = '';
-    }
+    } else selected.unavailable = false;
   }
 
   function check() {
@@ -397,17 +387,15 @@
         const response = global.SoduWorkAPI && SoduWorkAPI.myModels
           ? await SoduWorkAPI.myModels({ localDefaults: !cloud() }) : null;
         if (!current()) return;
-        if (!response || !Array.isArray(response.usable)) throw Error('模型目录暂时不可用');
+        if (!response || response.ok === false || !Array.isArray(response.usable)) throw Error('模型目录暂时不可用');
         // Device-owned connections can be paired with any local managed
         // runtime. Cloud execution must never receive their private references.
         const usable = model => model && model.available !== false && model.unavailable !== true &&
           !/^(?:unavailable:|local:unavailable$)/.test(String(model.name || ''));
-        enterpriseModels = response.usable.filter(model => usable(model) && (!deviceLocal(model) || !cloud()));
-        enterpriseDefaults = response?.defaultModels || {};
+        enterpriseModels = response.usable.filter(model => usable(model) && (!deviceLocal(model) || !cloud()))
+          .sort((a, b) => Number(deviceLocal(b)) - Number(deviceLocal(a)));
         enterpriseDefaultErrors = response?.defaultModelErrors || {};
-        // Older Hubs do not expose per-Agent defaults. Keep their runtime
-        // resolution intact instead of assuming the first row is correct.
-        enterpriseDefault = response?.defaultModel || '';
+        managedCatalogUnavailable = response.managedCatalogUnavailable === true;
         imageModels = Array.isArray(response?.mediaUsable?.image)
           ? response.mediaUsable.image.filter(model => usable(model) && (!deviceLocal(model) || !cloud())) : [];
         clearStaleManagedSelection(row);
@@ -632,8 +620,8 @@
       if (activeOwner && activeOwner !== context.owner) states.clear();
       activeOwner = context.owner;
       activeScope = context.key;
-      enterpriseModels = []; enterpriseDefaults = {}; enterpriseDefault = '';
-      enterpriseDefaultErrors = {}; imageModels = []; enterpriseLoaded = false;
+      enterpriseModels = [];
+      enterpriseDefaultErrors = {}; managedCatalogUnavailable = false; imageModels = []; enterpriseLoaded = false;
       nativeModels = []; nativeReason = ''; nativeLoaded = '';
       nativeView = 'effort';
       close();
@@ -667,8 +655,9 @@
       await Promise.race([pending, loadChanged]);
       if (activeScope !== loadContext().key) refresh();
     } while (pending !== loadPromise);
+    if (runtime().modelMode === 'managed' && !enterpriseLoaded) return false;
     const selected = state(runtime().id);
-    return !selected.unavailable && Boolean(selected.modelName || !enterpriseDefaultErrors[runtime().id]);
+    return !selected.unavailable && !selected.catalogUnavailable && Boolean(selected.modelName || !enterpriseDefaultErrors[runtime().id]);
   }
 
   function value() {

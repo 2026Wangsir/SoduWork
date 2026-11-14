@@ -33,7 +33,8 @@ for (const source of ['local', 'Hub']) test('new automation selects its only ' +
   await run(ctx, '_schLoadExecutionAgents({})');
   assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), name, 'a new draft may choose the sole model despite a deleted Agent default');
   const saved = run(ctx, `_schModelFieldHtml(${JSON.stringify(removed)}, "local:qwen")`);
-  assert.match(saved, new RegExp('value="' + removed + '" selected disabled'));
+  assert.match(saved, new RegExp('value="' + name + '" selected'));
+  assert.doesNotMatch(saved, new RegExp('value="' + removed + '"'));
 });
 
 test('a failed default catalog load remains unselected and a successful refresh selects the only local model', async () => {
@@ -52,7 +53,7 @@ test('a failed default catalog load remains unselected and a successful refresh 
   assert.match(run(ctx, '_schAgentFieldHtml("local:qwen")'), /value="local:unavailable" selected disabled/);
 });
 
-test('automation defaults honor each local Agent preference and retain deleted selections', async () => {
+test('automation defaults use local-first candidates and preserve only valid explicit form selections', async () => {
   const first = 'local:model-0123456789abcdef0123456789abcdef', preferred = 'local:model-fedcba9876543210fedcba9876543210';
   const catalog = { usable: [{ name: first, localOnly: true }, { name: preferred, localOnly: true }],
     defaultModels: { pi: preferred }, defaultModelErrors: {} };
@@ -60,15 +61,15 @@ test('automation defaults honor each local Agent preference and retain deleted s
     ...modern.substrates, { key: 'runner:other:pi', cli: 'pi', locationMode: 'remote', modelPick: true },
   ] }), myModels: async () => catalog });
   await run(ctx, '_schLoadExecutionAgents({})');
-  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), preferred);
+  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), first);
   assert.equal(run(ctx, '_schDefaultModelFor("runner:other:pi")'), modern.defaultModel);
   catalog.usable = [{ name: first, localOnly: true }]; catalog.defaultModelErrors.pi = 'Deleted';
   await run(ctx, '_schLoadExecutionAgents({})');
-  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), preferred);
-  assert.match(run(ctx, '_schModelFieldHtml(_schDefaultModelFor("local:pi"), "local:pi")'), new RegExp('value="' + preferred + '" selected disabled'));
+  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), first);
+  assert.match(run(ctx, '_schModelFieldHtml("' + preferred + '", "local:pi")'), new RegExp('value="' + first + '" selected'));
 });
 
-test('changing automation substrates uses the selected default without inheriting the previous substrate choice', async () => {
+test('changing automation substrates starts from the first usable model and leaves native account defaults alone', async () => {
   const pi = 'local:model-0123456789abcdef0123456789abcdef', qwen = 'local:model-fedcba9876543210fedcba9876543210';
   const ctx = context({ taskExecutionOptions: async () => ({ ...modern, substrates: [
     ...modern.substrates, { key: 'local:qwen', cli: 'qwen', available: true, modelPick: true },
@@ -76,7 +77,8 @@ test('changing automation substrates uses the selected default without inheritin
     defaultModels: { pi, qwen }, defaultModelErrors: {} }) });
   await run(ctx, '_schLoadExecutionAgents({})');
   assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), pi);
-  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), qwen);
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), pi);
+  assert.equal(run(ctx, '_schResolveModelFor("local:qwen", "' + qwen + '")'), qwen);
   assert.equal(run(ctx, '_schDefaultModelFor("local:codex")'), '');
 });
 
@@ -249,7 +251,7 @@ test('local Pi keeps its local model picker when the runtime owns the default mo
   assert.doesNotMatch(field, /<select[^>]+disabled/);
 });
 
-test('an older local model selection remains visible and savable while its catalog is unavailable', async () => {
+test('a deleted local automation model falls back to the first Hub model when the catalog was read successfully', async () => {
   const localName = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
   const ctx = context({ taskExecutionOptions: async () => ({
     substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: false }],
@@ -258,7 +260,8 @@ test('an older local model selection remains visible and savable while its catal
   await run(ctx, '_schLoadExecutionAgents({})');
   assert.equal(run(ctx, '_schAgentAllowsModel("local:pi", "' + localName + '")'), true);
   const field = run(ctx, '_schModelFieldHtml("' + localName + '", "local:pi")');
-  assert.match(field, new RegExp(localName + '.*已保存，当前不可用'));
+  assert.match(field, /value="managed-model" selected/);
+  assert.doesNotMatch(field, new RegExp(localName));
   assert.doesNotMatch(field, /<select[^>]+disabled/);
 });
 
@@ -325,7 +328,7 @@ test('automation model selector translates labels generated after the editor ope
   await run(ctx, '_schLoadExecutionAgents({})');
 
   const enabled = run(ctx, '_schModelFieldHtml("", "local:pi")');
-  assert.match(enabled, /Choose a model/);
+  assert.match(enabled, /value="soduwork-prd-large" selected/);
   assert.match(enabled, /The model is saved independently from the runtime/);
   assert.doesNotMatch(enabled, /请选择模型|模型与执行底座独立保存/);
 

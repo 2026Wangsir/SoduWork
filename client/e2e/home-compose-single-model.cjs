@@ -88,22 +88,43 @@ app.whenReady().then(async () => {
   await click('#cpModelBtn'); await until('!!document.querySelector(' + JSON.stringify('[data-model="' + local + '"]') + ')');
   await click('[data-model="' + local + '"]');
   await js(`homeCatalog=${JSON.stringify(catalog('sole-replacement', '唯一替代模型'))};ComposeModelPicker.refresh(true);`);
-  assert.equal(await js('ComposeModelPicker.ready()'), false);
-  assert.equal(await js('ComposeModelPicker.value().modelName'), local);
-  assert.match(await js('document.querySelector("#cpModelName").textContent'), /已删除或不可用/);
+  assert.equal(await js('ComposeModelPicker.ready()'), true);
+  assert.equal(await js('ComposeModelPicker.value().modelName'), 'sole-replacement');
+  assert.equal(await js('document.querySelector("#cpModelName").textContent'), '唯一替代模型');
   await js('openComposePanel({});void 0;');
-  assert.equal(await js('ComposeModelPicker.ready()'), false, 'ordinary redraw cannot reset a manual deleted choice');
+  assert.equal(await js('ComposeModelPicker.ready()'), true);
   await shot('same-draft-explicit-model-deleted');
   const before = await js('homeSends.length');
-  await click('#cpInput'); await win.webContents.debugger.sendCommand('Input.insertText', { text: 'Keep this unsent draft.' });
-  await click('#cpGo'); await delay(100);
-  assert.equal(await js('homeSends.length'), before);
-  assert.match(await js('document.querySelector("#cpInput").value'), /Keep this unsent draft/);
-  mark('Deleting a model manually selected in this draft preserves its invalid placeholder and prevents first send');
+  await click('#cpInput'); await win.webContents.debugger.sendCommand('Input.insertText', { text: 'Send using the available replacement.' });
+  await click('#cpGo'); await until('homeSends.length===' + (before + 1));
+  assert.equal(await js('homeSends.at(-1)[2].modelName'), 'sole-replacement');
+  mark('Deleting a manually selected model replaces it in the same draft and first send uses the displayed replacement');
   assert.equal(await fresh(catalog('sole-replacement', '唯一替代模型')), true);
   assert.equal(await js('ComposeModelPicker.value().modelName'), 'sole-replacement');
   await shot('new-conversation-after-deleted-draft');
   mark('An explicit new-conversation action clears only the prior draft choice and selects the sole current model');
+
+  const multiple = { usable: [{ name: 'hub-first', label: 'Hub 可用模型' },
+    { name: local, label: '本机优先模型', localOnly: true },
+    { name: 'local:second', label: '本机第二模型', localOnly: true }], defaultModels: { pi: 'hub-first' } };
+  assert.equal(await fresh(multiple), true);
+  assert.equal(await js('ComposeModelPicker.value().modelName'), local);
+  assert.equal(await js('document.querySelector("#cpModelName").textContent'), '本机优先模型');
+  await click('#cpModelBtn');
+  assert.deepEqual(await js('Array.from(document.querySelectorAll("[data-model]")).map(node=>node.dataset.model)'), [local, 'local:second', 'hub-first']);
+  await shot('home-multiple-models-local-first');
+  await click('[data-model="hub-first"]');
+  await js('ComposeModelPicker.refresh(true)');
+  assert.equal(await js('ComposeModelPicker.value().modelName'), 'hub-first', 'A valid manual choice stays selected');
+  await js('window.completeHomeCatalog=structuredClone(homeCatalog);homeCatalog={usable:homeCatalog.usable.filter(row=>row.localOnly),managedCatalogUnavailable:true};ComposeModelPicker.refresh(true)');
+  assert.equal(await js('ComposeModelPicker.ready()'), false);
+  assert.equal(await js('ComposeModelPicker.value().modelName'), 'hub-first', 'A partial directory is not proof of Hub model deletion');
+  await js('homeCatalog=completeHomeCatalog;ComposeModelPicker.refresh(true)');
+  assert.equal(await js('ComposeModelPicker.ready()'), true);
+  await js('homeCatalog.usable=homeCatalog.usable.filter(row=>row.name!=="hub-first");ComposeModelPicker.refresh(true)');
+  assert.equal(await js('ComposeModelPicker.value().modelName'), local);
+  assert.equal(await js('document.querySelector("#cpModelName").textContent'), '本机优先模型');
+  mark('Multiple models choose local first; valid choices and Hub choices in partial catalogs are preserved; confirmed deletion selects a replacement');
 
   for (const id of ['codex', 'claude']) {
     assert.equal(await fresh(catalog(local, 'Private model', true), id), true);

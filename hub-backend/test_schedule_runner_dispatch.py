@@ -450,8 +450,17 @@ class ScheduleRunnerDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("fixture-key", json.dumps(envelope))
         self.assertNotIn("https://model.invalid", json.dumps(envelope))
 
-    async def test_unavailable_explicit_model_fails_with_durable_receipt(self):
+    async def test_unavailable_explicit_model_waits_for_owner_desktop_resolution(self):
         self.schedule.assignee_id, self.schedule.model_name = "local:pi", "removed-model"
+        await self.session.commit()
+        run, envelope = await self.run_schedule()
+        self.assertEqual(envelope["modelName"], "removed-model")
+        self.assertEqual(self.schedule.model_name, "removed-model")
+        self.assertEqual(run.error, "")
+
+    async def test_unavailable_remote_model_still_fails_with_durable_receipt(self):
+        await self.cloud_target()
+        self.schedule.assignee_id, self.schedule.model_name = "runner:cloud:pi", "removed-model"
         await self.session.commit()
         with self.assertRaises(HTTPException) as caught:
             await personal_schedules.run_my_schedule("schedule", body={}, client=self.client, session=self.session)
@@ -473,11 +482,11 @@ class ScheduleRunnerDispatchTests(unittest.IsolatedAsyncioTestCase):
             models.ModelDef(id="company:disabled-model", provider_id="company",
                             name="disabled-model", enabled=False)])
         await self.session.commit()
-        with self.assertRaises(HTTPException):
-            await personal_schedules.run_my_schedule("schedule", body={}, client=self.client, session=self.session)
-        run = await self.session.scalar(select(models.AiScheduleRun))
-        self.assertEqual(run.state, "failed")
+        run, envelope = await self.run_schedule()
+        self.assertEqual(envelope["modelName"], "disabled-model")
+        self.assertEqual(self.schedule.model_name, "disabled-model")
         self.assertNotIn("disabled-fixture-key", json.dumps(run.receipt))
+        self.assertNotIn("https://disabled-model.invalid", json.dumps(run.receipt))
         self.assertEqual(self.calls, [])
 
     async def test_empty_schedule_model_follows_runtime_default_not_saved_composer_model(self):

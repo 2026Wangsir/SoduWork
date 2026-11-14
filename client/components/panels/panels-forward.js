@@ -27,8 +27,14 @@ async function _dispatchAITo(tid, who, name) {
   const selectedAgent = _fwdSubstrateOf(who.id);
   const canPickModel = typeof _fwdCanPickModel === 'function'
     ? _fwdCanPickModel(selectedAgent) : Boolean(selectedAgent && selectedAgent.modelPick !== false);
-  const model = !canPickModel ? '' :
-    String(((document.getElementById('fwdModel') || {}).value) || _fwdModel || '');
+  const modelState = typeof _fwdDirectModelState === 'function'
+    ? _fwdDirectModelState(selectedAgent, String(document.getElementById('fwdModel')?.value || _fwdModel || ''))
+    : { value: canPickModel ? String(document.getElementById('fwdModel')?.value || _fwdModel || '') : '' };
+  if (modelState.stale) {
+    _fwdSetStatus(modelState.catalogError ? '本地模型配置暂时无法读取，请刷新后重试' : '原模型已不可用，请重新选择', true);
+    return;
+  }
+  const model = modelState.value;
   _fwdSetBusy(true, '正在建立会话…');
   _fwdSetStatus('正在等待执行端接单…');
   try {

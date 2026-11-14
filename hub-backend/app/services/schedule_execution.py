@@ -126,15 +126,39 @@ async def validate_direct_execution(session: AsyncSession, s):
         session, required_skill_names(capabilities), client)
 
 
-async def validate_selected_model(session: AsyncSession, s) -> None:
+def _owner_desktop_model_selection(s, client) -> bool:
+    """Only the original desktop may resolve a missing choice from private models."""
+    from ..agent_catalog import AGENTS
+    from . import runner_hub, schedule_access
+    if not schedule_access.is_owner(s, client):
+        return False
+    aid = str(getattr(s, "assignee_id", "") or "").strip()
+    if aid.startswith("local:"):
+        runtime = aid.split(":", 1)[1]
+    elif aid.startswith("runner:"):
+        parts = aid.split(":", 2)
+        if len(parts) != 3:
+            return False
+        runner = runner_hub.get(parts[1])
+        if runner is None or str(getattr(runner, "client_id", "") or "") != str(client.id):
+            return False
+        runtime = parts[2]
+    else:
+        return False
+    return AGENTS.get(runtime, {}).get("modelMode") == "managed"
+
+
+async def validate_selected_model(session: AsyncSession, s, *, allow_missing_model: bool = False) -> None:
     """Reject a saved model that the selected Agent cannot actually use.
 
     The editor performs the same check during preflight, but save and immediate
     run are also public API boundaries.  Keeping this validation here prevents
     older clients (or direct API callers) from persisting a gateway model that is
     unavailable for the selected Agent and only discovering it after dispatch.
-    An empty managed value follows the Agent default. Device-owned selections
-    retain only their source marker; the desktop resolves their private model.
+    An empty managed value is resolved by the execution endpoint. At run time,
+    the owning desktop can also replace a confirmed missing managed selection.
+    Device-owned selections retain only their source marker; the desktop
+    resolves their private model after verifying the local mapping's ownership.
     """
     device_error = device_model_target_error(s)
     if device_error:
@@ -157,6 +181,13 @@ async def validate_selected_model(session: AsyncSession, s) -> None:
         "local:" + aid.rsplit(":", 1)[-1] if aid.startswith("runner:") else aid)
     state = await _schedule_model_readiness(session, client, ctx, model_kind, model_name)
     if not state.get("ok"):
+        # Saving remains strict. At execution time, the authenticated owner
+        # desktop can select its first usable private/Hub model without sending
+        # that private selection back to the Hub. Catalog outages, native
+        # account models and other execution devices cannot take this path.
+        if (allow_missing_model and state.get("code") == "MODEL_NOT_IN_CATALOG"
+                and _owner_desktop_model_selection(s, client)):
+            return
         raise ValueError(str(state.get("detail") or "所选模型不可用")[:240])
 
 
@@ -187,7 +218,7 @@ async def _schedule_model_readiness(session, client, ctx: dict,
     allowed.update(str(item or "").strip() for item in choices.get("list") or [])
     allowed.discard("")
     if model_name not in allowed:
-        return {"ok": False, "model": model_name,
+        return {"ok": False, "model": model_name, "code": "MODEL_NOT_IN_CATALOG",
                 "detail": f"模型「{model_name}」未在当前企业开放的模型清单中"}
     return {"ok": True, "model": model_name, "detail": f"模型「{model_name}」可用"}
 
@@ -371,7 +402,7 @@ async def _preflight_execution(session: AsyncSession, s,
 
 
 async def validate_execution(session: AsyncSession, s,
-                             org_ids: set[str] | None = None):
+                             org_ids: set[str] | None = None, *, allow_missing_model: bool = False):
     """Validate the selected immutable automation binding at save and run time."""
     normalize_conversation_schedule(s)
     validate_timing(s)
@@ -390,11 +421,11 @@ async def validate_execution(session: AsyncSession, s,
         if not str(getattr(s, "assignee_id", "") or ""):
             raise ValueError("个人插件自动化还需要选择执行 Agent")
         s.plugin_inputs = clean_plugin_inputs(getattr(s, "plugin_inputs", {}) or {})
-        await validate_selected_model(session, s)
+        await validate_selected_model(session, s, allow_missing_model=allow_missing_model)
         await validate_direct_execution(session, s)
         return None
     if not binding_id:
-        await validate_selected_model(session, s)
+        await validate_selected_model(session, s, allow_missing_model=allow_missing_model)
         await validate_direct_execution(session, s)
         return None
     if str(getattr(s, "model_name", "") or "").strip():

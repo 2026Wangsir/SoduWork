@@ -160,6 +160,12 @@ if (typeof electron === 'string') {
     assert.ok(report.options.some(row => row.label === 's1'));
     assert.equal(await js('schWho.value'), 'runner:' + currentDevice + ':pi');
     mark('Opening a concrete current-device Runner lists the shared Hub and encrypted device catalogs');
+    assert.equal(await js('schModel.value'), ref, 'new managed forms choose the first local model');
+    await js('schModel.value="managed-model";schModel.dispatchEvent(new Event("change",{bubbles:true}));void 0;');
+    await chooseAgent('qwen');
+    assert.equal(await js('schModel.value'), 'managed-model', 'changing managed substrates preserves an available explicit model');
+    await chooseAgent('pi');
+    mark('Managed substrate changes preserve an explicit available model independently of Agent defaults');
     for (const cli of managedAgents) {
       if (cli !== 'pi') await newEditor();
       const assignee = await chooseAgent(cli);
@@ -212,13 +218,11 @@ if (typeof electron === 'string') {
     const old = await js('SoduWorkAPI.listSchedules().then(items=>items[0])');
     await js(`_schPrepareEditor(${JSON.stringify(old)})`);
     await until('!_schEditorPending && !!document.querySelector("#schModel")');
-    assert.equal(await js('schModel.value'), ref, 'a removed local selection must not become a managed model');
-    assert.match(await js('schModel.selectedOptions[0].textContent'), /不可用/);
-    const requestCount = requests.length;
-    await js('schSave.click();void 0;'); await new Promise(resolve => setTimeout(resolve, 150));
-    assert.equal(requests.length, requestCount, 'saving a removed local selection must stop before Hub preflight');
-    assert.match(await js('window.notice'), /主动选择/);
-    mark('Deleting a local model keeps the historical automation selection visibly unavailable and blocks save until an explicit choice');
+    assert.equal(await js('schModel.value'), managedModel.name, 'a deleted model falls back to the first available Hub model');
+    const replaced = await saveEditor(true);
+    assert.equal(replaced.body.modelName, managedModel.name);
+    assert.equal(replaced.body.modelSource, 'managed');
+    mark('Deleting a model selects the first usable replacement and saves the displayed effective model');
     for (const scenario of ['hub-only', 'local-only', 'local-no-default']) {
       catalogScenario = scenario;
       if (scenario !== 'hub-only') ref = store.save({ models: [
@@ -236,6 +240,22 @@ if (typeof electron === 'string') {
       assert.equal(saved.body.modelSource, scenario === 'hub-only' ? 'managed' : 'device');
       mark(scenario + ' new automation automatically pins its sole usable model and saves without a default sentinel');
     }
+    const originalGet = store.get;
+    store.get = () => { throw new Error('Synthetic secure store read failure'); };
+    try {
+      catalogScenario = 'mixed'; options.modelOptions = [managedModel]; options.defaultModel = managedModel.name;
+      await newEditor();
+      assert.equal(await js('_schModelCatalogError'), true);
+      assert.equal(await js('schModel.value'), '', 'unreadable local catalogs cannot select a Hub fallback');
+      await js('schTitle.value="Unreadable catalog fixture";schNote.value="Synthetic test";void 0;');
+      const beforeFailure = requests.filter(row=>row.method==='POST'||row.method==='PUT').length;
+      await js('schSave.click();void 0;');
+      await new Promise(resolve=>setTimeout(resolve,550));
+      assert.equal(requests.filter(row=>row.method==='POST'||row.method==='PUT').length,beforeFailure,
+        'neither preflight nor save may treat unreadable secure storage as model deletion');
+      assert.match(await js('window.notice'), /配置暂时无法读取/);
+      mark('Secure storage read failures block local preflight and save instead of selecting a Hub model');
+    } finally { store.get = originalGet; }
     const encrypted = fs.readFileSync(path.join(profile, 'automation-models.secure.json'), 'utf8');
     assert.equal(typeof JSON.parse(encrypted).cipher, 'string'); assert.equal(encrypted.includes(ref), false);
     assert.equal(JSON.stringify(requests).includes(ref), false); assert.equal(JSON.stringify(requests).includes(privateModelName), false);

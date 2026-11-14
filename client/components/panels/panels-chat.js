@@ -512,7 +512,7 @@
       const send = root.querySelector('#nchatSend');
       if (send) {
         send.disabled = true;
-        send.title = '原本地模型已删除或不可用，请主动选择可用模型后继续发送';
+        send.title = '暂无可用模型，请检查模型配置后重试';
         send.setAttribute('aria-label', send.title);
       }
     }

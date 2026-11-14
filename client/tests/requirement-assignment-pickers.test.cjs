@@ -197,33 +197,33 @@ test('new requirement execution explicitly selects the sole usable model and exc
     assert.equal(h.button.disabled, false);
     h.run('_fwdModel = "local:model-fedcba9876543210fedcba9876543210"');
     h.ctx._fwdSyncConfirm('task');
-    assert.equal(h.button.disabled, true, 'an explicit deleted choice cannot inherit the only replacement');
-    assert.equal(h.run('_fwdModel'), 'local:model-fedcba9876543210fedcba9876543210');
+    assert.equal(h.button.disabled, false, 'a deleted choice resolves to the first available replacement');
+    assert.equal(h.run('_fwdModel'), name);
   }
 });
 
-test('direct model removal stays explicit and blocks confirmation until a valid model or default is chosen', async () => {
-  for (const models of [['replacement-model'], []]) {
-    for (const recovery of ['', ...models]) {
-      const h = directModelFixture();
-      assert.equal(h.nodes.get('fwdModel').value, 'chosen-model');
-      h.update({...h.options, models});
-      h.ctx._fwdSyncConfirm('task');
-      const select = h.nodes.get('fwdModel');
-      assert.equal(select.value, '__unselected__');
-      assert.equal(select.options[0].disabled, true);
-      assert.match(select.options[0].text, /原模型已不可用，请重新选择/);
-      assert.equal(h.run('_fwdModel'), 'chosen-model');
-      assert.equal(h.button.disabled, true);
-      await h.ctx._fwdConfirm('task');
-      assert.equal(h.dispatches.length, 0, 'programmatic confirmation also rejects the stale selection');
-      h.nodes.get('fwdModel').change(recovery);
-      assert.equal(h.run('_fwdModel'), recovery);
-      assert.equal(h.button.disabled, false);
-      await h.ctx._fwdConfirm('task');
-      assert.equal(h.dispatches.length, 1);
-    }
-  }
+test('direct model removal resolves its replacement before both display and confirmation', async () => {
+  const h = directModelFixture();
+  h.update({...h.options, models: ['replacement-model', 'another-model']});
+  h.ctx._fwdSyncConfirm('task');
+  assert.equal(h.nodes.get('fwdModel').value, 'replacement-model');
+  assert.equal(h.run('_fwdModel'), 'replacement-model');
+  assert.equal(h.button.disabled, false);
+  h.run("_fwdModel='deleted-after-display'");
+  await h.ctx._fwdConfirm('task');
+  assert.equal(h.run('_fwdModel'), 'replacement-model');
+  assert.equal(h.dispatches.length, 1);
+  h.nodes.get('fwdModel').change('another-model');
+  assert.equal(h.run('_fwdModel'), 'another-model');
+  await h.ctx._fwdConfirm('task');
+  assert.equal(h.dispatches.length, 2);
+  const empty = directModelFixture();
+  empty.update({...empty.options, models: []});
+  empty.ctx._fwdSyncConfirm('task');
+  assert.equal(empty.button.disabled, true);
+  assert.equal(empty.run('_fwdModel'), 'chosen-model');
+  await empty.ctx._fwdConfirm('task');
+  assert.equal(empty.dispatches.length, 0);
 });
 
 test('model controls rebuilt while dispatch is busy stay disabled and ignore changes', () => {
@@ -306,7 +306,7 @@ test('local model catalog is optional, source-labeled and kept beside Hub choice
   assert.deepEqual(rows.map(row => [row.name, row.source, row.localOnly]),
     [['local:model-abc', 'local', true]]);
   h.ctx._fwdMergeLocalModelChoices(rows);
-  assert.deepEqual(h.ctx.options.modelOptions.map(row => row.name), ['hub-model', 'local:model-abc']);
+  assert.deepEqual(h.ctx.options.modelOptions.map(row => row.name), ['local:model-abc', 'hub-model']);
   h.run("_fwdLocalAgents = [{key:'local:pi', name:'Pi', executionSource:'conversation', modelPick:true}]");
   h.ctx.options.substrates = [agent('local:pi', {name: 'Hub Pi', remote: false})];
   const merged = h.ctx._fwdDirectAgents()[0];

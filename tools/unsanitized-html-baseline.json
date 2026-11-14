@@ -94,6 +94,7 @@
   "client/components/pet/pet-dock.js": 2,
   "client/components/reports/work-briefs.js": 4,
   "client/components/requirements/requirement-assignment.js": 1,
+  "client/components/requirements/requirement-dispatch-instructions.js": 1,
   "client/components/requirements/requirement-fields.js": 1,
   "client/components/requirements/requirement-session-choice.js": 3,
   "client/components/requirements/requirements-board.js": 11,

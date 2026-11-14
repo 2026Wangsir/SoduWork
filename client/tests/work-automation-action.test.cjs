@@ -66,7 +66,7 @@ test('automation sheet translates model selector text on initial render and refr
   context.window = context;
   context.SoduWorkI18n = { translateText: value => translations[value] || value };
   const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
-  vm.runInNewContext(automation.replace(marker,
+  vm.runInNewContext(cardState + '\n' + automation.replace(marker,
     '  global.probe = { state, modelRows, modelField, refreshModelField };\n' + marker), context);
   const { state, modelRows, modelField, refreshModelField } = context.probe;
   state.agents = [
@@ -76,17 +76,21 @@ test('automation sheet translates model selector text on initial render and refr
   state.modelOptions = [{ name: 'gpt-5', label: 'gpt-5' }];
 
   const initial = modelField('', 'local:pi');
-  assert.match(initial, /Choose a model/);
+  assert.match(initial, /value="gpt-5" selected/);
   assert.match(initial, /The model is saved independently and each run uses this choice/);
   assert.doesNotMatch(initial, /请选择模型|模型与执行底座独立保存/);
+  assert.match(modelRows('missing-model', 'local:pi'), /value="gpt-5" selected/);
+  state.modelOptions = [];
   assert.match(modelRows('missing-model', 'local:pi'), /missing-model \(saved; currently unavailable\)/);
+  state.modelOptions = [{ name: 'gpt-5', label: 'gpt-5' }];
 
   const select = { value: '', options: [], disabled: false, replaceChildren(...options) { this.options = options; } };
   const form = { elements: { modelName: select, assigneeId: { value: 'local:pi' } } };
   state.layer = { querySelector(selector) { return selector === '#wazForm' ? form : null; } };
   refreshModelField();
-  assert.equal(select.options[0].textContent, 'Choose a model');
-  assert.equal(select.options[0].disabled, true);
+  assert.equal(select.options[0].textContent, 'gpt-5');
+  assert.equal(select.options[0].disabled, false);
+  assert.equal(select.value, 'gpt-5');
   assert.equal(select.disabled, false);
 
   assert.match(modelField('', 'local:codex'), /Managed by this runtime/);
@@ -100,7 +104,7 @@ test('automation sheet exposes local models for Pi even when modelPick is false'
   const context = { Intl, setTimeout, clearTimeout, document: { createElement: tag => ({ tagName: tag }) } };
   context.window = context;
   const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
-  vm.runInNewContext(automation.replace(marker,
+  vm.runInNewContext(cardState + '\n' + automation.replace(marker,
     '  global.probe = { state, modelField };\n' + marker), context);
   const { state, modelField } = context.probe;
   state.agents = [{ id: 'local:pi', cli: 'pi', modelPick: false, nativeModelPick: false }];
@@ -164,7 +168,7 @@ test('automation payload permissions come from explicit choices and the selected
     vm.runInNewContext(read('components', 'panels', name), context);
   }
   const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
-  vm.runInNewContext(automation.replace(marker,
+  vm.runInNewContext(cardState + '\n' + automation.replace(marker,
     '  global.probe = { state, proposalOf, bodyOf };\n' + marker), context);
   const { state, proposalOf, bodyOf } = context.probe;
   state.agents = [{ id: 'local:pi', available: true }];
@@ -186,8 +190,8 @@ test('automation payload permissions come from explicit choices and the selected
   assert.equal(proposalOf({}, 'Choose the sole available model', {}).modelName, 'managed-alternative');
   assert.equal(proposalOf({ modelName: 'unavailable:default' }, 'Do not persist a UI placeholder', {}).modelName, 'managed-alternative');
   const invalid = proposalOf({}, 'Keep the explicitly saved model', { modelName: model });
-  assert.equal(invalid.modelName, model);
-  assert.throws(() => bodyOf(invalid), /不可用/);
+  assert.equal(invalid.modelName, 'managed-alternative');
+  assert.equal(bodyOf(invalid).modelName, 'managed-alternative');
   state.defaultModelErrors = {}; state.modelOptions.push({ name: model, localOnly: true });
   assert.equal(bodyOf(proposalOf({}, 'Use the configured model', {})).modelName, model);
 });
@@ -204,7 +208,7 @@ test('automation editor keeps a saved model when the model control is temporaril
   }
   context.FormData = FakeFormData;
   const marker = '  global.WorkAutomationSheet = { open, active, refine, close };';
-  vm.runInNewContext(automation.replace(marker,
+  vm.runInNewContext(cardState + '\n' + automation.replace(marker,
     '  global.probe = { state, valueFromForm };\n' + marker), context);
   const form = {
     values: {

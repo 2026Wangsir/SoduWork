@@ -624,7 +624,7 @@ async def run_one(session: AsyncSession, s, who: str = "SoduWork（定时）",
     normalize_conversation_schedule(s)
     try:
         repo = await resolve_repo(session, s, client=client)
-        await validate_execution(session, s)
+        await validate_execution(session, s, allow_missing_model=True)
         personal = personal_plugin_spec(s)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)[:300]}

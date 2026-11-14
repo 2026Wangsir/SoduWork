@@ -570,13 +570,14 @@ function _agModelHtml(a) {
     return '<div class="ag-model is-none"><span class="ag-model-cap">模型</span>' +
       (localHint || '<span class="ag-model-own">还没有能用的模型，先去「我的模型」配一把 key</span>') + '</div>';
   }
-  const cur = a.model || '';
   const fallback = a.modelEffective || '';
+  const cur = a.modelAutomatic ? fallback : a.model || '';
+  const fallbackLabel = list.find(model => model.name === fallback)?.label || fallback;
   return '<div class="ag-model' + (a.modelGone ? ' is-bad' : '') + '">' +
     '<span class="ag-model-cap">模型</span>' +
     '<select class="ag-model-sel" data-amodel="' + esc(a.key) + '" data-amodel-value="' + esc(cur) + '">' +
       '<option value=""' + (cur ? '' : ' selected') + '>跟这台 SoduWork 的默认' +
-        (fallback && !cur ? '（' + esc(fallback) + '）' : '') + '</option>' +
+        (fallback && !cur ? '（' + esc(fallbackLabel) + '）' : '') + '</option>' +
       list.map(m => '<option value="' + esc(m.name) + '"' +
         (m.name === cur ? ' selected' : '') + '>' + esc(m.label || m.name) +
         (m.provider ? ' · ' + esc(_agTx(m.provider)) : '') +
@@ -844,9 +845,21 @@ async function _agRun(ak, action) {
   _agRender();
   try {
     const r = action === 'probe'
-      ? await SoduWorkAPI.agentProbe(key, agent?.localModelDefault ? agent.model : '', rid)
+      ? await SoduWorkAPI.agentProbe(key, '', rid)
       : await SoduWorkAPI.agentInstall(key, action === 'repair' ? 'update' : action, rid);
     if (scope !== _agScopeEpoch || ownerScope !== _agOwnerScope() || _agJobs[ak] !== job) return;
+    if (action === 'probe' && r?.probeAgent?.key === key) {
+      const context = _agProbeContext(r.probeAgent);
+      const changed = context !== job.context;
+      job.context = context;
+      if (changed) {
+        await _agLoad(true);
+        if (scope !== _agScopeEpoch || ownerScope !== _agOwnerScope() || _agJobs[ak] !== job) return;
+      }
+    } else if (action === 'probe' && (r?.localOnly || r?.fellBackFrom)) {
+      // Do not attribute a changed or unverified selection to the displayed model.
+      job.context = '';
+    }
     if (action === 'probe' && r?.localOnly && ['model-connectivity', 'agent-execution'].includes(r.probeKind)) {
       // Connectivity is useful evidence, but it is not an Agent execution probe.
       Object.assign(job, { state: 'done', ok: r.ok === true, detail: r.detail || '本地模型连接测试未完成',
