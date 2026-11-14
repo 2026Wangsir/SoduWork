@@ -202,7 +202,7 @@ function createUsageReporter(options) {
         if (outbox.enqueue({ ownershipVersion: 1, hub: identity.hub, clientId: identity.clientId, accountScope: identity.accountScope || '',
           scope, bucket, payload })) schedule();
       }
-      if (Array.isArray(snapshot?.usageReceipts) && snapshot.usageReceipts.length) {
+      if (Array.isArray(snapshot?.usageReceipts)) {
         const cumulative = empty();
         for (const receipt of snapshot.usageReceipts) {
           // A local call belongs only to this device. Exclude it before

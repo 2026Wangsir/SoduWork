@@ -10,6 +10,7 @@ const { resultState } = require('./pi-session/task-turn');
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 const { createPoller, POLL_INTERVAL_MS } = require('./automation-conversation-polling.cjs');
 const discovery = require('./native-discovery.cjs');
+const { imageChoice } = require('../core/model-choice');
 const keyOf = (identity, runId) => crypto.createHash('sha256')
   .update(String(identity.hub).replace(/\/+$/, '') + '\n' + identity.clientId + '\n' + runId).digest('hex');
 
@@ -62,7 +63,7 @@ function pluginSelection(spec, catalog) {
   return { pluginId: plugin.pluginId, version: plugin.version, checksum: plugin.checksum };
 }
 
-function createWorker({ identityOf, request, journal, conversation, catalog,
+function createWorker({ identityOf, request, journal, conversation, catalog, localModelOf,
   instanceId = crypto.randomUUID(), onError = () => {}, now = Date.now }) {
   let ticking = false, stopped = false;
   let authBlockedUntil = 0, authBlockedIdentity = '', authNoticeSent = false;
@@ -165,7 +166,32 @@ function createWorker({ identityOf, request, journal, conversation, catalog,
         record = save(key, { phase: 'prepared', state: 'running', workerId: instanceId, accessChoice });
       }
       const plugin = pluginSelection(input.personalPlugin, await catalog(input.personalPlugin));
-      const modelName = String(input.modelName || '').trim();
+      const modelSource = String(input.modelSource || claimed.modelSource || '').trim().toLowerCase();
+      if (modelSource && modelSource !== 'managed' && modelSource !== 'device') {
+        throw Error('自动化模型来源无效，请重新保存自动化设置');
+      }
+      const requestedModel = String(input.modelName || '').trim();
+      const localReference = requestedModel.startsWith('local:') ||
+        String(imageChoice(requestedModel)?.name || '').startsWith('local:');
+      if (modelSource === 'device') {
+        // A device-owned model has no usable Hub fallback. New Hubs always
+        // return scheduleId in the claim receipt; an older protocol must stop
+        // here instead of opening a managed-model conversation.
+        if (!claimed.scheduleId) throw Error('当前 Hub 不支持本地模型自动化，请升级 Hub 后重试');
+        if (requestedModel && !localReference) {
+          throw Error('本地模型自动化的模型名称不能由 Hub 提供');
+        }
+      } else if (localReference) {
+        throw Error('本地模型自动化协议不完整，请重新保存自动化设置');
+      }
+      const legacyLocal = !modelSource && !requestedModel && claimed.scheduleId &&
+        typeof localModelOf === 'function';
+      const localModel = (modelSource === 'device' || legacyLocal) && typeof localModelOf === 'function'
+        ? await localModelOf(identity, claimed.scheduleId, modelSource === 'device' ? 'device' : 'legacy') : '';
+      if (modelSource === 'device' && !String(localModel || '').trim()) {
+        throw Error('本地模型选择不可用，请在自动化设置中重新选择');
+      }
+      const modelName = String(modelSource === 'device' || legacyLocal ? localModel : (requestedModel || '')).trim();
       const options = {
         ...(record && record.conversationId ? { chatId: record.conversationId } : {}),
         ...(input.conversationTitle ? { sessionTitle: String(input.conversationTitle).trim().slice(0, 240) } : {}),
@@ -291,6 +317,8 @@ function createWorker({ identityOf, request, journal, conversation, catalog,
 
 function install({ app, ipcMain, identityOf, conversation, platformConnections }) {
   require('./automation-preflight.cjs').install({ app, ipcMain, identityOf, platformConnections });
+  const localAutomationModels = require('./local-automation-model-store.cjs');
+  localAutomationModels.configure({ app, safeStorage: require('electron').safeStorage });
   let worker, poller, unsubscribe, stopped = false;
   ipcMain.handle('automation-conversations-wake', async (event, input) => {
     if (stopped || !require('./platform-connections/index.cjs').trustedSender(event)) return { ok: false };
@@ -305,6 +333,15 @@ function install({ app, ipcMain, identityOf, conversation, platformConnections }
       request: require('./pi-session/task-input').request,
       journal: diskJournal(path.join(app.getPath('userData'), 'automation-conversations')),
       conversation, catalog: spec => require('./jiyong-scheduled-plugins.cjs').catalog(app,identityOf,spec),
+      localModelOf: async (identity, scheduleId, modelSource) => {
+        if (!scheduleId) return '';
+        const result = localAutomationModels.get({ hub: identity.hub, clientId: identity.clientId,
+          owner: require('./device-auth-request').accountScopeKey(identity), scheduleId });
+        if (result.needsReselection) throw Error('本地模型选择需要重新确认，请在自动化设置中重新选择');
+        if (result.configured && !result.modelName) throw Error('本地模型选择不可用，请在自动化设置中重新选择');
+        if (modelSource === 'device' && !result.configured) throw Error('本地模型选择不可用，请在自动化设置中重新选择');
+        return String(result.modelName || '');
+      },
       onError: message => console.warn('[automation-conversation]', message),
     });
     poller = createPoller({ tick: () => worker.tick() });

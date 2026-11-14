@@ -125,3 +125,48 @@ test('disconnect during an in-flight dependency check cannot return or cache sta
   revision++; connected = false; wait.resolve([]);
   assert.equal((await checking).state, 'waiting'); assert.equal((await f.run()).state, 'blocked');
 });
+
+test('local automation models are verified on the owning desktop before plugin checks', async () => {
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  let resolved = 0;
+  const f = fixture({ localModelResolve: value => {
+    resolved++;
+    return value === model ? { modelRef: value, localOnly: true } : null;
+  } });
+  const ready = await f.run({ localModelName: model, assigneeId: 'local:pi' });
+  assert.equal(ready.state, 'ready');
+  assert.equal(resolved, 1);
+  const missing = fixture({ localModelResolve: () => null });
+  const result = await missing.run({ localModelName: model, assigneeId: 'local:pi' });
+  assert.equal(result.state, 'blocked');
+  assert.match(result.message, /本机模型已不可用/);
+  assert.deepEqual(missing.state.calls, []);
+});
+
+test('local automation models cannot be preflighted for remote or non-Pi seats', async () => {
+  const model = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
+  const f = fixture({ localModelResolve: () => ({ modelRef: model, localOnly: true }) });
+  const result = await f.run({ localModelName: model, assigneeId: 'runner:desk:pi' });
+  assert.equal(result.state, 'blocked');
+  assert.match(result.message, /本地模型只能选择本机托管型/);
+  assert.deepEqual(f.state.calls, []);
+});
+
+test('local automation models can use any same-device managed Runner', async () => {
+  const model = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
+  const f = fixture({ localModelResolve: () => ({ modelRef: model, localOnly: true }) });
+  const ready = await f.run({ localModelName: model, assigneeId: 'runner:desk:qwen',
+    assigneeMode: 'local', assigneeClientId: 'device' });
+  assert.equal(ready.state, 'ready');
+});
+
+test('local automation models accept a same-device Pi Runner seat only', async () => {
+  const model = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
+  const f = fixture({ localModelResolve: () => ({ modelRef: model, localOnly: true }) });
+  const ready = await f.run({ localModelName: model, assigneeId: 'runner:desk:pi',
+    assigneeMode: 'local', assigneeClientId: 'device' });
+  assert.equal(ready.state, 'ready');
+  const remote = await f.run({ localModelName: model, assigneeId: 'runner:desk:pi',
+    assigneeMode: 'local', assigneeClientId: 'other' });
+  assert.equal(remote.state, 'blocked');
+});

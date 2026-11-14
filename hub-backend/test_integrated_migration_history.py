@@ -29,7 +29,7 @@ from app.schema_migrations import (
 
 OLD_MERGE = "0067_merge_release_account_ownership"
 CANONICAL_MERGE = "0067_merge_account_ownership"
-CURRENT_HEAD = "0088_schedule_requirement_source"
+CURRENT_HEAD = "0090_requirement_creator"
 
 
 class IntegratedMigrationHistoryTests(unittest.TestCase):
@@ -108,6 +108,8 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
         script = ScriptDirectory.from_config(_config())
         self.assertEqual(script.get_heads(), [CURRENT_HEAD])
         expected = {
+            "0090_requirement_creator": "0089_schedule_model_source",
+            "0089_schedule_model_source": "0088_schedule_requirement_source",
             "0088_schedule_requirement_source": "0086_usage_quota_scope",
             "0086_usage_quota_scope": "0085_merge_public_schedule",
             "0085_merge_public_schedule": ("0080_merge_public_discovery", "0084_schedule_custom_rule"),
@@ -218,6 +220,51 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
                     finally:
                         get_settings.cache_clear()
 
+    def test_model_source_upgrade_scrubs_only_local_inline_receipt_references(self):
+        from app.models import AiScheduleRun
+        with tempfile.TemporaryDirectory(prefix="smoke-schedule-model-history-") as temp:
+            database = Path(temp) / "test.db"
+            with patch.dict(os.environ, {"DATABASE_URL": "sqlite+aiosqlite:///" + database.as_posix()}):
+                get_settings.cache_clear()
+                try:
+                    command.upgrade(_config(), "0088_schedule_requirement_source")
+                    engine = create_engine("sqlite:///" + database.as_posix())
+                    ordinary = {"conversationInput": {"modelName": "hub-model", "text": "preserved"},
+                                "route": {"resolved": {"model": "hub-model"}},
+                                "pluginInputs": {"model": "local:user-authored-input"},
+                                "images": [{"model": value} for value in (
+                                    "image::device:provider::hub-model", "image::::local:opaque",
+                                    "image::  ::local:opaque", "image::device:provider::Local:opaque")]}
+                    private = {"conversationInput": {"modelName": "local:opaque", "text": "preserved"},
+                               "route": {"resolved": {"model": " image::device:provider:: local:opaque "}}}
+                    marked_private = {"modelSource": "device", "modelName": "private-wire",
+                                      "route": {"resolved": {"model": "private-wire"}},
+                                      "pluginInputs": {"model": "local:user-authored-input"}}
+                    try:
+                        with engine.begin() as connection:
+                            for identity, receipt in (("private", private), ("ordinary", ordinary),
+                                                      ("marked-private", marked_private)):
+                                connection.execute(AiScheduleRun.__table__.insert().values(
+                                    id=identity, schedule_id="fixture-schedule", receipt=receipt))
+                    finally:
+                        engine.dispose()
+                    command.upgrade(_config(), "head")
+                    command.upgrade(_config(), "head")
+                    with closing(sqlite3.connect(database)) as connection:
+                        rows = {row[0]: json.loads(row[1]) for row in connection.execute(
+                            "SELECT id, receipt FROM ai_schedule_run")}
+                    self.assertEqual(rows["ordinary"], ordinary)
+                    self.assertEqual(rows["private"]["conversationInput"], {
+                        "modelName": "", "modelSource": "device", "text": "preserved"})
+                    self.assertEqual(rows["private"]["route"]["resolved"], {
+                        "model": "", "modelSource": "device"})
+                    self.assertEqual(rows["marked-private"], {"modelSource": "device", "modelName": "",
+                        "route": {"resolved": {"model": "", "modelSource": "device"}},
+                        "pluginInputs": {"model": "local:user-authored-input"}})
+                    self.assertNotIn("local:opaque", json.dumps(rows["private"]))
+                finally:
+                    get_settings.cache_clear()
+
     def test_requirement_source_upgrade_preserves_existing_schedules_and_task_links(self):
         with tempfile.TemporaryDirectory(prefix="smoke-schedule-source-history-") as temp:
             database = Path(temp) / "test.db"
@@ -241,6 +288,7 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
                                     id="schedule-enabled" if enabled else "schedule-disabled",
                                     title="Preserved schedule", note="Keep original schedule instructions",
                                     every="weekly", at_hour=14, at_minute=35, weekday=3,
+                                    model_name="managed::local:variant" if enabled else "Local:Enterprise",
                                     assignee_id="local:pi", assignee_type="agent", repo_id="fixture-repository",
                                     flow=False, owner_client_id="fixture-source-device", enabled=enabled,
                                     last_task_id="fixture-source-task", last_error="Preserved previous result",
@@ -261,8 +309,13 @@ class IntegratedMigrationHistoryTests(unittest.TestCase):
                                           if row["name"] == "source_requirement")
                             self.assertEqual(column["notnull"], 1)
                             self.assertEqual(column["dflt_value"], "'{}'")
+                            model_source = next(row for row in connection.execute(
+                                "PRAGMA table_info(ai_schedule)") if row["name"] == "model_source")
+                            self.assertEqual(model_source["notnull"], 1)
+                            self.assertEqual(model_source["dflt_value"], "'managed'")
                             actual = [dict(row) for row in connection.execute("SELECT * FROM ai_schedule ORDER BY id")]
                             for row in actual:
+                                self.assertEqual(row.pop("model_source"), "managed")
                                 self.assertEqual(json.loads(row.pop("source_requirement")),
                                                  expected_source if row["id"] == "schedule-enabled" else {})
                             self.assertEqual(actual, old_schedules)

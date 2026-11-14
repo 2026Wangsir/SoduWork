@@ -133,7 +133,7 @@ def request(model, messages, tools, *, timeout=90, on_text=None, on_usage=None, 
     parsed = urllib.parse.urlsplit(base)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname
             or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or not model.get("key") or not model.get("model")):
+            or not (model.get("key") or model.get("localOnly") is True) or not model.get("model")):
         raise StructuredFailure("model_config")
     limit = model.get("maxOutputTokens", 8192)
     if type(limit) is not int or not 1 <= limit <= 262144:
@@ -142,7 +142,9 @@ def request(model, messages, tools, *, timeout=90, on_text=None, on_usage=None, 
     headers = {"Content-Type": "application/json"}
     if anthropic:
         url = base + ("/messages" if parsed.path.endswith("/v1") else "/v1/messages")
-        headers.update({"x-api-key": str(model["key"]), "anthropic-version": "2023-06-01"})
+        headers["anthropic-version"] = "2023-06-01"
+        if model.get("key"):
+            headers["x-api-key"] = str(model["key"])
         body = {"model": model["model"], "max_tokens": limit, "stream": True,
                 "system": "\n\n".join(m["content"] for m in messages if m["role"] == "system"),
                 "messages": _anthropic_messages(messages),
@@ -150,7 +152,8 @@ def request(model, messages, tools, *, timeout=90, on_text=None, on_usage=None, 
                            "input_schema": t["parameters"]} for t in tools]}
     else:
         url = base + "/chat/completions"
-        headers["Authorization"] = "Bearer " + str(model["key"])
+        if model.get("key"):
+            headers["Authorization"] = "Bearer " + str(model["key"])
         output_key = ("max_completion_tokens" if model.get("reasoning") is True
                       and model.get("thinkingFormat") == "openai" else "max_tokens")
         body = {"model": model["model"], "stream": True, "stream_options": {"include_usage": True}, output_key: limit,

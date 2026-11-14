@@ -55,36 +55,119 @@
       reset() { epoch++; records.clear(); },
     };
   }
+  function defaultModelFor(catalogs, agentId) {
+    const agent = (catalogs.agents || []).find(item => String(item.id) === String(agentId || ''));
+    const runtime = String(agent?.cli || agent?.adapterId || agentId || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+    const local = agent && !['codex', 'claude'].includes(runtime) && agent.mode !== 'remote' && agent.locationMode !== 'remote';
+    const account = ['codex', 'claude'].includes(runtime) || agent?.modelMode === 'account';
+    if (!agent?.nativeModelPick && (account || agent?.modelPick === false && !local)) return '';
+    const options = (agent?.nativeModelPick ? agent.modelOptions || [] : catalogs.modelOptions || []).filter(item =>
+      String(item?.name || item?.id || '').trim() && item?.available !== false && item?.unavailable !== true &&
+      !/^(?:unavailable:|local:unavailable$)/.test(String(item?.name || item?.id || '')) &&
+      (local || item?.localOnly !== true && !String(item?.name || '').startsWith('local:')));
+    if (options.length === 1) return String(options[0].name || options[0].id || '');
+    if (local && (Object.hasOwn(catalogs.defaultModels || {}, runtime) || catalogs.defaultModelErrors?.[runtime])) {
+      const selected = String(catalogs.defaultModels?.[runtime] || '').trim();
+      if (catalogs.defaultModelErrors?.[runtime]) return selected;
+      if (selected) return selected;
+    }
+    if (agent?.nativeModelPick || agent?.modelPick === false && !local) return '';
+    const preferred = String(catalogs.hubDefaultModel ?? catalogs.defaultModel ?? '').trim();
+    return preferred && options.some(item => item.name === preferred) ? preferred : String(options[0]?.name || '');
+  }
   async function loadOptions(seed) {
     const A = global.SoduWorkAPI;
+    const scope = A?.taskStorageKey?.('ops');
+    const current = () => {
+      if (scope !== A?.taskStorageKey?.('ops')) {
+        throw Object.assign(new Error('账号或执行环境已变化，请刷新执行选项'), { code: 'STALE_TASK_SCOPE' });
+      }
+    };
     if (A?.taskExecutionOptions) {
       try {
         const result = await A.taskExecutionOptions({ title: String(seed?.text || '').trim().slice(0, 60), note: String(seed?.text || '').trim().slice(0, 8000), tags: [] });
-        const modelOptions = Array.isArray(result?.modelOptions) ? result.modelOptions.slice() :
+        current();
+        const managedModelOptions = Array.isArray(result?.modelOptions) ? result.modelOptions.slice() :
           (Array.isArray(result?.models) ? result.models.map(name => ({ name, label: name })) : []);
-        const nativeAgents = (result?.substrates || []).filter(item => item?.key && item.nativeModelPick);
+        const localModelOptions = [];
+        let defaultModels = {}, defaultModelErrors = {};
+        if (typeof A.myModels === 'function') {
+          try {
+            const catalog = await A.myModels();
+            current();
+            defaultModels = catalog.defaultModels || {};
+            defaultModelErrors = catalog.defaultModelErrors || {};
+            const seen = new Set();
+            for (const row of Array.isArray(catalog?.usable) ? catalog.usable : []) {
+              const name = String(row?.name || row?.id || '').trim();
+              if (!row || row.available === false || row.unavailable === true || row.modality === 'image' || row.modality === 'video' ||
+                  (row.localOnly !== true && !name.startsWith('local:')) ||
+                  !/^local:model-[a-f0-9]{32}$/.test(name) || seen.has(name)) continue;
+              seen.add(name);
+              const label = String(row.label || row.modelName || name).trim();
+              const provider = String(row.providerName || '').trim();
+              localModelOptions.push({ name, label: [label, provider, '本机'].filter(Boolean).join(' · '), localOnly: true });
+            }
+          } catch (error) {
+            // A scope change means the whole snapshot belongs to another
+            // account/device. Do not silently fall back to the stale identity.
+            if (error?.code === 'STALE_TASK_SCOPE') throw error;
+            /* A transient local catalog failure must not hide the managed Hub catalog. */
+          }
+        }
+        const modelOptions = localModelOptions.concat(managedModelOptions);
+        const targets = (result?.substrates || []).filter(item => item?.key).flatMap(item => {
+          const locations = item.locations?.length ? item.locations : [null];
+          return locations.map(location => {
+            const mode = String(location?.mode || item.locationMode || 'local');
+            const label = String(location?.label || item.locationLabel || '');
+            return { ...item, key: String(location?.assigneeId || location?.id || item.key),
+              name: String(item.name || item.cli || item.key) + (locations.length > 1 && label ? ' · ' + label : ''),
+              locationMode: mode, locationLabel: label,
+              clientId: String(location?.clientId || item.clientId || ''),
+              runnerId: String(location?.runnerId || item.runnerId || ''),
+              nativeModelPick: item.nativeModelPick === true && mode !== 'remote',
+              onlineSeats: locations.length > 1 ? 1 : item.onlineSeats };
+          });
+        });
+        const nativeAgents = targets.filter(item => item.nativeModelPick);
         const bridge = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
         const nativeModels = Object.create(null);
         if (bridge && typeof bridge.runtimeModels === 'function') await Promise.all(nativeAgents.map(async item => {
-          const adapter = String(item.cli || item.adapterId || item.key || '').replace(/^local:/, '');
+          const adapter = String(item.cli || item.adapterId || item.key || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
           if (!adapter) return;
           try {
             const value = await bridge.runtimeModels(adapter);
+            current();
             nativeModels[item.key] = Array.isArray(value?.models) ? value.models : [];
-          } catch (_) { nativeModels[item.key] = []; }
+          } catch (error) {
+            if (error?.code === 'STALE_TASK_SCOPE') throw error;
+            nativeModels[item.key] = [];
+          }
         }));
-        return { agents: (result?.substrates || []).filter(item => item?.key).map(item => ({
+        current();
+        const agents = targets.map(item => ({
           id: String(item.key), name: String(item.name || item.cli || item.key), adapterId: String(item.adapterId || item.cli || ''),
+          cli: String(item.cli || ''), mode: String(item.locationMode || 'local'), locationMode: String(item.locationMode || 'local'),
+          clientId: item.clientId, runnerId: item.runnerId,
           available: item.available !== false, note: String(item.note || ''), locationLabel: String(item.locationLabel || ''),
           onlineSeats: Math.max(0, Number(item.onlineSeats) || 0),
           modelPick: item.modelPick !== false, nativeModelPick: item.nativeModelPick === true,
           modelOptions: nativeModels[item.key] || (Array.isArray(item.modelOptions) ? item.modelOptions.slice() : []),
-        })), repos: result?.repos || [], reason: String(result?.availability?.agentReason || ''),
-          modelOptions, defaultModel: String(result?.defaultModel || '') };
-      } catch (_) { /* Read the existing roster endpoint for compatibility with older Hub versions. */ }
+        }));
+        const loaded = { agents, repos: result?.repos || [], reason: String(result?.availability?.agentReason || ''),
+          modelOptions, defaultModels, defaultModelErrors, hubDefaultModel: String(result?.defaultModel || '') };
+        return { ...loaded, defaultModel: defaultModelFor(loaded, (agents.find(item => item.available !== false) || agents[0])?.id) };
+      } catch (error) {
+        current();
+        if (error?.code === 'STALE_TASK_SCOPE') throw error;
+        /* Read the existing roster endpoint for compatibility with older Hub versions. */
+      }
     }
     const agents = A?.listAIAgents ? await A.listAIAgents().catch(() => ({ agents: [] })) : { agents: [] };
+    current();
     const repos = A?.listRepos ? await A.listRepos().catch(() => []) : [];
+    current();
     return { agents: (agents?.agents || []).filter(agent => agent && !agent.off).map(agent => ({ ...agent, available: agent.online !== false,
       modelPick: agent.modelPick !== false, nativeModelPick: agent.nativeModelPick === true, modelOptions: agent.modelOptions || [] })),
       repos, reason: String(agents?.reason || ''), modelOptions: [], defaultModel: '' };
@@ -115,5 +198,5 @@
         '以后每次运行都会生成可追踪的任务，并保留结果、异常与重试记录。')) + '</small>' +
       '<button type="button" class="waz-button primary" data-waz-open>' + esc(tx('查看自动化')) + '</button></div>';
   }
-  global.WorkAutomationCardState = { create, loadOptions, savedHtml };
+  global.WorkAutomationCardState = { create, loadOptions, defaultModelFor, savedHtml };
 })(window);

@@ -12,10 +12,23 @@ function create(model, adapterId, capabilityIds) {
   const requiredCapabilities = Array.from(new Set((Array.isArray(capabilityIds)
     ? capabilityIds : []).map(value => String(value || '').trim().toLowerCase()).filter(Boolean)));
   if (requiredCapabilities.length) cfg.requiredCapabilities = requiredCapabilities;
-  if (model && model.baseUrl && model.key && model.id) {
+  // Local providers may intentionally have no API key (for example an
+  // Ollama-compatible endpoint). Keep the opaque local reference out of the
+  // child process and use the provider's wire model id instead.
+  const wireModel = model && model.localOnly
+    ? String(model.wireModelId || model.modelName || model.id || '')
+    : String(model && model.id || '');
+  const hasModelConfig = model && model.baseUrl && wireModel &&
+    (model.localOnly || model.key);
+  if (hasModelConfig) {
     const thinking = thinkingCapabilities.profile(model);
     cfg.llm = {
-      base: String(model.baseUrl), key: String(model.key), model: String(model.id),
+      base: String(model.baseUrl), key: String(model.key || ''), model: wireModel,
+      ...(model.localOnly ? { localOnly: true, authMode: model.authMode || 'api-key' } : {}),
+      ...(model.quotaVersion === 2 && model.quotaUsageToken && !model.localOnly ? {
+        quotaVersion: 2, quotaUsageToken: model.quotaUsageToken,
+        quotaProvider: model.quotaProvider || '',
+      } : {}),
       maxOutputTokens: modelSelection.outputLimit(model),
       ...(['none', 'always', 'controllable'].includes(model.thinkingMode)
         ? { thinkingMode: model.thinkingMode } : {}),

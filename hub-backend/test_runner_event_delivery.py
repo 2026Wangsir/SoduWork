@@ -348,6 +348,103 @@ class DurableDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RunnerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_network_job_replies_clean_admission_receipts_and_ignore_private_pipe_marker(self):
+        from app.services import ai_local
+        machine = runner_main.Runner.__new__(runner_main.Runner)
+        raw = {"ok": True, "data": {"acceptedSelection": {"agentId": "qwen", "modelName": "private-wire"},
+               "error": "private-wire private-key http://private.invalid",
+               "quotaUsageToken": "private-ticket"}}
+        machine._job = AsyncMock(return_value=raw)
+        machine._send = AsyncMock()
+        with patch.dict(ai_local._RUNS, {"private-ref": {"modelLocalOnly": True}}):
+            for operation in ("job.has", "job.comment", "job.session", "job.status", "job.info"):
+                with self.subTest(operation=operation):
+                    await machine._on({"op": operation, "id": "rpc", "ref": "private-ref", "_localParent": True})
+                    self.assertNotIn("_localParent", machine._job.await_args.args[0])
+                    public = machine._send.await_args.args[0]
+                    self.assertEqual(public["data"]["acceptedSelection"]["modelName"], "")
+                    self.assertNotIn("private-key", str(public))
+                    self.assertNotIn("private-ticket", str(public))
+                    self.assertNotIn("private.invalid", str(public))
+
+    async def test_remote_job_requests_cannot_inject_local_model_configuration(self):
+        machine = runner_main.Runner.__new__(runner_main.Runner)
+        for operation in ("job.dispatch", "job.comment"):
+            with self.subTest(operation=operation):
+                result = await machine._job({"op": operation,
+                    "cfg": {"llm": {"localOnly": True, "model": "private-wire"}}})
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["code"], "LOCAL_MODEL_REMOTE_FORBIDDEN")
+
+    async def test_remote_session_status_and_info_preserve_device_model_privacy(self):
+        from app.services import ai_local, local_stream
+        machine = runner_main.Runner.__new__(runner_main.Runner)
+        machine._admission = SimpleNamespace(latest_for_ref=lambda *args, **kwargs: None)
+        owned = {"modelLocalOnly": True, "usageReceipts": [
+            {"localOnly": True, "reportable": False, "usage": {"input": 99}}]}
+        raw = {"model": "private-wire", "usage": {"input": 99}, "tokens": {"input": 99},
+               "activeExecutionSelection": {"agentId": "qwen", "modelName": "private-wire"}}
+        with patch.dict(ai_local._RUNS, {"fixture-private": owned}), \
+                patch.object(ai_local, "session_sync", return_value=raw), \
+                patch.object(ai_local, "status_sync", return_value=raw), \
+                patch.object(ai_local, "runner_info_sync", return_value=raw), \
+                patch.object(local_stream, "authorization_required_sync", return_value=False):
+            for operation in ("job.session", "job.status", "job.info"):
+                with self.subTest(operation=operation):
+                    remote = await machine._job({"op": operation, "ref": "fixture-private"})
+                    self.assertEqual(remote["data"]["model"], "")
+                    self.assertEqual(remote["data"]["usage"], {})
+                    self.assertNotIn("usageReceipts", remote["data"])
+                    local = await machine._job({"op": operation, "ref": "fixture-private", "_localParent": True})
+                    self.assertEqual(local["data"]["model"], "private-wire")
+
+    async def test_hub_snapshots_omit_local_model_metadata_and_local_usage(self):
+        from app.services import ai_local, local_base
+        machine = runner_main.Runner.__new__(runner_main.Runner)
+        machine._agent_inventory, machine._session_marks = [], {}
+        run = {"ref": "private-ref", "taskId": "task", "model": "private-wire-model",
+               "state": "done", "seq": 1, "tokens": {"input": 100},
+               "ctxPct": 50, "ctxWindow": 20000, "ctxWindowKnown": True,
+               "usage": {"input_tokens": 110}}
+        owned = {"cfg": {"llm": {"localOnly": True}}, "usageReceipts": [
+            {"localOnly": True, "reportable": False, "usage": {"input_tokens": 100}},
+            {"localOnly": False, "reportable": True, "model": "hub-model",
+             "quotaUsageToken": "private-ticket", "usage": {"input_tokens": 10}},
+        ]}
+        with patch.object(ai_local, "console_list_sync", return_value={"runs": [run]}), \
+                patch.object(ai_local, "session_sync", return_value={"seq": 1, "items": [
+                    {"seq": 1, "kind": "usage", "localModelMetadata": True,
+                     "usage": {"input_tokens": 100}, "text": ""}]}), \
+                patch.dict(local_base._RUNS, {"private-ref": owned}):
+            snapshots, _ = machine._session_snapshots()
+        snapshot = snapshots[0]
+        self.assertEqual(snapshot["model"], "")
+        self.assertEqual(snapshot["tokens"], {})
+        self.assertEqual(snapshot["ctxWindow"], 0)
+        self.assertFalse(snapshot["ctxWindowKnown"])
+        self.assertEqual(snapshot["usage"]["input_tokens"], 10)
+        self.assertNotIn("private-ticket", str(snapshot))
+        self.assertNotIn("private-wire-model", str(snapshot))
+        self.assertEqual(snapshot["items"][0]["seq"], 1)
+        self.assertNotIn("usage", snapshot["items"][0])
+
+    async def test_unknown_legacy_runner_model_and_error_are_not_republished_to_hub(self):
+        from app.services import ai_local, local_base
+        machine = runner_main.Runner.__new__(runner_main.Runner)
+        machine._agent_inventory, machine._session_marks = [], {}
+        legacy = {"ref": "legacy-private", "taskId": "task", "cli": "qwen", "seq": 1,
+                  "model": "old-private-wire", "error": "old-private-wire old-private-key",
+                  "usage": {"input": 99}, "tokens": {"input": 99}}
+        with patch.object(ai_local, "console_list_sync", return_value={"runs": [legacy]}), \
+                patch.object(ai_local, "session_sync", return_value={**legacy, "items": []}), \
+                patch.dict(local_base._RUNS, {"legacy-private": legacy}):
+            snapshots, _ = machine._session_snapshots()
+        self.assertEqual(snapshots[0]["model"], "")
+        self.assertEqual(snapshots[0]["usage"], {})
+        self.assertEqual(snapshots[0]["tokens"], {})
+        self.assertNotIn("old-private-wire", str(snapshots))
+        self.assertNotIn("old-private-key", str(snapshots))
+
     async def test_native_only_histories_cannot_starve_task_event_collection(self):
         from app.services import ai_local
         machine = runner_main.Runner.__new__(runner_main.Runner)

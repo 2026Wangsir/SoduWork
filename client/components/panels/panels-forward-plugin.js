@@ -98,7 +98,8 @@ function _fwpModelState(options, selected) {
   // The API's legacy list deliberately omits its default. Keep every usable
   // catalog entry selectable, including a catalog containing just one model.
   const models = Array.from(new Set([options?.defaultModel, ...(options?.models || []),
-    ...(options?.modelOptions || []).map(item => item.name)].filter(Boolean)));
+    ...(options?.modelOptions || []).filter(item => item?.available !== false && item?.unavailable !== true)
+      .map(item => item.name)].filter(name => name && !/^(?:unavailable:|local:unavailable$)/.test(String(name)))));
   const value = String(selected || '');
   return {models, labels: Object.fromEntries(models.map(name => [name, _fwpModelLabel(options, name)])),
     value, stale: Boolean(value && !models.includes(value))};

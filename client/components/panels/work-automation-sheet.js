@@ -124,7 +124,8 @@
       flow: Boolean(prior.flow),
       personalPluginKey: prior.personalPluginKey || '',
       pluginInputs: Object.assign({}, prior.pluginInputs || {}),
-      modelName: cut(parsed.modelName || prior.modelName || context.defaultModel || '', 300),
+      modelName: cut(String(parsed.modelName || prior.modelName || '').startsWith('unavailable:')
+        ? '' : parsed.modelName || prior.modelName || '', 300),
       requiredCapabilities: [...new Set(prior.requiredCapabilities || [])],
       retryLimit: Number.isFinite(Number(prior.retryLimit)) ? Number(prior.retryLimit) : 2,
       retryDelayMinutes: Number(prior.retryDelayMinutes || 5),
@@ -132,7 +133,9 @@
       ...(sourceRequirement ? { sourceRequirement: { id: sourceRequirement.id, title: sourceRequirement.title,
         requirementVersion: sourceRequirement.requirementVersion } } : {}),
     });
-    return global.WorkAutomationBindings.resolve(parsed, fallback, next, context);
+    const resolved = global.WorkAutomationBindings.resolve(parsed, fallback, next, context);
+    if (!resolved.modelName) resolved.modelName = global.WorkAutomationCardState.defaultModelFor(context, resolved.assigneeId);
+    return resolved;
   }
 
   const loadExecutionOptions = seed => global.WorkAutomationCardState.loadOptions(seed);
@@ -208,7 +211,9 @@
     const got = await Promise.all([execution, methods]);
     if (!cards().current(record)) return false;
     const context = { seed: s, agents: got[0]?.agents || [], repos: got[0]?.repos || [], methods: got[1] || [],
-      modelOptions: got[0]?.modelOptions || [], defaultModel: got[0]?.defaultModel || '' };
+      modelOptions: got[0]?.modelOptions || [], defaultModel: got[0]?.defaultModel || '',
+      hubDefaultModel: got[0]?.hubDefaultModel, defaultModels: got[0]?.defaultModels || {},
+      defaultModelErrors: got[0]?.defaultModelErrors || {} };
     if (visible()) Object.assign(state, context, { agentReason: got[0]?.reason || '' });
     ready = true;
     // Restoration refreshes candidates only; preserve the original date and manual settings without invoking the model again.
@@ -254,19 +259,43 @@
     return state.agents.find(item => String(item.id) === String(id || '')) || null;
   }
 
+  function localModelAgent(agent) {
+    if (!agent) return false;
+    const runtime = String(agent.cli || agent.id || '').replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+    if (!runtime || ['codex', 'claude'].includes(runtime)) return false;
+    if (!String(agent.id || '').startsWith('local:') && !String(agent.id || '').startsWith('runner:')) return false;
+    return agent.mode !== 'remote' && agent.locationMode !== 'remote';
+  }
+
+  function modelSource(agent) {
+    const source = agent?.nativeModelPick ? agent.modelOptions : state.modelOptions;
+    const rows = Array.isArray(source) ? source.slice() : [];
+    return localModelAgent(agent) ? rows : rows.filter(item => item?.localOnly !== true && !String(item?.name || '').startsWith('local:'));
+  }
+
+  function canPickModel(agent) {
+    if (!agent) return true;
+    if (agent.modelPick !== false || agent.nativeModelPick === true) return true;
+    // Some local Pi runtimes own their default model (modelPick=false) while
+    // still exposing this desktop's encrypted local catalog as an explicit
+    // override. Keep that local choice available without enabling it remotely.
+    return localModelAgent(agent) && modelSource(agent).some(item =>
+      item?.localOnly === true || String(item?.name || '').startsWith('local:'));
+  }
+
   function modelEntries(current, agentId) {
     const agent = agentById(agentId);
     const selected = String(current || '').trim();
-    if (agent && agent.modelPick === false && agent.nativeModelPick !== true) {
+    if (!canPickModel(agent)) {
       return [{ name: '', label: tx('由底座自身管理模型') }];
     }
-    const source = agent?.nativeModelPick ? agent.modelOptions : state.modelOptions;
-    const rows = Array.isArray(source) ? source.slice() : [];
+    const rows = modelSource(agent);
     const normalized = rows.map(raw => ({ name: String(raw?.name || raw?.id || raw || '').trim(),
       label: String(raw?.label || raw?.displayName || raw?.name || raw?.id || raw || '').trim() }))
       .filter(item => item.name);
     if (selected && !normalized.some(item => item.name === selected)) {
-      normalized.unshift({ name: selected, label: selected + tx('（已保存，当前不可用）'), stale: true });
+      normalized.unshift({ name: selected, label: ['local:unavailable', 'unavailable:default'].includes(selected)
+        ? tx('原模型或默认模型不可用，请重新选择') : selected + tx('（已保存，当前不可用）'), stale: true });
     }
     if (!normalized.length) return [{ name: '', label: tx('当前没有可用模型') }];
     if (!selected) normalized.unshift({ name: '', label: tx('请选择模型'), placeholder: true });
@@ -282,13 +311,11 @@
 
   function modelField(current, agentId) {
     const agent = agentById(agentId);
-    const managed = agent && agent.modelPick === false && agent.nativeModelPick !== true;
-    const options = agent?.nativeModelPick ? agent.modelOptions : state.modelOptions;
+    const managed = !canPickModel(agent);
+    const options = modelSource(agent);
     const disabled = Boolean(managed || ((!Array.isArray(options) || !options.length) && !current));
-    const localOnly = String(agent?.id || '').startsWith('local:') && !(Array.isArray(options) && options.length);
-    const hint = managed ? tx('当前底座自行管理模型') : localOnly
-      ? tx('本机模型仅支持本机对话；后台自动化需要 Hub 托管模型')
-      : tx('模型与执行底座独立保存，每次自动化运行使用这里的选择');
+    const hint = managed ? tx('当前底座自行管理模型') :
+      tx('模型与执行底座独立保存，每次自动化运行使用这里的选择');
     return '<label class="waz-field"><span>' + esc(tx('模型')) + ' <small>' + esc(tx('可独立选择')) + '</small></span>' +
       '<select name="modelName" aria-describedby="wazModelHint"' + (disabled ? ' disabled' : '') + '>' +
       modelRows(current, agentId) + '</select><small id="wazModelHint" class="waz-field-hint">' + esc(hint) + '</small></label>';
@@ -306,8 +333,8 @@
       option.disabled = Boolean(item.stale || item.placeholder); return option;
     }));
     const info = agentById(agent.value);
-    const options = info?.nativeModelPick ? info.modelOptions : state.modelOptions;
-    select.disabled = Boolean(info && info.modelPick === false && info.nativeModelPick !== true) ||
+    const options = modelSource(info);
+    select.disabled = !canPickModel(info) ||
       ((!Array.isArray(options) || !options.length) && !current);
     select.value = current;
   }
@@ -531,6 +558,12 @@
   function bodyOf(value, catalogs = state) {
     const bindingError = global.WorkAutomationBindings.validate(value, catalogs);
     if (bindingError) throw new Error(bindingError);
+    const selectedAgent = (catalogs.agents || []).find(item => String(item.id) === String(value.assigneeId || ''));
+    const availableModels = selectedAgent?.nativeModelPick ? selectedAgent.modelOptions || [] : (catalogs.modelOptions || []).filter(item =>
+      localModelAgent(selectedAgent) || item?.localOnly !== true && !String(item?.name || '').startsWith('local:'));
+    if (value.modelName && !availableModels.some(item => String(item.name || item.id || '') === value.modelName)) {
+      throw new Error('原模型或默认模型已不可用，请主动选择可用模型');
+    }
     const method = methodByKey(value.personalPluginKey, catalogs);
     const criteria = checks(value.acceptance);
     const note = value.note + (criteria.length
@@ -553,6 +586,8 @@
       ...(value.every === 'custom' ? { customRule: fullText(value.customRule).trim() } : {}),
       timeZone: value.timeZone || timeZone(),
       assigneeId: value.assigneeId,
+      assigneeMode: String(selectedAgent?.mode || selectedAgent?.locationMode || ''),
+      assigneeClientId: String(selectedAgent?.clientId || ''),
       assigneeType: 'agent',
       modelName: value.modelName || '',
       repoId: value.repoId || '',
@@ -784,17 +819,24 @@
 
   async function refreshAgents(button) {
     const layer = state.layer, seq = state.seq;
+    const catalogSeq = state.catalogSeq = (state.catalogSeq || 0) + 1;
     button.disabled = true;
     try {
       const result = await loadExecutionOptions({ text: valueFromForm().note });
-      if (layer !== state.layer || seq !== state.seq || state.saved || state.saving) return;
+      if (layer !== state.layer || seq !== state.seq || catalogSeq !== state.catalogSeq || state.saved || state.saving) return;
       state.proposal = valueFromForm();
       state.agents = result.agents;
       state.modelOptions = result.modelOptions || [];
       state.defaultModel = result.defaultModel || '';
+      state.hubDefaultModel = result.hubDefaultModel;
+      state.defaultModels = result.defaultModels || {};
+      state.defaultModelErrors = result.defaultModelErrors || {};
       state.agentReason = result.reason;
       if (!state.proposal.assigneeId) state.proposal.assigneeId =
         (state.agents.find(item => item.available !== false) || state.agents[0] || {}).id || '';
+      if (!state.proposal.modelName || String(state.proposal.modelName).startsWith('unavailable:')) {
+        state.proposal.modelName = global.WorkAutomationCardState.defaultModelFor(state, state.proposal.assigneeId);
+      }
       render();
     } finally { button.disabled = false; }
   }
@@ -820,8 +862,9 @@
     }
     if (event.target.name === 'assigneeId' && event.type === 'change') {
       const value = valueFromForm();
-      refreshModelField('');
-      state.proposal = { ...value, modelName: '' };
+      const modelName = global.WorkAutomationCardState.defaultModelFor(state, value.assigneeId);
+      refreshModelField(modelName);
+      state.proposal = { ...value, modelName };
     }
     paintRhythm();
     scheduleProbe();

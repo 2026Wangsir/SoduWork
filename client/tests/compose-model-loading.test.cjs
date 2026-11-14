@@ -11,15 +11,16 @@ function fixture() {
     classList: { add() {}, remove() {}, contains: () => false },
     setAttribute() {}, addEventListener(name, listener) { this[name] = listener; } });
   const nodes = { cpModelBtn: element(), cpModelPop: element(), cpModelName: element(), wrap: element() };
-  function request(kind) {
+  function request(kind, options) {
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    requests.push({ kind, owner, agent, location, resolve, reject }); return promise;
+    requests.push({ kind, owner, agent, location, options, resolve, reject }); return promise;
   }
   const bridge = { runtimeModels: () => request('native'), onModelsChanged: fn => { listeners.set('models-changed', fn); return () => listeners.delete('models-changed'); } };
   const context = vm.createContext({
     document: { getElementById: id => nodes[id] || null, querySelector: () => nodes.wrap },
-    SoduWorkAPI: { taskStorageKey: () => owner, myModels: () => request('managed') },
+    SoduWorkAPI: { taskStorageKey: () => owner, myModels: options => request('managed', options) },
+    SoduWorkModelChoice: require('../core/model-choice'),
     ComposeRuntime: { value: () => agent, location: () => location, catalog: () => [
       { id: 'pi', modelMode: 'managed' }, { id: 'qwen', modelMode: 'managed' },
       { id: 'codex', modelMode: 'account' },
@@ -89,20 +90,99 @@ test('managed picker shows protocol and warns on an incompatible selected defaul
   assert.match(f.nodes.cpModelPop.innerHTML, /role="note">企业模型/);
 });
 
-test('device-local models stay available only in local Pi and never enter the Hub image route', async () => {
+test('device-local models stay available to every local managed runtime and never enter cloud routes', async () => {
   const catalog = { usable: [{ name: 'managed-model' }, { name: 'local:private:model', localOnly: true }],
     defaultModels: { pi: 'managed-model', qwen: 'managed-model' },
     mediaUsable: { image: [{ providerId: 'private', name: 'local:private:image', localOnly: true }] } };
   const f = fixture(); f.start(); f.requests[0].resolve(catalog); await f.picker.ready();
   assert.match(f.nodes.cpModelPop.innerHTML, /local:private:model/);
-  assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:image/);
+  assert.match(f.nodes.cpModelPop.innerHTML, /local:private:image/);
   f.choose('local:private:model'); assert.equal(f.picker.value().modelName, 'local:private:model');
   f.location('cloud'); const cloud = f.picker.refresh(); f.requests[1].resolve(catalog); await cloud;
   assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:/);
   assert.equal(f.picker.value().modelName, 'managed-model');
   f.location('local'); f.agent('qwen'); const other = f.picker.refresh(); f.requests[2].resolve(catalog); await other;
-  assert.doesNotMatch(f.nodes.cpModelPop.innerHTML, /local:private:/);
+  assert.match(f.nodes.cpModelPop.innerHTML, /local:private:model/);
   assert.equal(f.picker.value().modelName, 'managed-model');
+});
+
+test('a new local-only composer selects its sole model when the default is unavailable', async () => {
+  const catalog = { usable: [{ name: 'local:private:model', localOnly: true, label: 'Private model' }],
+    defaultModels: {}, defaultModelErrors: { qwen: 'Hub default unavailable' } };
+  const f = fixture(); f.agent('qwen'); f.start();
+  const pending = f.picker.refresh();
+  f.requests[0].resolve(catalog); await pending;
+  assert.match(f.nodes.cpModelPop.innerHTML, /local:private:model/);
+  assert.equal(f.picker.value().modelName, 'local:private:model');
+  assert.equal(await f.picker.ready(), true);
+});
+
+test('deleting a local Agent default cannot select another local model or block the independent cloud default', async () => {
+  const f = fixture(); f.start();
+  f.requests[0].resolve({ usable: [{ name: 'local:default', localOnly: true }, { name: 'local:other', localOnly: true }],
+    defaultModels: { pi: 'local:default' } });
+  await f.picker.ready();
+  assert.equal(f.picker.value().modelName, 'local:default');
+  f.choose('local:default');
+  assert.equal(await f.picker.ready(), true);
+  const refresh = f.picker.refresh(true);
+  f.requests[1].resolve({ usable: [{ name: 'local:other', localOnly: true }], defaultModels: { pi: 'local:default' },
+    defaultModelErrors: { pi: '原本地默认模型已删除或不可用' } }); await refresh;
+  assert.equal(f.picker.value().modelName, 'local:default'); assert.equal(await f.picker.ready(), false);
+  assert.match(f.picker.label(), /已删除或不可用/);
+  f.location('cloud'); const cloud = f.picker.refresh();
+  assert.equal(f.requests[2].options.localDefaults, false);
+  f.requests[2].resolve({ usable: [{ name: 'hub-model' }], defaultModels: { pi: 'hub-model' } }); await cloud;
+  assert.equal(f.picker.value().modelName, 'hub-model'); assert.equal(await f.picker.ready(), true);
+  f.location('local'); const local = f.picker.refresh();
+  f.requests[3].resolve({ usable: [{ name: 'local:other', localOnly: true }], defaultModels: { pi: 'local:default' },
+    defaultModelErrors: { pi: '原本地默认模型已删除或不可用' } }); await local;
+  assert.equal(await f.picker.ready(), false);
+  f.choose('local:other'); assert.equal(await f.picker.ready(), true);
+});
+
+for (const source of ['local', 'Hub']) test('a fresh composer chooses its sole ' + source + ' model instead of an inherited deleted default', async () => {
+  const f = fixture(), name = source === 'local' ? 'local:only-model' : 'only-hub-model'; f.start();
+  f.requests[0].resolve({ usable: [{ name, label: 'Sole available model', localOnly: source === 'local' }],
+    defaultModels: { pi: 'local:deleted-default' }, defaultModelErrors: { pi: 'Deleted local default' } });
+  assert.equal(await f.picker.ready(), true);
+  assert.equal(f.picker.value().modelName, name);
+  assert.equal(f.picker.label(), 'Sole available model');
+  f.choose(name);
+  const refresh = f.picker.refresh(true);
+  f.requests[1].resolve({ usable: [{ name: 'replacement', label: 'Replacement model' }], defaultModels: { pi: 'replacement' } }); await refresh;
+  assert.equal(f.picker.value().modelName, name, 'an explicit choice is protected after deletion, even with one replacement');
+  assert.equal(await f.picker.ready(), false);
+});
+
+test('an inherited default can recover to a sole model after a failed initial catalog without replacing a manual draft choice', async () => {
+  const f = fixture(); f.start();
+  f.requests[0].resolve({ usable: [], defaultModels: { pi: 'local:deleted-default' }, defaultModelErrors: { pi: 'Deleted default' } });
+  assert.equal(await f.picker.ready(), false);
+  const refresh = f.picker.refresh(true);
+  f.requests[1].resolve({ usable: [{ name: 'only-hub', label: 'Only Hub' }], defaultModels: { pi: 'local:deleted-default' },
+    defaultModelErrors: { pi: 'Deleted default' } }); await refresh;
+  assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'only-hub');
+});
+
+test('an explicit new conversation resets the old manual selection while ordinary redraws preserve its deleted placeholder', async () => {
+  const f = fixture(); f.start(); f.reply(0, 'local:old'); await f.picker.ready(); f.choose('local:old');
+  const removed = f.picker.refresh(true);
+  f.requests[1].resolve({ usable: [{ name: 'sole-new', label: 'Sole new model' }] }); await removed;
+  assert.equal(await f.picker.ready(), false); assert.equal(f.picker.value().modelName, 'local:old');
+  await f.picker.refresh();
+  assert.equal(await f.picker.ready(), false); assert.equal(f.picker.value().modelName, 'local:old');
+  const created = f.picker.resetNewDraft(); f.reply(2, 'sole-new'); await created;
+  assert.equal(await f.picker.ready(), true); assert.equal(f.picker.value().modelName, 'sole-new');
+});
+
+test('a prior draft catalog response cannot overwrite the new conversation sole selection', async () => {
+  const f = fixture(); f.start();
+  const created = f.picker.resetNewDraft();
+  f.reply(1, 'new-conversation-model'); await created;
+  f.reply(0, 'previous-draft-model'); await tick();
+  assert.equal(f.picker.value().modelName, 'new-conversation-model');
+  assert.equal(await f.picker.ready(), true);
 });
 
 test('binding after preference paint reuses the pending directory and a new draft refreshes completed data', async () => {

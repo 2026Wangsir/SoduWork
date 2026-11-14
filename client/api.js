@@ -820,17 +820,142 @@
     if (!sameDomainScope(scope)) throw staleTaskScope();
   }
   function isLocalModelChoice(value) {
-    var name = String(value || '').trim();
-    return name.startsWith('local:') || /^image::[^:]+::local:/.test(name);
+    return Boolean(localModelReference(value));
   }
   function localModelReference(value) {
     var name = String(value || '').trim();
     if (name.startsWith('local:')) return name;
-    var wrapped = name.match(/^image::[^:]+::(local:.+)$/);
-    return wrapped ? wrapped[1] : '';
+    if (!name.startsWith('image::')) return '';
+    var split = name.indexOf('::', 7), reference = split > 7 && name.slice(7, split).trim() ? name.slice(split + 2).trim() : '';
+    return reference.startsWith('local:') ? reference : '';
   }
   function requireRemoteModel(value) {
-    if (isLocalModelChoice(value)) throw new Error('本地模型仅支持本机对话，请为后台任务选择托管模型');
+    if (isLocalModelChoice(value)) throw new Error('本地模型暂不支持云端或远程执行，请选择 Hub 模型');
+  }
+  async function localAgentDefaults(scope) {
+    var bridge = global.soduWorkAPI?.localAgentModels;
+    if (!bridge?.get) return null;
+    var result = await bridge.get();
+    if (!sameDomainScope(scope)) throw staleTaskScope();
+    if (!result?.ok || !result.scopeKey) throw new Error('本机 Agent 默认模型无法读取');
+    return result;
+  }
+  function localAutomationModel(value) {
+    var reference = localModelReference(value);
+    if (!reference) return '';
+    if (String(value || '').trim() !== reference || !/^local:model-[a-f0-9]{32}$/.test(reference)) {
+      throw new Error('自动化只能选择当前设备可验证的本地模型');
+    }
+    return reference;
+  }
+  function localAutomationAgent(value, mode, clientId) {
+    var id = String(value || '').trim();
+    var runtime = id.replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+    var managed = runtime && !['codex', 'claude'].includes(runtime);
+    var current = String(_deviceId || '').trim(), selected = String(clientId || '').trim();
+    return (id.startsWith('local:') && managed) || (String(mode || '').trim() === 'local' &&
+      /^runner:[^:]+:[a-z][a-z0-9-]{0,39}$/.test(id) && managed &&
+      current && selected && selected === current);
+  }
+  function automationOperationScope() {
+    return { hub: String(base() || '').replace(/\/+$/, ''), clientId: String(_deviceId || device() || ''),
+      owner: _clientUser?.id ? 'account:' + String(_clientUser.id) : '',
+      taskScope: taskStorageKey('ops'), epoch: _registrationEpoch };
+  }
+  function assertAutomationScope(scope) {
+    var current = automationOperationScope();
+    if (!scope || ['hub', 'clientId', 'owner', 'taskScope', 'epoch'].some(key => scope[key] !== current[key])) {
+      throw staleTaskScope();
+    }
+  }
+  var automationMutations = new Map();
+  function mutateAutomation(scope, scheduleId, action) {
+    var key = scope.taskScope + '\n' + String(scheduleId || '');
+    var previous = automationMutations.get(key);
+    var pending = Promise.resolve(previous).catch(() => {}).then(() => {
+      assertAutomationScope(scope);
+      return action();
+    });
+    automationMutations.set(key, pending);
+    return pending.finally(() => {
+      if (automationMutations.get(key) === pending) automationMutations.delete(key);
+    });
+  }
+  function automationModelScope(captured) {
+    var scope = captured || automationOperationScope();
+    assertAutomationScope(scope);
+    var bridge = window.soduWorkAPI?.automationModels;
+    if (!bridge || !scope.hub || !scope.clientId || !scope.owner) throw new Error('当前客户端无法保存自动化本地模型选择');
+    return { ...scope, bridge };
+  }
+  async function readAutomationModels(scheduleIds, captured) {
+    var operation = captured || automationOperationScope();
+    try {
+      var scope = automationModelScope(operation);
+      var result = await scope.bridge.get({ hub: scope.hub, clientId: scope.clientId, owner: scope.owner,
+        ...(scheduleIds ? { scheduleIds: scheduleIds } : {}) });
+      assertAutomationScope(operation);
+      var models = result?.ok === true && result.models && typeof result.models === 'object' ? { ...result.models } : {};
+      for (var id of result?.unavailableScheduleIds || []) if (!models[id]) models[id] = 'local:unavailable';
+      return models;
+    } catch (error) { assertAutomationScope(operation); if (error?.code === 'STALE_TASK_SCOPE') throw error; return {}; }
+  }
+  async function saveAutomationModel(scheduleId, modelName, captured) {
+    var operation = captured || automationOperationScope();
+    assertAutomationScope(operation);
+    if (!window.soduWorkAPI?.automationModels) {
+      if (modelName) throw new Error('当前客户端无法保存自动化本地模型选择');
+      return;
+    }
+    var scope = automationModelScope(operation);
+    var action = modelName ? 'set' : 'remove';
+    var result = await scope.bridge[action]({ hub: scope.hub, clientId: scope.clientId, owner: scope.owner,
+      scheduleId: String(scheduleId || ''), modelName: modelName || '' });
+    assertAutomationScope(operation);
+    if (!result || result.ok !== true) throw new Error('自动化本地模型选择保存失败，请检查系统安全存储后重试');
+  }
+  async function readAutomationModel(scheduleId, captured) {
+    var operation = captured || automationOperationScope();
+    assertAutomationScope(operation);
+    if (!window.soduWorkAPI?.automationModels || typeof window.soduWorkAPI.automationModels.get !== 'function') {
+      return { available: false, modelName: '', configured: false };
+    }
+    var scope = automationModelScope(operation);
+    var result = await scope.bridge.get({ hub: scope.hub, clientId: scope.clientId, owner: scope.owner, scheduleId: String(scheduleId || '') });
+    assertAutomationScope(operation);
+    if (!result || result.ok !== true) throw new Error('自动化本地模型选择无法读取，请检查系统安全存储后重试');
+    return { available: true, modelName: String(result?.modelName || ''), configured: result?.configured === true };
+  }
+  function scheduleRequest(body) {
+    var selectedModel = String(body?.modelName || '').trim();
+    if (selectedModel.startsWith('unavailable:') || selectedModel === 'local:unavailable') {
+      // UI placeholders describe a missing choice; they are never wire model identifiers.
+      var selectionError = new Error(selectedModel === 'local:unavailable'
+        ? '本机模型选择已失效，请重新选择可验证的本地模型'
+        : '所选模型已不可用，请选择可用模型后重试');
+      selectionError.code = 'MODEL_SELECTION_REQUIRED';
+      throw selectionError;
+    }
+    var value = { ...(body || {}) }, hasModelField = Object.hasOwn(value, 'modelName'),
+      localModel = localAutomationModel(value.modelName), assigneeMode = value.assigneeMode,
+      assigneeClientId = value.assigneeClientId;
+    delete value.assigneeMode;
+    delete value.assigneeClientId;
+    if (localModel && (!Object.hasOwn(value, 'assigneeId') ||
+        !localAutomationAgent(value.assigneeId, assigneeMode, assigneeClientId))) {
+      throw new Error('本地模型只能选择本机托管型执行底座');
+    }
+    if (localModel) {
+      value.modelName = '';
+      value.modelSource = 'device';
+    } else if (hasModelField || Object.hasOwn(value, 'modelSource')) {
+      var source = String(value.modelSource || 'managed').trim().toLowerCase() || 'managed';
+      if (source !== 'managed' && source !== 'device') throw new Error('自动化模型来源无效');
+      // An explicit managed selection clears a previous device-owned source.
+      value.modelSource = source;
+      if (source === 'device') value.modelName = '';
+    }
+    return { value: value, localModel: localModel };
   }
   function localParseInput(text, attachments) {
     var parts = ['原始需求：', String(text || '').slice(0, 12000)];
@@ -876,9 +1001,26 @@
     var kinds = ['requirement', 'bug', 'ticket', 'improvement', 'other'];
     var priorities = ['low', 'normal', 'high', 'urgent'];
     var kind = text('kind', 32), priority = text('priority', 16);
+    if (!text('title', 200) && !text('note', 4000)) throw Error('missing requirement fields');
     return { title: text('title', 200), note: text('note', 4000), checklist: list('checklist', 30, 300),
       kind: kinds.includes(kind) ? kind : 'requirement', priority: priorities.includes(priority) ? priority : 'normal',
       due: text('due', 64), tags: list('tags', 20, 40) };
+  }
+  function localParseFailure(result) {
+    var messages = {
+      APP_AI_UNAVAILABLE: '本地需求解析需要当前账号登录，请重新登录后重试',
+      APP_AI_CONTEXT_CHANGED: '账号已变化，请在当前账号重新解析',
+      APP_AI_MODEL_UNAVAILABLE: '本地文字模型已删除、未配置或不可用，请检查「我的模型」并重新选择',
+      APP_AI_OUTPUT_LIMIT: '本地模型输出达到长度上限，未生成完整需求，请精简输入或调整模型',
+      APP_AI_RATE_LIMITED: '本地模型服务请求过多，请稍后重试',
+      APP_AI_PROVIDER_ERROR: '本地模型服务返回错误，请检查本地服务和凭据',
+      APP_AI_EMPTY_RESULT: '本地模型未返回可用文字，请检查模型',
+      APP_AI_BUSY: '本地模型正在处理其他请求，请稍后重试',
+      APP_AI_CANCELLED: '本地需求解析已取消',
+      APP_AI_RESULT_UNKNOWN: '本地模型调用中断或超时，未能确认结果，请确认后再重试',
+    };
+    var message = messages[result?.code] || '本地模型需求解析失败，请检查本地模型后重试';
+    return { _parseError: message + '；原文已保留，也可手动填写' };
   }
   async function parseLocalTaskText(text, model, attachments, options) {
     var reference = localModelReference(model), bridge = global.soduWorkAPI?.conversationSession;
@@ -886,14 +1028,45 @@
       return { _parseError: '本地模型需求解析暂不可用；原文已保留，请稍后重试或手动填写' };
     }
     var requestId = 'task-parse-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    var result;
     try {
-      var result = await bridge.localRequirementParse({ model: reference, input: localParseInput(text, attachments),
+      result = await bridge.localRequirementParse({ model: reference, input: localParseInput(text, attachments),
         instructions: localParseInstructions(options), maxOutputTokens: 1024, timeoutMs: 60000, requestId });
-      if (!result?.ok) return { _parseError: '本地模型需求解析失败；原文已保留，请重试或手动填写' };
+    } catch (_) {
+      return { _parseError: '本地需求解析未能完成；原文已保留，请检查本地模型后重试或手动填写' };
+    }
+    if (!result?.ok) return localParseFailure(result);
+    if (result.finishReason === 'length') return localParseFailure({ code: 'APP_AI_OUTPUT_LIMIT' });
+    try {
       return localParseFields(result.text);
     } catch (_) {
       return { _parseError: '本地模型返回的需求格式无效；原文已保留，请重试或手动填写' };
     }
+  }
+  function deviceProviderId(value) {
+    var id = String(value || '');
+    return id.startsWith('device:') ? id.slice(7) : id;
+  }
+  function deviceProvider(value) { return String(value || '').startsWith('device:'); }
+  function projectLocalModelCatalog(catalog) {
+    if (!catalog || !Array.isArray(catalog.providers)) return catalog;
+    var model = row => ({ ...row, providerId: 'device:' + deviceProviderId(row.providerId),
+      localProviderId: deviceProviderId(row.providerId), localOnly: true });
+    return { ...catalog,
+      providers: catalog.providers.map(row => ({ ...row, id: 'device:' + deviceProviderId(row.id),
+        localProviderId: deviceProviderId(row.id), localOnly: true,
+        ...(Array.isArray(row.modelDefs) ? { modelDefs: row.modelDefs.map(model) } : {}) })),
+      myModels: (catalog.myModels || []).map(model), usable: (catalog.usable || []).map(model),
+      mediaUsable: Object.fromEntries(['image', 'video'].map(kind => [kind, (catalog.mediaUsable?.[kind] || []).map(model)])),
+    };
+  }
+  function nativeLocalProvider(row) {
+    var { localProviderId: _localProviderId, ...value } = row;
+    return { ...value, id: deviceProviderId(value.id) };
+  }
+  function nativeLocalModel(row) {
+    var { localProviderId: _localProviderId, ...value } = row;
+    return { ...value, providerId: deviceProviderId(value.providerId) };
   }
   async function localModelCatalog() {
     var bridge = global.soduWorkAPI?.localModels;
@@ -1259,6 +1432,7 @@
         }
         return acceptTaskResult(result);
       }
+      requireRemoteModel(model);
       var b = who && who.id ? { assigneeId: who.id, assigneeType: who.type || 'agent' } : {};
       if (brief) b.brief = String(brief).slice(0, 2000);
       if (repo && (repo.id || repo.path)) b.repo = repo; /* Resolve the repository ID beneath the Runner's own workspace root. */
@@ -1300,10 +1474,11 @@
      * enabled selections, and revoked selections.
      */
     /* Personal model configuration returns availability and secret metadata, never plaintext keys. */
-    async myModels() {
+    async myModels(options) {
       var scope = domainScope();
       var localCatalog = await localModelCatalog();
       if (!sameDomainScope(scope)) throw staleTaskScope();
+      var localDefaults = options?.localDefaults === false ? null : await localAgentDefaults(scope);
       localCatalog = localCatalog || { providers: [], usable: [], myModels: [], mediaUsable: {} };
       var r;
       try { r = await domainRead('models', '/my-models'); }
@@ -1313,11 +1488,20 @@
         r = { providers: [], usable: [], myModels: [], mediaUsable: {}, defaultModels: {} };
       }
       r = r || { providers: [], usable: [], myModels: [], mediaUsable: {} };
-      var localProviderIds = new Set((localCatalog.providers || []).map(row => String(row?.id || '')));
-      var managedProviders = (r.providers || []).filter(row => !localProviderIds.has(String(row?.id || '')));
-      var managedModels = row => (row || []).filter(item => !localProviderIds.has(String(item?.providerId || '')));
+      localCatalog = projectLocalModelCatalog(localCatalog);
+      var managedProviders = (r.providers || []).filter(row => row?.localOnly !== true && !deviceProvider(row?.id))
+        .map(row => ({ ...row, localOnly: false }));
+      var managedModels = rows => (rows || []).filter(row => row?.localOnly !== true && !deviceProvider(row?.providerId) &&
+        !isLocalModelChoice(row?.name)).map(row => ({ ...row, localOnly: false }));
+      var defaultModels = { ...(r.defaultModels || {}) }, defaultModelErrors = { ...(r.defaultModelErrors || {}) };
+      for (var [agent, selected] of Object.entries(localDefaults?.selections || {})) {
+        defaultModels[agent] = selected.modelName;
+        if (selected.unavailable) defaultModelErrors[agent] = '原本地默认模型已删除或不可用，请重新选择';
+        else delete defaultModelErrors[agent];
+      }
       return {
         ...r,
+        defaultModels, defaultModelErrors,
         providers: (localCatalog.providers || []).concat(managedProviders),
         usable: (localCatalog.usable || []).concat(managedModels(r.usable)),
         myModels: (localCatalog.myModels || []).concat(managedModels(r.myModels)),
@@ -1338,20 +1522,33 @@
       var local = global.soduWorkAPI?.localModels;
       var providers = Array.isArray(body.providers) ? body.providers : [];
       var isLocalId = id => { id = String(id || '').trim().toLowerCase(); return id === 'local' || id.startsWith('local-'); };
-      var isLocalProvider = row => row && (row.localOnly === true || isLocalId(row.id));
-      var isLocalModel = row => row && (row.localOnly === true || localIds.has(String(row.providerId || '')) || isLocalId(row.providerId));
+      var isLocalProvider = row => row && (row.localOnly === true || deviceProvider(row.id) || row.localOnly !== false && isLocalId(row.id));
       var localCatalog = await localModelCatalog();
       if (!sameDomainScope(scope)) throw staleTaskScope();
       var explicitLocal = Array.isArray(body.localProviders);
       var localProviderInput = explicitLocal ? body.localProviders.filter(row => row && row.localOnly !== false) : providers.filter(isLocalProvider);
-      var localIds = new Set((localCatalog?.providers || []).filter(isLocalProvider).map(row => String(row.id || '')));
-      localProviderInput.forEach(row => localIds.add(String(row.id || '')));
+      var localIds = new Set((localCatalog?.providers || []).map(row => String(row.id || '')));
+      var explicitLocalIds = new Set(localProviderInput.map(row => String(row.id || '')));
+      var managedIds = new Set(providers.filter(row => row && row.localOnly === false && !deviceProvider(row.id)).map(row => String(row.id || '')));
+      localProviderInput.forEach(row => localIds.add(deviceProviderId(row.id)));
       (Array.isArray(body.localModels) ? body.localModels : []).forEach(row => {
-        if (row && row.providerId) localIds.add(String(row.providerId));
+        if (row && row.providerId) localIds.add(deviceProviderId(row.providerId));
       });
-      Object.keys(body.localKeys || {}).forEach(id => localIds.add(String(id)));
+      Object.keys(body.localKeys || {}).forEach(id => localIds.add(deviceProviderId(id)));
+      function ambiguous(id) { throw new Error('模型服务来源不明确，请刷新模型目录后重试：' + String(id || '')); }
+      for (var row of providers) {
+        if (row && !isLocalProvider(row) && row.localOnly !== false && localIds.has(String(row.id || ''))) ambiguous(row.id);
+      }
+      var isLocalModel = row => {
+        if (!row) return false;
+        if (row.localOnly === true || deviceProvider(row.providerId) || isLocalModelChoice(row.id) || isLocalModelChoice(row.name)) return true;
+        if (row.localOnly === false || managedIds.has(String(row.providerId || ''))) return false;
+        if (explicitLocalIds.has(String(row.providerId || '')) || isLocalId(row.providerId)) return true;
+        if (localIds.has(String(row.providerId || ''))) ambiguous(row.providerId);
+        return false;
+      };
       var localProviders = explicitLocal || localProviderInput.length ? localProviderInput :
-        (localCatalog?.providers || []).filter(isLocalProvider);
+        (localCatalog?.providers || []);
       var localModelInput = Array.isArray(body.localModels) ? body.localModels :
         (Array.isArray(body.models) ? body.models.filter(isLocalModel) : []);
       var localModels = Array.isArray(body.localModels) || localModelInput.length ? localModelInput :
@@ -1361,21 +1558,27 @@
       // carries local provider or model rows.
       var keySource = Object.hasOwn(body, 'localKeys') ? body.localKeys :
         (localProviderInput.length || localModelInput.length ? body.keys : {});
-      var localKeys = Object.fromEntries(Object.entries(keySource || {}).filter(([id]) => localIds.has(id) || isLocalId(id)));
+      var localKeys = Object.fromEntries(Object.entries(keySource || {}).filter(([id]) =>
+        deviceProvider(id) || (Object.hasOwn(body, 'localKeys') || !managedIds.has(id)) && (localIds.has(deviceProviderId(id)) || isLocalId(id)))
+        .map(([id, value]) => [deviceProviderId(id), value]));
       var localResult = null;
       var hasLocal = explicitLocal || localProviderInput.length || localModelInput.length || Object.keys(localKeys).length ||
         (Array.isArray(body.localModels) && body.localRevision != null);
-      if (hasLocal) {
-        if (!local || typeof local.save !== 'function') throw new Error('本地模型存储不可用');
-        localResult = await local.save({ providers: localProviders, models: localModels, keys: localKeys, expectedRevision: body.localRevision });
-      }
       var { localProviders: _localProviders, localModels: _localModels, localKeys: _localKeys,
         localRevision: _localRevision, ...managedInput } = body;
       var managedBody = {
         ...managedInput,
-        providers: Array.isArray(body.providers) ? providers.filter(row => !isLocalProvider(row) && !localIds.has(String(row.id || ''))) : body.providers,
-        models: Array.isArray(body.models) ? body.models.filter(row => !isLocalModel(row) && !localIds.has(String(row.providerId || ''))) : body.models,
-        keys: Object.fromEntries(Object.entries(body.keys || {}).filter(([id]) => !localIds.has(id) && !isLocalId(id))),
+        providers: Array.isArray(body.providers) ? providers.filter(row => !isLocalProvider(row)) : body.providers,
+        models: Array.isArray(body.models) ? body.models.filter(row => !isLocalModel(row)) : body.models,
+        keys: Object.fromEntries(Object.entries(body.keys || {}).filter(([id]) => {
+          if (deviceProvider(id)) return false;
+          if (managedIds.has(id)) return true;
+          if (localIds.has(id) || isLocalId(id)) {
+            if (!Object.hasOwn(body.localKeys || {}, id) && !explicitLocalIds.has(id)) ambiguous(id);
+            return false;
+          }
+          return true;
+        })),
       };
       // Local-only fields are never part of the Hub request, even when the
       // desktop catalog is temporarily unavailable or an older caller sends
@@ -1392,6 +1595,11 @@
         (explicitLocal || (!localProviderInput.length && !localModelInput.length));
       var hasManaged = managedBody.providers?.length || managedBody.models?.length || Object.keys(managedBody.keys || {}).length ||
         managedReplacement;
+      if (hasLocal) {
+        if (!local || typeof local.save !== 'function') throw new Error('本地模型存储不可用');
+        localResult = projectLocalModelCatalog(await local.save({ providers: localProviders.map(nativeLocalProvider),
+          models: localModels.map(nativeLocalModel), keys: localKeys, expectedRevision: body.localRevision }));
+      }
       if (!hasManaged && hasLocal) return localResult || { ok: true };
       if (!sameDomainScope(scope)) throw staleTaskScope();
       var r = await jfetch('/my-models', { method: 'PUT', body: JSON.stringify(managedBody) });
@@ -1400,30 +1608,39 @@
     },
     async localModels() {
       var local = global.soduWorkAPI?.localModels;
-      return local && typeof local.get === 'function' ? local.get() : { providers: [], usable: [], myModels: [], mediaUsable: {} };
+      return local && typeof local.get === 'function' ? projectLocalModelCatalog(await local.get()) : { providers: [], usable: [], myModels: [], mediaUsable: {} };
     },
     async saveLocalModels(body) {
       var local = global.soduWorkAPI?.localModels;
       if (!local || typeof local.save !== 'function') throw new Error('本地模型存储不可用');
-      return local.save(body || {});
+      var value = body || {};
+      return projectLocalModelCatalog(await local.save({ ...value,
+        ...(Array.isArray(value.providers) ? { providers: value.providers.map(nativeLocalProvider) } : {}),
+        ...(Array.isArray(value.models) ? { models: value.models.map(nativeLocalModel) } : {}),
+        ...(value.keys ? { keys: Object.fromEntries(Object.entries(value.keys).map(([id, key]) => [deviceProviderId(id), key])) } : {}),
+      }));
     },
     async testLocalModel(providerId, modelName) {
       var local = global.soduWorkAPI?.localModels;
       if (!local || typeof local.test !== 'function') throw new Error('本地模型存储不可用');
-      return local.test(providerId || '', modelName || '');
+      return local.test(deviceProviderId(providerId), modelName || '');
     },
     /*
      * Test the effective key immediately: use a personal override when configured, otherwise
      * the company key.
      */
-    async testMyModel(providerId) {
+    async testMyModel(providerId, options) {
       var scope = domainScope();
       var local = global.soduWorkAPI?.localModels;
       var catalog = await localModelCatalog();
-      if (catalog && (catalog.providers || []).some(row => row.id === providerId && row.localOnly)) {
-        var model = (catalog.myModels || []).find(row => row.providerId === providerId);
-        return local.test(providerId, model?.name || '');
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      var nativeId = deviceProviderId(providerId), localProvider = (catalog?.providers || []).find(row => row.id === nativeId);
+      if (deviceProvider(providerId) || options?.localOnly === true) {
+        if (!localProvider || !local?.test) throw new Error('本地模型服务已不可用，请刷新目录后重试');
+        var model = (catalog.myModels || []).find(row => row.providerId === nativeId);
+        return local.test(nativeId, model?.name || '');
       }
+      if (localProvider && options?.localOnly !== false) throw new Error('模型服务来源不明确，请刷新模型目录后重试');
       if (!sameDomainScope(scope)) throw staleTaskScope();
       var r = await jfetch('/my-models/test', { method: 'POST',
         body: JSON.stringify({ providerId: providerId }) });
@@ -1434,12 +1651,16 @@
       var scope = domainScope();
       var local = global.soduWorkAPI?.localModels;
       var localCatalog = await localModelCatalog();
-      var localProvider = (localCatalog?.providers || []).find(row => row?.id === body.providerId && row.localOnly);
-      if (localProvider) {
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      var nativeId = deviceProviderId(body.providerId);
+      var localProvider = (localCatalog?.providers || []).find(row => row?.id === nativeId);
+      if (deviceProvider(body.providerId) || body.localOnly === true) {
+        if (!localProvider) throw new Error('本地模型服务已不可用，请刷新目录后重试');
         if (!local || typeof local.test !== 'function') throw new Error('本地模型存储不可用');
         var localModel = String(body.model || '').trim() ||
-          (localCatalog?.myModels || []).find(row => row.providerId === body.providerId)?.name || '';
-        var probe = await local.test(body.providerId, localModel);
+          (localCatalog?.myModels || []).find(row => row.providerId === nativeId)?.name || '';
+        var probe = await local.test(nativeId, localModel);
+        if (!sameDomainScope(scope)) throw staleTaskScope();
         var checks = {};
         for (var key of (Array.isArray(body.checks) ? body.checks : ['connection'])) {
           checks[key] = key === 'connection'
@@ -1452,6 +1673,7 @@
           checkedAt: new Date().toISOString(), localOnly: true,
           detail: probe?.detail || '' };
       }
+      if (localProvider && body.localOnly !== false) throw new Error('模型服务来源不明确，请刷新模型目录后重试');
       if (!sameDomainScope(scope)) throw staleTaskScope();
       var result = await jfetch('/my-models/capabilities/check', { method: 'POST',
         body: JSON.stringify(body), signal: _abortSignal(140000) });
@@ -1474,6 +1696,7 @@
     },
     async localAgentSetup() {
       var requestScope = taskStorageKey('ops'), requestHub = base(), epoch = _registrationEpoch;
+      var modelScope = domainScope();
       function currentRequest() {
         if (requestScope !== taskStorageKey('ops') || requestHub !== base() || epoch !== _registrationEpoch) {
           throw staleTaskScope();
@@ -1486,12 +1709,32 @@
         if (!row || row.execution === 'backend') return false;
         return row.scope != null && row.scope !== '' ? row.scope === 'current-instance' : row.isCurrentDevice === true;
       }
+      // The Hub catalog never contains device-owned models. Read only the
+      // local metadata so Agent management can advertise the current Runner's
+      // real capability without sending credentials, endpoints, or references
+      // to the Hub.
+      var localCatalog = null;
+      try { localCatalog = await localModelCatalog(); } catch (_) { localCatalog = null; }
+      currentRequest();
+      var localDefaults = await localAgentDefaults(modelScope);
+      currentRequest();
+      var localRows = (Array.isArray(localCatalog?.usable) ? localCatalog.usable : [])
+        .filter(function (row) {
+          return row && row.localOnly === true && String(row.modality || 'chat') === 'chat';
+        })
+        .map(function (row) {
+          return { name: String(row.name || row.id || ''), label: String(row.label || row.name || row.id || ''),
+            provider: String(row.providerName || row.providerId || '本机'), providerKind: 'local',
+            keyFrom: 'local', localOnly: true };
+        })
+        .filter(function (row) { return /^local:model-[a-f0-9]{32}$/.test(row.name); });
+      var hasLocalModel = localRows.length > 0;
       var inventory = await jfetch('/runners', { taskScope: requestScope }) || {};
       currentRequest();
       async function unavailable() {
         var reason = inventory.localRunnerReason || await localRunnerReason();
         currentRequest();
-        return { machines: [], agents: [], models: [], modelCount: null, execution: 'runner',
+        return { machines: [], agents: [], models: [], modelCount: null, localModelCount: 0, execution: 'runner',
           env: { ok: false, why: reason || '当前客户端的 Runner 尚未连接，连接后会显示本机底座。' } };
       }
       var runners = (Array.isArray(inventory.runners) ? inventory.runners : []).filter(function (row) {
@@ -1501,7 +1744,8 @@
       if (!selected) return unavailable();
       var selectedId = runnerId(selected);
       // Keep the captured identity through both requests; an older Hub may ignore runnerId.
-      var data = await jfetch('/agent-setup?runnerId=' + encodeURIComponent(selectedId), { taskScope: requestScope }) || {};
+      var setupQuery = '?runnerId=' + encodeURIComponent(selectedId) + (hasLocalModel ? '&hasLocalModel=1' : '');
+      var data = await jfetch('/agent-setup' + setupQuery, { taskScope: requestScope }) || {};
       currentRequest();
       var machine = (Array.isArray(data.machines) ? data.machines : []).find(function (row) {
         if (runnerId(row) !== selectedId || row.execution === 'backend' || row.online === false) return false;
@@ -1512,10 +1756,34 @@
       if (!machine) return unavailable();
       machine = Object.assign({}, machine, { runnerId: selectedId, scope: 'current-instance', isCurrentDevice: true });
       var agents = Array.isArray(machine.agents) ? machine.agents : [];
+      agents = agents.map(function (agent) {
+        var selected = localDefaults?.selections?.[agent.key];
+        if (!selected?.configured || agent.modelPick === false || ['codex', 'claude'].includes(agent.key)) return agent;
+        var modelStates = ['ready', 'ok', 'nollm', 'needmodel'];
+        var states = [agent.setupState, agent.displayState, agent.state].filter(Boolean);
+        var modelOnly = agent.installed !== false && agent.present !== false &&
+          states.every(function (state) { return modelStates.includes(state); });
+        var modelMissing = states.some(function (state) { return ['nollm', 'needmodel'].includes(state); });
+        var state = selected.unavailable ? 'nollm' : modelMissing ? 'ready' : states[0] || 'ready';
+        // Keep every readiness field consistent with the device-owned selection.
+        // Installation, account and runtime failures remain authoritative.
+        var readiness = modelOnly ? { state: state, setupState: state, displayState: state,
+          ...(selected.unavailable ? { why: '原本地默认模型已删除或不可用，请重新选择' }
+            : modelMissing ? { why: '' } : {}) } : {};
+        return { ...agent, model: selected.modelName, modelEffective: selected.modelName,
+          modelGone: selected.unavailable, localModelDefault: true,
+          configRevision: 'local:' + String(localCatalog?.revision ?? 'unavailable'),
+          ...readiness };
+      });
+      machine = { ...machine, agents };
+      var hubModels = Array.isArray(data.models) ? data.models : [];
+      var models = hubModels.concat(localRows);
       // Never reuse first-machine compatibility fields returned by an older Hub.
+      var hubModelCount = typeof data.modelCount === 'number' ? data.modelCount : null;
       return { machines: [machine], agents: agents, env: machine.env || {}, execution: 'runner',
-        models: Array.isArray(data.models) ? data.models : [],
-        modelCount: typeof data.modelCount === 'number' ? data.modelCount : null };
+        models: models,
+        modelCount: hubModelCount == null ? (localRows.length ? localRows.length : null) : hubModelCount + localRows.length,
+        localModelCount: localRows.length };
     },
     async myUsage(days) {
       var span = Math.max(1, Math.min(365, Number(days || 30)));
@@ -1536,7 +1804,23 @@
     },
     /* Run a minimal real task using the same effective-key resolution as normal dispatch. */
     async agentProbe(key, model, runnerId) {
-      if (isLocalModelChoice(model)) throw new Error('本地模型请在「我的模型」中测试');
+      var scope = domainScope(), defaults = !model || isLocalModelChoice(model) ? await localAgentDefaults(scope) : null;
+      var preferred = !model && defaults?.selections?.[key];
+      if (isLocalModelChoice(model) || preferred?.configured) {
+        if (!defaults) throw new Error('本地模型测试不可用，请更新客户端');
+        var setup = await this.localAgentSetup();
+        if (!sameDomainScope(scope)) throw staleTaskScope();
+        var isCurrentRunner = runnerId && (setup.machines || []).some(row => row.runnerId === runnerId && row.isCurrentDevice === true);
+        if (isLocalModelChoice(model) && !isCurrentRunner) throw new Error('本地模型只能在当前设备测试');
+        if (isCurrentRunner) {
+          if (preferred?.unavailable) throw new Error('原本地默认模型已删除或不可用，请重新选择');
+          var tested = await global.soduWorkAPI.localAgentModels.probe({ agentId: key,
+            modelName: model || preferred.modelName, scopeKey: defaults.scopeKey,
+            ...(preferred ? { expectedRevision: defaults.revision } : {}) });
+          if (!sameDomainScope(scope)) throw staleTaskScope();
+          return tested;
+        }
+      }
       var r = await jfetch('/agent-setup/probe', { method: 'POST', taskScope: taskStorageKey('ops'),
         body: JSON.stringify({ key: key, model: model || '', runnerId: runnerId || '' }) });
       mark(true); return r;
@@ -1547,11 +1831,25 @@
     },
 
     async setAgentModel(key, model) {
-      if (isLocalModelChoice(model)) throw new Error('本地模型仅能在本机对话中选择，不能设为后台默认模型');
-      var scope = domainScope();
+      var scope = domainScope(), requestScope = taskStorageKey('ops');
+      var defaults = await localAgentDefaults(scope);
+      if (isLocalModelChoice(model)) {
+        if (!defaults) throw new Error('本地模型默认设置存储不可用，请更新客户端');
+        var localResult = await global.soduWorkAPI.localAgentModels.set({ agentId: key, modelName: model,
+          scopeKey: defaults.scopeKey, expectedRevision: defaults.revision });
+        if (!sameDomainScope(scope)) throw staleTaskScope();
+        await invalidateDomain('models', scope);
+        return localResult;
+      }
       var r = await jfetch('/agent-setup/model', {
-        method: 'PUT', taskScope: taskStorageKey('ops'), body: JSON.stringify({ key: key, model: model || '' })
+        method: 'PUT', taskScope: requestScope, body: JSON.stringify({ key: key, model: model || '' })
       });
+      if (!sameDomainScope(scope)) throw staleTaskScope();
+      if (defaults?.selections?.[key]?.configured) {
+        await global.soduWorkAPI.localAgentModels.remove({ agentId: key, scopeKey: defaults.scopeKey,
+          expectedRevision: defaults.revision });
+        if (!sameDomainScope(scope)) throw staleTaskScope();
+      }
       await invalidateDomain('models', scope);
       mark(true); return r;
     },
@@ -1857,38 +2155,105 @@
        * Propagate schedule-list failures to the retry UI; returning [] would misrepresent an
        * outage as an empty list.
        */
-      var v = await jfetch('/schedules'); mark(true); return v || [];
+      var operation = automationOperationScope();
+      var v = await jfetch('/schedules', { taskScope: operation.taskScope });
+      assertAutomationScope(operation);
+      var rows = Array.isArray(v) ? v : [];
+      var local = await readAutomationModels(rows.map(function (row) { return String(row?.id || ''); }).filter(Boolean), operation);
+      assertAutomationScope(operation);
+      rows = rows.map(function (row) {
+        var source = String(row?.modelSource || '').trim().toLowerCase();
+        var rawModel = String(row?.modelName || '');
+        if (source === 'device' && !local[String(row?.id || '')]) {
+          return { ...row, modelName: 'local:unavailable', localModelUnavailable: true };
+        }
+        var legacyLocal = !rawModel || isLocalModelChoice(rawModel);
+        var modelName = ((source === 'device' || (!source && legacyLocal)) &&
+          local[String(row?.id || '')]) || rawModel;
+        return modelName ? { ...row, modelName: modelName } : row;
+      });
+      mark(true); return rows;
     },
     async listScheduleTemplates() {
       var v = await jfetch('/schedules/templates'); mark(true); return Array.isArray(v) ? v : [];
     },
     async preflightSchedule(b, options) {
-      requireRemoteModel(b?.modelName);
+      var request = scheduleRequest(b), localModel = request.localModel;
       var epoch = _registrationEpoch, hub = base(), owner = taskStorageKey('ops');
-      var r = await jfetch('/schedules/preflight',
-        { method: 'POST', body: JSON.stringify(b || {}) });
-      if (epoch !== _registrationEpoch || hub !== base() || owner !== taskStorageKey('ops')) throw staleTaskScope();
       var bridge = global.soduWorkAPI;
-      if (r && r.deviceDependencies && bridge && bridge.automationPreflight) {
-        r = await bridge.automationPreflight({ server: r, hub: hub, force: !!(options && options.force) });
+      if (localModel && (!bridge || typeof bridge.automationPreflight !== 'function')) {
+        throw new Error('当前客户端无法验证本地模型，请更新客户端后重试');
+      }
+      var r = await jfetch('/schedules/preflight',
+        { method: 'POST', taskScope: owner, body: JSON.stringify(request.value) });
+      if (epoch !== _registrationEpoch || hub !== base() || owner !== taskStorageKey('ops')) throw staleTaskScope();
+      if (r && bridge && bridge.automationPreflight && (r.deviceDependencies || localModel)) {
+        r = await bridge.automationPreflight({ server: r, hub: hub, force: !!(options && options.force),
+          localModelName: localModel, assigneeId: String(b?.assigneeId || ''),
+          assigneeMode: String(b?.assigneeMode || ''), assigneeClientId: String(b?.assigneeClientId || '') });
         if (epoch !== _registrationEpoch || hub !== base() || owner !== taskStorageKey('ops')) throw staleTaskScope();
       }
       mark(true); return r || {};
     },
     async createSchedule(b) {
-      requireRemoteModel(b?.modelName);
-      var r = await jfetch('/schedules', { method: 'POST', taskScope: taskStorageKey('ops'), body: JSON.stringify(b || {}) });
+      var operation = automationOperationScope(), request = scheduleRequest(b);
+      var r = await jfetch('/schedules', { method: 'POST', taskScope: operation.taskScope, body: JSON.stringify(request.value) });
+      assertAutomationScope(operation);
+      if (request.localModel) {
+        if (String(r?.modelSource || '').trim().toLowerCase() !== 'device') {
+          if (r?.id) { try { assertAutomationScope(operation); await jfetch('/schedules/' + encodeURIComponent(r.id), { method: 'DELETE', taskScope: operation.taskScope }); } catch (_) {} }
+          throw new Error('当前 Hub 不支持本地模型自动化，请升级 Hub 后重试');
+        }
+        try { await saveAutomationModel(r?.id, request.localModel, operation); }
+        catch (error) {
+          if (r?.id) { try { assertAutomationScope(operation); await jfetch('/schedules/' + encodeURIComponent(r.id), { method: 'DELETE', taskScope: operation.taskScope }); } catch (_) {} }
+          throw error;
+        }
+        r = { ...r, modelName: request.localModel };
+      }
       mark(true); return r;
     },
     async updateSchedule(sid, b) {
-      requireRemoteModel(b?.modelName);
-      var r = await jfetch('/schedules/' + encodeURIComponent(sid),
-        { method: 'PUT', body: JSON.stringify(b || {}) });
-      mark(true); return r;
+      var operation = automationOperationScope(), request = scheduleRequest(b);
+      return mutateAutomation(operation, sid, async function () {
+        var hasModelField = Object.hasOwn(request.value, 'modelName') || Object.hasOwn(request.value, 'modelSource'), previous = null;
+        if (request.localModel && (!window.soduWorkAPI?.automationModels ||
+            typeof window.soduWorkAPI.automationModels.set !== 'function')) {
+          throw new Error('当前客户端无法保存自动化本地模型选择');
+        }
+        if (hasModelField && window.soduWorkAPI?.automationModels) previous = await readAutomationModel(sid, operation);
+        if (hasModelField && window.soduWorkAPI?.automationModels) await saveAutomationModel(sid, request.localModel, operation);
+        assertAutomationScope(operation);
+        var r;
+        try {
+          r = await jfetch('/schedules/' + encodeURIComponent(sid),
+            { method: 'PUT', taskScope: operation.taskScope, body: JSON.stringify(request.value) });
+          assertAutomationScope(operation);
+        } catch (error) {
+          if (hasModelField && previous?.available) {
+            try { await saveAutomationModel(sid, previous.configured ? previous.modelName : '', operation); } catch (_) {}
+          }
+          throw error;
+        }
+        if (request.localModel && String(r?.modelSource || '').trim().toLowerCase() !== 'device') {
+          // The Hub has accepted a managed source. Do not retain a stale local
+          // mapping that would make a later legacy response look device-owned.
+          if (hasModelField) { try { await saveAutomationModel(sid, '', operation); } catch (_) {} }
+          throw new Error('当前 Hub 不支持本地模型自动化，请升级 Hub 后重试');
+        }
+        if (request.localModel) r = { ...r, modelName: request.localModel };
+        mark(true); return r;
+      });
     },
     async deleteSchedule(sid) {
-      var r = await jfetch('/schedules/' + encodeURIComponent(sid), { method: 'DELETE' });
-      mark(true); return r;
+      var operation = automationOperationScope();
+      return mutateAutomation(operation, sid, async function () {
+        var r = await jfetch('/schedules/' + encodeURIComponent(sid), { method: 'DELETE', taskScope: operation.taskScope });
+        assertAutomationScope(operation);
+        try { await saveAutomationModel(sid, '', operation); } catch (error) { if (error?.code === 'STALE_TASK_SCOPE') throw error; }
+        assertAutomationScope(operation);
+        mark(true); return r;
+      });
     },
     async listScheduleRuns(sid, limit) {
       var q = '?limit=' + encodeURIComponent(limit || 20);
@@ -1896,11 +2261,46 @@
       mark(true); return (r && r.items) || [];
     },
     async runSchedule(sid, options) {
+      var operation = automationOperationScope();
       var epoch = _registrationEpoch, hub = base(), owner = taskStorageKey('ops');
       var body = options && options.instanceId ? { instanceId: String(options.instanceId) } : {};
       var r = await jfetch('/schedules/' + encodeURIComponent(sid) + '/run', {
-        method: 'POST', body: JSON.stringify(body)
+        method: 'POST', taskScope: operation.taskScope, body: JSON.stringify(body)
       });
+      assertAutomationScope(operation);
+      if (r && (r.conversationInput || String(r.modelSource || '').trim().toLowerCase() === 'device')) {
+        try {
+          var source = String(r.conversationInput?.modelSource || r.modelSource || '').trim().toLowerCase();
+          if (source === 'device') {
+            if (!window.soduWorkAPI?.automationModels) {
+              r = { ...r, conversationInput: null, localModelUnavailable: true };
+            } else {
+              var selected = await readAutomationModel(sid, operation);
+              if (selected.available && selected.configured && selected.modelName && r.conversationInput) {
+                r = { ...r, conversationInput: { ...r.conversationInput, modelName: selected.modelName } };
+              } else {
+                r = { ...r, conversationInput: null, localModelUnavailable: true };
+              }
+            }
+          } else if (!source && r.conversationInput && window.soduWorkAPI?.automationModels) {
+            // Legacy Hub responses predate modelSource. A known local mapping
+            // may be overlaid only for this exact schedule; managed responses
+            // with an explicit source never take this compatibility path.
+            var legacySelected = await readAutomationModel(sid, operation);
+            if (!String(r.conversationInput.modelName || '').trim() &&
+                legacySelected.available && legacySelected.configured && legacySelected.modelName) {
+              r = { ...r, conversationInput: { ...r.conversationInput, modelName: legacySelected.modelName } };
+            }
+          }
+        } catch (error) {
+          assertAutomationScope(operation);
+          if (error?.code === 'STALE_TASK_SCOPE') throw error;
+          // The native automation worker will report a local storage failure without
+          // opening the conversation with a managed fallback model.
+          r = { ...r, conversationInput: null, localModelUnavailable: true };
+        }
+      }
+      assertAutomationScope(operation);
       // Wake only after the Hub accepts the run. The native worker coalesces wakes;
       // an older/unavailable bridge must not turn an accepted run into a UI error.
       if (epoch === _registrationEpoch && hub === base() && owner === taskStorageKey('ops') && r && r.ok !== false) {

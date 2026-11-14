@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -377,12 +378,12 @@ def detect_all(*, has_model: bool = True) -> list[dict]:
 
 
 # Installation, version-check, and probe jobs.
-def _new_job(key: str, action: str) -> str:
+def _new_job(key: str, action: str, *, private: bool = False) -> str:
     jid = uuid.uuid4().hex[:12]
     with _JOB_LOCK:
         _JOBS[jid] = {"id": jid, "key": key, "action": action, "state": "running",
                       "lines": [], "ok": None, "detail": "", "code": None,
-                      "startedAt": time.time(), "endedAt": None}
+                      "startedAt": time.time(), "endedAt": None, "_private": private}
         # Retain active jobs so a live login can always be cancelled by its ID.
         if len(_JOBS) > 30:
             finished = [j for j in _JOBS.values() if j["state"] == "done"]
@@ -394,7 +395,7 @@ def _new_job(key: str, action: str) -> str:
 def _say(jid: str, line: str) -> None:
     with _JOB_LOCK:
         j = _JOBS.get(jid)
-        if j is None:
+        if j is None or j.get("_private"):
             return
         j["lines"].append(line[:400])
         if len(j["lines"]) > _LOG_CAP:
@@ -406,12 +407,20 @@ def _done(jid: str, ok: bool, detail: str, code: int | None = None) -> None:
         j = _JOBS.get(jid)
         if j is None:
             return
+        if j.get("_private"):
+            detail = "本地 Agent 实际测试通过" if ok else "本地 Agent 实际测试失败，请检查本机模型和执行底座"
         j.update(state="done", ok=ok, detail=detail, code=code, endedAt=time.time())
 
 
-def job(jid: str, *, owner_id: str | None = None) -> dict | None:
+def job(jid: str, *, owner_id: str | None = None, include_private: bool = False) -> dict | None:
     with _JOB_LOCK:
         j = _JOBS.get(jid)
+        if j and j.get("_private"):
+            if not include_private:
+                return None
+            return {"id": j["id"], "key": j["key"], "action": "probe", "state": j["state"],
+                    "ok": j["ok"], "detail": j["detail"] or "正在本机实际测试 Agent", "lines": [],
+                    "private": True, "startedAt": j["startedAt"], "endedAt": j["endedAt"]}
         if (j and owner_id is not None and j.get("action") in {"login", "login-isolated"}
                 and j.get("_owner", "") != owner_id):
             return None
@@ -428,9 +437,12 @@ def _guard(jid: str, fn, *args) -> None:
     try:
         fn(jid, *args)
     except Exception as e:  # noqa: BLE001
-        log.exception("agent 作业炸了")
-        _say(jid, f"[异常] {type(e).__name__}: {e}")
-        _done(jid, False, f"没跑成（{type(e).__name__}）：{str(e)[:120]}")
+        with _JOB_LOCK:
+            private = bool((_JOBS.get(jid) or {}).get("_private"))
+        if not private:
+            log.exception("agent 作业炸了")
+            _say(jid, f"[异常] {type(e).__name__}: {e}")
+        _done(jid, False, "" if private else f"没跑成（{type(e).__name__}）：{str(e)[:120]}")
     finally:
         with _JOB_LOCK:
             j = _JOBS.get(jid)
@@ -763,11 +775,18 @@ def _run_npm(jid: str, key: str, action: str) -> None:
 
 
 # Runtime probes.
-def start_probe(key: str, llm: dict) -> str:
+def start_probe(key: str, llm: dict, *, private: bool = False) -> str:
     """The caller resolves llm base, key, and model using the dispatch credentials. An empty
     configuration selects runtime-managed authentication.
     """
-    jid = _new_job(key, "probe")
+    from ..agent_catalog import AGENTS
+    llm = dict(llm or {})
+    if llm.get("localOnly") is True and not private:
+        raise ValueError("本地模型测试只允许通过本机私有通道执行")
+    if private and (llm.get("localOnly") is not True or
+                    AGENTS.get(key, {}).get("modelMode") != "managed"):
+        raise ValueError("本地模型测试只支持本机受管型执行底座")
+    jid = _new_job(key, "probe", private=private)
     _spawn(jid, _run_probe, key, llm or {})
     return jid
 
@@ -793,10 +812,32 @@ def _probe_args(key: str, args: list[str]) -> list[str]:
 
 
 def _run_probe(jid: str, key: str, llm: dict) -> None:
+    with _JOB_LOCK:
+        private = bool((_JOBS.get(jid) or {}).get("_private"))
+    if private:
+        with tempfile.TemporaryDirectory(prefix="soduwork-private-agent-probe-") as root:
+            workspace = os.path.join(root, "workspace")
+            os.makedirs(workspace)
+            _run_probe_once(jid, key, llm, workspace=workspace, runtime_root=root, private=True)
+        with _JOB_LOCK:
+            outcome = (_JOBS.get(jid) or {}).pop("_privateOutcome", False)
+        _done(jid, outcome, "")
+        return
+    _run_probe_once(jid, key, llm)
+
+
+def _run_probe_once(jid: str, key: str, llm: dict, *, workspace=None,
+                    runtime_root=None, private=False) -> None:
     prof = _PROFILES.get(key) or {}
     steps: list[dict] = []
 
     def _fin(ok: bool, detail: str) -> None:
+        if private:
+            # Do not expose completion before the private configuration is removed.
+            with _JOB_LOCK:
+                if jid in _JOBS:
+                    _JOBS[jid]["_privateOutcome"] = bool(ok)
+            return
         rec = {"ok": ok, "detail": detail, "at": time.time(), "steps": steps}
         if key == "harness2" and ok:
             rec["coverage"] = harness2_probe.COVERAGE
@@ -821,7 +862,8 @@ def _run_probe(jid: str, key: str, llm: dict) -> None:
     _say(jid, "   版本：" + ver)
 
     # Then perform a minimal model request.
-    if prof.get("needs_llm") and not (llm.get("base") and llm.get("key") and llm.get("model")):
+    if prof.get("needs_llm") and not (llm.get("base") and llm.get("model") and
+                                       (llm.get("key") or llm.get("localOnly") is True)):
         steps.append({"name": "能干活吗", "ok": False, "detail": "还没有能用的模型"})
         _fin(False, "它跑得起来，但 SoduWork 这边没有能用的模型——先去「我的模型」配一把 key。")
         return
@@ -831,7 +873,7 @@ def _run_probe(jid: str, key: str, llm: dict) -> None:
     # _env_for writes models.json and prepares environment variables.
     # Reuse the execution configuration logic.
     try:
-        ws = _probe_ws()
+        ws = workspace or _probe_ws()
         sid = str(uuid.uuid4())
         start = prof.get("start") or (lambda *a, **k: [])
         if key == "codex":
@@ -845,8 +887,17 @@ def _run_probe(jid: str, key: str, llm: dict) -> None:
             args = _probe_args(key, start(sid, "plan", ws, cfg))
             env = _env_for(prof, cfg, runtime_ref="probe-" + sid)
         else:
-            env = _env_for(prof, cfg)
-            args = _probe_args(key, start(sid, "work", ws, cfg))
+            if private:
+                from . import access_policy
+                cfg["local_workspace_root"] = ws
+                cfg["accessPolicy"] = access_policy.normalize({
+                    "schema": access_policy.SCHEMA, "mode": "readonly", "revision": 1,
+                    "workspaceRoot": os.path.abspath(ws)})
+                args = _probe_args(key, start(sid, "plan", ws, cfg))
+                env = _env_for(prof, cfg, runtime_ref="probe-" + sid, runtime_root=runtime_root)
+            else:
+                env = _env_for(prof, cfg)
+                args = _probe_args(key, start(sid, "work", ws, cfg))
     except Exception as e:  # noqa: BLE001
         from .codex_runtime_home import CodexLoginError
         # Only this typed error guarantees that its public text omits secrets.
@@ -900,7 +951,8 @@ def configure(key: str, llm: dict) -> dict:
         return {"ok": False, "detail": "没有这个 agent"}
     if not prof.get("needs_llm"):
         return {"ok": True, "detail": (_SPECS.get(key) or {}).get("config_how", "这个不用配")}
-    if not (llm.get("base") and llm.get("key") and llm.get("model")):
+    if not (llm.get("base") and llm.get("model") and
+            (llm.get("key") or llm.get("localOnly") is True)):
         return {"ok": False, "detail": "还没有能用的模型——先去「我的模型」配一把 key"}
     from .local_base import _env_for
     _env_for(prof, {"llm": llm, "local_cli": key})

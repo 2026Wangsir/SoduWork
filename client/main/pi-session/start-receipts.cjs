@@ -56,6 +56,7 @@ function create({ app, identityOf, request, intervalMs = 15000 }) {
             '/tasks/' + encodeURIComponent(row.taskId), {conversationId: row.conversationId, turnId: row.turnId}, step.payload);
           else await request(current, '/tasks/' + encodeURIComponent(row.taskId) + '/conversation-turn', {
             action: step.action, executor: 'native', conversationId: row.conversationId, turnId: row.turnId,
+            ...(row.modelSource === 'device' ? { modelSource: 'device', agentId: row.modelAgentId } : {}),
             ...(['auto', 'manual'].includes(step.submissionMode) ? {submissionMode: step.submissionMode} : {}),
           });
         } catch (error) {
@@ -79,7 +80,10 @@ function create({ app, identityOf, request, intervalMs = 15000 }) {
     const base = {destination: target, taskId: String(taskId),
       conversationId: String(scope.conversationId), turnId: String(scope.turnId)};
     const id = crypto.createHash('sha256').update(JSON.stringify(base)).digest('hex');
-    const row = read(id) || {...base, steps: []};
+    const row = read(id) || {...base,
+      ...(scope.modelSource === 'device' ? { modelSource: 'device', modelAgentId: String(scope.modelAgentId || '') } : {}), steps: []};
+    if (scope.modelSource && (row.modelSource || 'managed') !== scope.modelSource)
+      throw Error('Task receipt model source changed');
     if (started && !row.steps.some(step => step.action === 'started')) row.steps.unshift({action: 'started'});
     if (delivery && !row.steps.some(step => step.action === 'deliver')) {
       const terminalIndex = row.steps.findIndex(step => ['complete', 'fail', 'wait', 'cancel'].includes(step.action));

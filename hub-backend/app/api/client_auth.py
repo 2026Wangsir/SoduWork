@@ -346,8 +346,9 @@ async def authorize_ai(response: Response, model: str = "", agent: str = "",
     response.headers["Cache-Control"] = "private, no-store"
     from ..services import model_catalog, model_quota
     conf = {}
-    if agent.strip().lower().removeprefix("local:") == "pi":
-        want = model.strip() or model_catalog.agent_model(client, "pi")
+    runtime = model_quota.managed_runtime(agent)
+    if runtime:
+        want = model.strip() or model_catalog.agent_model(client, runtime)
         conf = await model_catalog.resolve(session, client, want)
         if not conf:
             raise HTTPException(400, "所选模型不可用，请刷新模型列表后重试")
@@ -356,7 +357,7 @@ async def authorize_ai(response: Response, model: str = "", agent: str = "",
     platform = status.pop("platformQuota", status.copy())
     return {"ok": True, "quota": status, "platformQuota": platform,
             "quotaScope": conf.get("quotaScope", "platform"), "quotaVersion": model_quota.VERSION,
-            "personalQuotaSupported": agent.strip().lower().removeprefix("local:") == "pi",
+            "personalQuotaSupported": bool(runtime),
             "resolvedModel": conf.get("model", ""), "providerId": conf.get("provider", "")}
 
 

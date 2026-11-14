@@ -17,7 +17,11 @@ function createLocalRequirementParser({ app, identityOf, fetchImpl = global.fetc
     const params = raw && typeof raw === 'object' ? raw : {};
     const model = localReference(params.model);
     if (!model) return { ok: false, code: 'APP_AI_LOCAL_MODEL_REQUIRED', reason: '本地需求解析只支持本地模型' };
-    return generate({ appBridge: { appId: 'local-requirement-parser' }, view: null }, { ...params, model });
+    const result = await generate({ appBridge: { appId: 'local-requirement-parser' }, view: null }, { ...params, model });
+    if (result?.ok && result.finishReason === 'length') {
+      return { ok: false, code: 'APP_AI_OUTPUT_LIMIT', reason: '本地模型输出达到长度上限，未生成完整需求' };
+    }
+    return result;
   };
 }
 

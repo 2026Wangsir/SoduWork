@@ -14,10 +14,17 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 
-def peer(home_key, expected_home, marker):
+def peer(home_key, expected_home, marker, local_only=""):
     assert os.environ[home_key] == expected_home
     assert Path(expected_home).is_dir()
     Path(marker).write_text("executor-started", encoding="utf-8")
+    if local_only and home_key == "QWEN_HOME":
+        assert os.environ["OPENAI_MODEL"] == "local-keyless"
+        assert "OPENAI_API_KEY" not in os.environ
+        assert os.environ.get("SODUWORK_QWEN_MODEL_LABEL")
+    if local_only and home_key == "CODEX_HOME":
+        gateway = json.loads(os.environ["DEFAULT_AUTH_REQUEST"])["_meta"]["gateway"]
+        assert "Authorization" not in gateway["headers"]
     sid = "private-home-fixture"
     for raw in sys.stdin:
         request = json.loads(raw)
@@ -83,7 +90,8 @@ async def run(agent, root):
         commands.append(True)
         return [sys.executable, str(BACKEND / "app/services/acp_bridge.py"),
                 "--cwd", ws, "--agent-name", agent, "--permission", "workspace", "--",
-                sys.executable, str(Path(__file__).resolve()), "--peer", spec["env"], str(home), str(marker)]
+                sys.executable, str(Path(__file__).resolve()), "--peer", spec["env"], str(home), str(marker),
+                "local" if (cfg.get("llm") or {}).get("localOnly") else ""]
 
     local_process._command_argv = argv
     machine = runner_main.Runner("http://127.0.0.1:1", "fixture", "fixture", "fixture", str(workspace))
@@ -91,18 +99,22 @@ async def run(agent, root):
         "memoryTotalBytes": 16 * 1024**3, "memoryAvailableBytes": 12 * 1024**3}
     refs = []
 
-    async def dispatch(label):
+    async def dispatch(label, local_model=False):
         reply = await machine._job({"op": "job.dispatch", "cli": agent, "dispatchId": label,
+            **({"_localParent": True} if local_model else {}),
             "task": {"id": "fixture-" + label, "title": "Private home verification", "note": "Complete verification"},
             "ctx": {"workDir": str(workspace), "workRoot": str(workspace)}, "cfg": {
                 "llm": {"base": f"http://127.0.0.1:{gateway.server_port}/v1",
-                        "key": "synthetic-model-key", "model": "fixture"}}})
+                        "key": "" if local_model else "synthetic-model-key",
+                        "model": "local-keyless" if local_model else "fixture",
+                        **({"localOnly": True, "authMode": "none"} if local_model else {})}}})
         assert reply["ok"], reply
         ref = reply["data"]["ref"]
         refs.append(ref)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            result = (await machine._job({"op": "job.session", "ref": ref, "limit": 1000}))["data"]
+            result = (await machine._job({"op": "job.session", "ref": ref, "limit": 1000,
+                **({"_localParent": True} if local_model else {})}))["data"]
             if result.get("status") in {"done", "failed", "stopped"}:
                 return result
             await asyncio.sleep(.05)
@@ -119,10 +131,15 @@ async def run(agent, root):
         assert healthy["status"] == "done", healthy
         assert marker.read_text() == "executor-started" and len(commands) == 1
         assert home.is_dir()
+        local = await dispatch("local-keyless", local_model=True)
+        assert local["status"] == "done", local
+        assert len(commands) == 2
+        assert local["model"] == "local-keyless", local
+        assert local["usageReceipts"] == [], local
         assert private_file.read_text() == "untouched-personal-state"
         assert list(personal.iterdir()) == [private_file]
         print(json.dumps({"ok": True, "agent": agent, "blockedBeforeExecutor": True,
-            "healthyRetry": True, "personalStateUnchanged": True}), flush=True)
+            "healthyRetry": True, "personalStateUnchanged": True, "localModelReady": True}), flush=True)
     finally:
         for ref in refs:
             if local_stream.is_running(ref):

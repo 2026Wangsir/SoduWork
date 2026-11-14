@@ -202,7 +202,8 @@ def _merge_runtime_cfg(current: dict | None, fresh: dict | None) -> dict:
 
 def _has_managed_model(cfg: dict | None) -> bool:
     llm = dict((cfg or {}).get("llm") or {})
-    return bool(llm.get("base") and llm.get("key") and llm.get("model"))
+    return bool(llm.get("base") and llm.get("model") and
+                (llm.get("key") or llm.get("localOnly") is True))
 
 
 def authorization_required_sync(ref: str) -> bool:
@@ -337,6 +338,11 @@ def _resume(ref: str, text: str, cfg: dict | None = None) -> dict:
 # Stream one execution turn.
 def _spawn(exe: str, args: list, prompt: str, ws: str, ref: str,
            cfg: dict | None = None, prof: dict | None = None) -> None:
+    from . import runner_usage_receipts
+    with _LOCK:
+        run = _RUNS.get(ref)
+        if run is not None:
+            runner_usage_receipts.capture(run, cfg or run.get("cfg") or {})
     from .local_process import spawn
     spawn(exe, args, prompt, ws, ref, cfg, prof,
           gate_check=_llm_gate_check, on_line=_on_line,
@@ -403,6 +409,16 @@ def _accumulate_usage(run: dict, usage: dict, *, cost=None, turns=None,
             acc['turns'] = int(acc.get('turns') or 0) + int(turns)
         if step:
             acc['steps'] = int(acc.get('steps') or 0) + 1
+        from . import runner_usage_receipts
+        runner_usage_receipts.append(run, {
+            'input': effective_input, 'output': billed['output_tokens'],
+            'cacheRead': billed['cache_read_tokens'], 'cacheWrite': billed['cache_write_tokens'],
+            'reasoning': billed['reasoning_tokens'], 'total': billed['total_tokens'],
+            'requests': billed['requests'], 'inputIncludesCache': True,
+            'costUsd': str(exact_cost), 'costKnown': billed['cost_known'],
+            'turns': int(turns) if isinstance(turns, (int, float)) else 0,
+            'steps': 1 if step else 0,
+        })
         run['usage'] = acc
 
 
@@ -813,6 +829,10 @@ def _on_line(ref: str, raw: str, term: dict, stream: str = "out",
         seq = int(run.get("seq") or 0)
         stamped = []
         for it in new:
+            from . import runner_usage_receipts
+            diagnostic = isinstance(m, dict) and (m.get("type") in {"error", "turn.failed"} or
+                isinstance(m.get("item"), dict) and m["item"].get("type") == "error")
+            it = runner_usage_receipts.sanitize_event(run, it, diagnostic=diagnostic)
             seq += 1
             it["seq"] = seq
             it["at"] = at
@@ -884,6 +904,7 @@ def _scrub_runtime_config(ref: str) -> None:
         if run is not None:
             from . import codex_account_acp
             run["cfg"] = codex_account_acp.retained_config(run)
+            run.pop("_activeModelConfig", None)
 
 
 def _finish(ref: str, code: int, term: dict, hard_err: str) -> None:

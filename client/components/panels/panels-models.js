@@ -59,8 +59,9 @@ function openModelsPanel(options) {
   const opts = options || {};
   _mdEditor = opts.editor ? String(opts.providerId || '') : '';
   if (_mdEditor.indexOf('__new__:') === 0 || _mdEditor === '__new__') {
-    const id = _mdEditor.split(':')[1] || ('custom-' + Date.now().toString(36) + '-' +
-      Math.random().toString(36).slice(2, 7));
+    const rawId = _mdEditor.startsWith('__new__:') ? _mdEditor.slice('__new__:'.length) : '';
+    const id = rawId.startsWith('device:') ? rawId : 'device:' + (rawId || ('custom-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2, 7)));
     _mdNew = { id, name: '', kind: 'openai-compat', baseUrl: '', defaultBaseUrl: '',
       personal: true, localOnly: true, authMode: 'key', modelNames: [], note: '', myKeySet: false, keySet: false };
   }
@@ -296,7 +297,7 @@ function _mdDetailHtml(p) {
   const count = models.length + own.length;
   const host = _mdHost(p.baseUrl) || '尚未连接';
   const route = state === 'mine' ? '使用你的个人额度' : state === 'org' ? '使用公司统一额度' :
-    state === 'local' ? '本机免密服务' : '完成配置后可用';
+    state === 'local' ? (p.authMode === 'none' ? '本机免密服务' : '本机保存的访问凭据') : '完成配置后可用';
   return '<header class="cfg-detail-head">' +
       '<span class="cfg-detail-icon">' + _MD_ICON + '</span>' +
       '<div class="cfg-detail-title"><span>模型服务</span><h2' + _mdProviderNameAttrs(p) + '>' + esc(p.name || '添加模型服务') + '</h2>' +
@@ -313,6 +314,7 @@ function _mdDetailHtml(p) {
 }
 
 function _mdBodyHtml(p, s, ms, own, t) {
+  const clearKeyLabel = p.localOnly ? '移除本地密钥' : '停止使用个人额度';
   return '<div class="md-row-b" id="md-body-' + esc(p.id) + '" role="region">' +
     '<section class="md-settings-section"><header class="md-section-heading"><b>连接设置</b><small>填写服务提供的 API 地址</small></header>' +
     '<div class="md-connect-fields">' +
@@ -335,7 +337,7 @@ function _mdBodyHtml(p, s, ms, own, t) {
     '<header class="md-section-heading"><b>访问凭据</b><small>密钥保存后只显示配置状态，不回显明文</small></header>' +
     '<p class="md-model-help">连接测试优先读取模型列表；列表可访问不代表聊天生成、余额或当前 Agent 的协议兼容性已验证。列表接口不可用时会尝试一个最小聊天请求，可能产生用量。</p>' +
     (p.authMode !== 'none'
-      ? '<label class="md-key-label" for="md-key-input">个人 API Key</label>' +
+      ? '<label class="md-key-label" for="md-key-input">' + (p.localOnly ? '本地 API Key' : '个人 API Key') + '</label>' +
         '<div class="md-keyrow">' +
           '<input type="password" class="md-in" id="md-key-input" data-pkey="' + esc(p.id) + '" ' +
             'autocomplete="new-password" placeholder="' +
@@ -347,10 +349,12 @@ function _mdBodyHtml(p, s, ms, own, t) {
         '</div>' +
         '<div class="md-meta">' +
           (p.myKeySet ? '<div class="md-personal-key-card"><div class="md-personal-key-copy">' +
-                          '<b>当前使用这个模型的个人 Key</b><span>' + _mdMessage('models.keyLength', '个人 Key 已配置 · {count} 位，请求会优先使用你的个人额度', { count: p.myKeyLen }) + '</span>' +
-                        '</div><button type="button" class="md-clear-key" data-pclear="' + esc(p.id) + '" aria-label="停止使用个人额度" title="停止使用个人额度"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25"></circle><path d="M6.5 10h7"></path></svg><span>停止使用个人额度</span></button></div>'
+                          (p.localOnly ? '<b>本地访问密钥已配置</b><span>密钥仅保存在当前设备，本地模型不使用 Hub 模型额度</span>'
+                            : '<b>当前使用这个模型的个人 Key</b><span>' + _mdMessage('models.keyLength', '个人 Key 已配置 · {count} 位，请求会优先使用你的个人额度', { count: p.myKeyLen }) + '</span>') +
+                        '</div><button type="button" class="md-clear-key" data-pclear="' + esc(p.id) + '" aria-label="' + clearKeyLabel + '" title="' + clearKeyLabel + '"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25"></circle><path d="M6.5 10h7"></path></svg><span>' + clearKeyLabel + '</span></button></div>'
                       : (p.keySet ? '<div class="md-key-fallback"><b>当前使用公司凭据</b><span>公司已配置这家服务，你也可以随时切回个人 Key</span></div>'
-                                  : '<div class="md-key-fallback"><b>还没有可用凭据</b><span>公司未配置这家服务，请填写你的个人 API Key</span></div>')) +
+                                  : '<div class="md-key-fallback"><b>还没有可用凭据</b><span>' + (p.localOnly
+                                    ? '请填写本地服务的 API Key，或确认该服务无需密钥' : '公司未配置这家服务，请填写你的个人 API Key') + '</span></div>')) +
           (t ? '<span role="status" class="md-test-r is-' + t.state + '">' +
                  (t.state === 'ing' ? '正在测…' : esc(t.detail || '')) + '</span>' : '') +
         '</div>'
@@ -374,7 +378,7 @@ function _mdHost(raw) {
 
 function _mdAddService() {
   if (_mdSaveFlight) return;
-  const id = 'custom-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  const id = 'device:custom-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   _mdNew = { id, name: '', kind: 'openai-compat', baseUrl: '', defaultBaseUrl: '',
     personal: true, localOnly: true, authMode: 'key', modelNames: [], note: '', myKeySet: false, keySet: false };
   _mdEditor = '__new__:' + id;
@@ -537,7 +541,7 @@ async function _mdDoTest(el) {
       if (!await _mdSave(false)) throw Error('请先保存模型配置，再检测能力');
     }
     const testPid = pid === '__new__' ? (_mdNew && _mdNew.id) : pid;
-    const r = await SoduWorkAPI.testMyModel(testPid);
+    const r = await SoduWorkAPI.testMyModel(testPid, { localOnly: p.localOnly === true });
     _mdTest[testPid] = { state: r && r.ok ? 'ok' : 'bad',
                      detail: (r && r.detail) || '没测出结果' };
     if (r?.ok && _mdUsesLocalDiscovery(p) && Array.isArray(r.models)) {

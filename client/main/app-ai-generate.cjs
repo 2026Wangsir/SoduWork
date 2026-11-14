@@ -56,19 +56,35 @@ async function boundedJSON(response) {
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
+async function soleModel(identity, fetchImpl, signal) {
+  const local = require('./local-model-store.cjs').get();
+  const response = await require('./device-auth-request').fetchWithDeviceAuthRetry(identity,
+    String(identity.hub).replace(/\/+$/, '') + '/api/v1/my-models', { signal, redirect: 'error' }, fetchImpl);
+  if (!response.ok) { await response.body?.cancel(); return ''; }
+  const managed = await boundedJSON(response);
+  const usable = row => row && row.available !== false && row.unavailable !== true &&
+    !['image', 'video'].includes(row.modality) && String(row.name || '').trim() &&
+    !/^(?:unavailable:|local:unavailable$)/.test(String(row.name));
+  const names = new Set([
+    ...(local.usable || []).filter(row => usable(row) && row.localOnly === true && /^local:model-[a-f0-9]{32}$/.test(row.name)),
+    ...(managed.usable || []).filter(row => usable(row) && row.localOnly !== true && !String(row.name).startsWith('local:')),
+  ].map(row => row.name));
+  return names.size === 1 ? [...names][0] : '';
+}
 function create({ app, authenticatedIdentityOf, authorizeAI, fetchImpl = global.fetch,
-  resolveModel = modelConfig.fetchModel, configuredModel = modelConfig.configuredModel }) {
+  resolveModel = modelConfig.fetchModel }) {
   const receipts = new WeakMap(), active = new Map();
   return async function generate(item, raw, assertCurrent = () => {}) {
     const params = normalize(raw);
-    const requestedModel = params.model || configuredModel(app);
-    const localRequested = String(requestedModel || '').startsWith('local:');
+    let requestedModel = String(params.model || '').trim();
+    const explicitModel = Boolean(requestedModel);
+    let localRequested = requestedModel.startsWith('local:');
     let identity, owner;
     try {
       assertCurrent();
       identity = await authenticatedIdentityOf?.(app);
       owner = scope(identity);
-      if (!identity?.hub || !identity.clientId || (!authorizeAI && !localRequested)) throw Error('login unavailable');
+      if (!identity?.hub || !identity.clientId || (!authorizeAI && explicitModel && !localRequested)) throw Error('login unavailable');
       assertCurrent();
     } catch (_) { return failure('APP_AI_UNAVAILABLE', '请先登录 SoduWork，并确认即用仍可使用'); }
     const current = async () => {
@@ -80,7 +96,7 @@ function create({ app, authenticatedIdentityOf, authorizeAI, fetchImpl = global.
     };
     const rows = receipts.get(item) || new Map(); receipts.set(item, rows);
     // Scope is part of the key: a later account must never receive an old result.
-    const key = owner + ':' + params.requestId;
+    const key = JSON.stringify([owner, identity.hub, identity.clientId, params.requestId]);
     const fingerprint = crypto.createHash('sha256').update(JSON.stringify(params)).digest('hex');
     const prior = rows.get(key);
     if (prior) {
@@ -107,13 +123,29 @@ function create({ app, authenticatedIdentityOf, authorizeAI, fetchImpl = global.
     wc?.once('destroyed', stop); wc?.on('did-start-navigation', navigation);
     const work = (async () => {
       try {
-        const selection = await resolveModel(identity, requestedModel, 8000, fetchImpl);
+        // This API has no Agent parameter. Its stateless managed context is Pi,
+        // and empty selections resolve only the authenticated account's default.
+        let selection = await resolveModel(identity, requestedModel, 8000, fetchImpl,
+          false, 'pi', { app, allowLocal: true });
+        await current();
+        if (!explicitModel && !selection?.ok && selection?.code !== 'LOCAL_AGENT_DEFAULT_UNAVAILABLE' && !controller.signal.aborted) {
+          const single = await soleModel(identity, fetchImpl, controller.signal);
+          await current();
+          if (single) {
+            requestedModel = single; localRequested = single.startsWith('local:');
+            selection = await resolveModel(identity, single, 8000, fetchImpl, false, 'pi', { app, allowLocal: true });
+          }
+        }
+        if (!explicitModel && (selection?.model?.localOnly === true || selection?.code === 'LOCAL_AGENT_DEFAULT_UNAVAILABLE')) localRequested = true;
         await current();
         if (controller.signal.aborted) return;
-        if (!selection?.ok || !selection.model || selection.model.modality === 'image')
-          return failure(selection?.code === 'TOKEN_QUOTA_EXCEEDED' ? selection.code : 'APP_AI_MODEL_UNAVAILABLE', '所选文字模型当前不可用，请检查模型或额度');
+        if (!selection?.ok || !selection.model || ['image', 'video'].includes(selection.model.modality) ||
+            localRequested !== (selection.model.localOnly === true))
+          return failure(!localRequested && selection?.code === 'TOKEN_QUOTA_EXCEEDED' ? selection.code : 'APP_AI_MODEL_UNAVAILABLE',
+            localRequested ? '本地文字模型不存在或凭据不可用，请检查本地模型设置' : '所选文字模型当前不可用，请检查模型或额度');
         const model = selection.model;
         if (!model.localOnly) {
+          if (typeof authorizeAI !== 'function') return failure('APP_AI_UNAVAILABLE', '当前即用无法验证模型使用授权');
           // Inline app calls lack Pi's signed per-call receipt path, so retain
           // strict account admission rather than borrowing Pi's funding scope.
           await authorizeAI(identity, owner);
@@ -144,7 +176,7 @@ function create({ app, authenticatedIdentityOf, authorizeAI, fetchImpl = global.
         return { ok: true, requestId: params.requestId, text, model: model.id, usage,
           finishReason: choice.finish_reason === 'length' ? 'length' : 'stop' };
       } catch (error) {
-        if (error?.code === 'TOKEN_QUOTA_EXCEEDED') return failure(error.code, '当前 AI 使用额度暂不可用，请查看额度详情');
+        if (!localRequested && error?.code === 'TOKEN_QUOTA_EXCEEDED') return failure(error.code, '当前 AI 使用额度暂不可用，请查看额度详情');
         // Never surface provider bodies, headers, URLs or tickets to the app.
         return failure(dispatched ? 'APP_AI_RESULT_UNKNOWN' : 'APP_AI_NOT_SENT',
           dispatched ? '未能确认本次模型结果，请勿自动重试' : '本次尚未发送，请检查账号、模型和即用状态', dispatched);

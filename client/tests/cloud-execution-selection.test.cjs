@@ -78,3 +78,18 @@ test('cloud rejects unavailable Agent, unauthorized model and changed account wi
   assert.equal((await f.cloud.selectExecution(f.handle, { agentId: 'qwen' })).ok, false);
   assert.equal(f.selection.agentId, 'pi'); assert.equal(f.requests.length, 0);
 });
+
+test('cloud rejects explicit device model references before resolution or persistence', async t => {
+  const f = await fixture(t);
+  const resolve = t.mock.method(models, 'fetchModel', async () => { throw Error('Must not resolve a device model'); });
+  for (const modelName of ['local:model-0123456789abcdef0123456789abcdef',
+    '  local:model-0123456789abcdef0123456789abcdef  ',
+    'image::private::local:model-0123456789abcdef0123456789abcdef']) {
+    const result = await f.cloud.selectExecution(f.handle, { modelName });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /云端暂不支持本地模型/);
+  }
+  assert.equal(resolve.mock.callCount(), 0);
+  assert.equal(f.handle.snapshot().modelSelection.name, 'a');
+  assert.equal(f.requests.length, 0);
+});

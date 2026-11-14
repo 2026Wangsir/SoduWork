@@ -237,6 +237,19 @@ class ContextRecoveryTests(unittest.TestCase):
             assert "thinkingFormat" not in switched[key]["llm"]
             assert "reasoning" not in switched[key]["llm"]
 
+    def test_dispatch_accepts_keyless_local_model_and_clears_its_ownership_on_switch(self):
+        from app.services.ai_exec import with_llm
+        before = {"cfg": {"llm": {}}, "localCfg": {"llm": {}}}
+        local = with_llm(before, {"base": "http://127.0.0.1:11434/v1",
+            "model": "private", "localOnly": True, "authMode": "none"})
+        for key in ("cfg", "localCfg"):
+            self.assertEqual(local[key]["llm"]["key"], "")
+            self.assertTrue(local[key]["llm"]["localOnly"])
+        managed = with_llm(local, {"base": "https://model.invalid/v1", "key": "fixture", "model": "managed"})
+        for key in ("cfg", "localCfg"):
+            self.assertFalse(managed[key]["llm"]["localOnly"])
+            self.assertEqual(managed[key]["llm"]["authMode"], "api-key")
+
 
 
 for cli in list(base._PROFILES):

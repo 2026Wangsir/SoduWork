@@ -272,6 +272,12 @@ function createProcessHost(app, options = {}) {
         async localModel(modelRef) {
           return require('../local-model-store.cjs').resolve(String(modelRef || ''));
         },
+        async localAgentModel(id, agentId) {
+          const auth = auths.get(id); if (!auth) throw Error('执行身份已失效');
+          await auth.ensureSession();
+          const store = require('../local-agent-model-store.cjs');
+          return store.configured() ? store.fromIdentity(auth.publicIdentity(), String(agentId || '')) : null;
+        },
         async prepareLocalModels() {
           // Session opens can arrive concurrently. Serialize privacy migration so
           // two callers never publish competing atomic replacements of the same

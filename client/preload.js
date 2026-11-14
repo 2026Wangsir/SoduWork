@@ -447,6 +447,17 @@ const soduWorkBridge = {
     save: input => ipcRenderer.invoke('local-models-save', input || {}),
     test: (providerId, modelName) => ipcRenderer.invoke('local-models-test', String(providerId || ''), String(modelName || '')),
   },
+  localAgentModels: {
+    get: input => ipcRenderer.invoke('local-agent-models-get', input || {}),
+    set: input => ipcRenderer.invoke('local-agent-models-set', input || {}),
+    remove: input => ipcRenderer.invoke('local-agent-models-remove', input || {}),
+    probe: input => ipcRenderer.invoke('local-agent-models-probe', input || {}),
+  },
+  automationModels: {
+    get: input => ipcRenderer.invoke('automation-models-get', input || {}),
+    set: input => ipcRenderer.invoke('automation-models-set', input || {}),
+    remove: input => ipcRenderer.invoke('automation-models-remove', input || {}),
+  },
   personalPlugins: {
     debug: (ref, options) => ipcRenderer.invoke('personal-plugin-debug', ref || '', options || {}),
     choosePackage: () => ipcRenderer.invoke('personal-plugin-choose-package'),

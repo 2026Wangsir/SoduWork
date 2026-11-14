@@ -25,6 +25,12 @@ def event(value):
 
 
 class NativeProviderTests(unittest.TestCase):
+    def test_keyless_local_model_sends_no_authentication_header(self):
+        payload = {'choices': [{'message': {'content': 'verified'}, 'finish_reason': 'stop'}]}
+        with patch.object(provider.urllib.request.OpenerDirector, 'open', return_value=Response(payload)) as transport:
+            provider.request({**MODEL, 'key': '', 'localOnly': True}, MESSAGES, [])
+        self.assertIsNone(transport.call_args.args[0].get_header('Authorization'))
+
     def test_provider_usage_keeps_cache_and_reasoning_without_double_counting(self):
         tokens = provider.normalize_usage({'prompt_tokens': 100, 'completion_tokens': 20,
             'prompt_tokens_details': {'cached_tokens': 80},

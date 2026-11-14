@@ -39,6 +39,12 @@ class FallbackPolicyTests(unittest.TestCase):
         clean = svc.clean_options({**raw, "targetRunnerKind": "work-computer"})
         self.assertEqual(clean["targetRunnerKind"], "work-computer")
 
+    def test_local_model_cannot_enter_a_remote_handoff(self):
+        raw = {"sha256": "a" * 64, "assigneeId": "runner:cloud:pi", "instruction": "Continue",
+               "model": "local:model-0123456789abcdef0123456789abcdef"}
+        with self.assertRaisesRegex(HTTPException, "本地模型不能转交"):
+            svc.clean_options(raw)
+
     def test_legacy_pinned_receipts_remain_usable_but_new_callers_cannot_forge_them(self):
         source = {"adapterId": "pi"}
         with self.assertRaises(HTTPException):

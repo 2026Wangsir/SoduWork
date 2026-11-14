@@ -37,6 +37,12 @@ class QwenRuntimeTests(unittest.TestCase):
         self.assertIs(provider["generationConfig"]["modalities"]["image"], expected)
         self.assertTrue(provider["generationConfig"]["splitToolMedia"])
 
+    def test_keyless_local_model_still_gets_a_private_overlay(self):
+        env, config = self.configure({**self.llm, "key": "", "localOnly": True})
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertEqual(config["model"]["name"], self.llm["model"])
+        self.assertTrue(Path(env[qwen_runtime.SETTINGS_ENV]).is_relative_to(self.root))
+
     def test_alias_and_credentials_preserved_without_name_inference(self):
         env, config = self.configure()
         self.assert_image(config, True)

@@ -88,7 +88,8 @@ function create({ app, handle, plugin, identityOf, skillDirs, deviceGrants, runt
   async function model(route, who, force = false) {
     if (route.spec.modelMode === 'account') return null;
     let result;
-    try { result = await fetchModel(who, route.modelName, 8000, global.fetch, force, route.agent); }
+    try { result = await fetchModel(who, route.modelName, 8000, global.fetch, force, route.agent,
+      { app, allowLocal: true }); }
     catch (_) { /* Provider errors can contain credentials or request bodies. */ }
     if (!result?.ok || !result.model?.id) throw failure('model_unavailable',
       '请检查 ' + route.spec.displayName + ' 的模型配置和后台连接');

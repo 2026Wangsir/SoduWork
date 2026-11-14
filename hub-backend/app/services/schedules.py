@@ -34,7 +34,8 @@ from .schedule_run_contracts import (
     automation_conversation_title, begin_run, claim_run,
     clean_personal_plugin_checksum, clean_personal_plugin_key,
     clean_personal_plugin_version, clean_personal_plugin_version_policy,
-    clean_plugin_inputs, clean_required_capabilities,
+    clean_plugin_inputs, clean_required_capabilities, is_local_model_reference,
+    sanitize_schedule_model_payload, schedule_model_source,
     error_text, normalize_personal_plugin_snapshot, personal_plugin_spec,
 )
 
@@ -585,7 +586,7 @@ def run_to_api(run) -> dict:
         "state": run.state, "attempt": int(run.attempt or 1),
         "startedAt": _run_iso(run.started_at),
         "finishedAt": _run_iso(run.finished_at), "durationSeconds": duration,
-        "error": run.error, "receipt": dict(run.receipt or {}),
+        "error": run.error, "receipt": sanitize_schedule_model_payload(dict(run.receipt or {})),
         "conversationId": dict(run.receipt or {}).get('conversationId', ''),
         "conversationTitle": dict(run.receipt or {}).get('conversationTitle', ''),
     }
@@ -646,6 +647,10 @@ async def run_one(session: AsyncSession, s, who: str = "SoduWork（定时）",
             str(getattr(runner, 'client_id', '') or '') != str(client.id or '') or
             not str(getattr(runner, 'client_id', '') or '')))
         if cross_device:
+            if (schedule_model_source(s) == 'device' or
+                    is_local_model_reference(getattr(s, 'model_name', ''))):
+                return {'ok': False, 'code': 'AUTOMATION_LOCAL_MODEL_REMOTE',
+                        'error': '本地模型只能在本机托管型执行底座运行，不能派往其他执行机'}
             if not schedule_run_id:
                 return {'ok': False, 'code': 'AUTOMATION_RUN_REQUIRED',
                         'error': '自动化运行记录尚未建立，请从自动化入口重新执行'}

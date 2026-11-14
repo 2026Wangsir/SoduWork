@@ -225,7 +225,7 @@ test('local capability checks stay in the desktop process', async () => {
     URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
     console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
   }, { filename: 'api.js' });
-  const report = await window.SoduWorkAPI.checkMyModelCapabilities({ providerId: 'custom-local', model: 'qwen3', checks: ['connection', 'streaming'] });
+  const report = await window.SoduWorkAPI.checkMyModelCapabilities({ providerId: 'device:custom-local', model: 'qwen3', checks: ['connection', 'streaming'] });
   assert.equal(report.ok, true);
   assert.deepEqual(probes, [{ providerId: 'custom-local', model: 'qwen3' }]);
   assert.equal(report.checks.connection.status, 'passed');
@@ -249,12 +249,11 @@ test('a managed-only save does not erase existing local model definitions', asyn
     URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
     console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
   }, { filename: 'api.js' });
-  await window.SoduWorkAPI.saveMyModels({
+  await assert.rejects(window.SoduWorkAPI.saveMyModels({
     providers: [{ id: 'company-provider', baseUrl: '' }], keys: { 'custom-local': 'ignored-by-hub' },
-  });
+  }), /来源不明确/);
   assert.equal(localCalls.length, 0);
-  assert.equal(hubCalls.length, 1);
-  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('custom-local'), false);
+  assert.equal(hubCalls.length, 0);
 });
 
 test('a missing local bridge cannot forward local-looking keys to the Hub', async () => {
@@ -271,13 +270,11 @@ test('a missing local bridge cannot forward local-looking keys to the Hub', asyn
     URL, URLSearchParams, Response, AbortController, CustomEvent: class {},
     console: { log() {}, error() {} }, setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0,
   }, { filename: 'api.js' });
-  await window.SoduWorkAPI.saveMyModels({
+  await assert.rejects(window.SoduWorkAPI.saveMyModels({
     providers: [{ id: 'company-provider', baseUrl: '' }],
     keys: { 'local-service': 'must-not-forward' },
-  });
-  assert.equal(hubCalls.length, 1);
-  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('must-not-forward'), false);
-  assert.equal(JSON.stringify(JSON.parse(hubCalls[0].options.body)).includes('local-service'), false);
+  }), /来源不明确/);
+  assert.equal(hubCalls.length, 0);
 });
 
 test('模型配置保留就地真实探测与组织地址恢复能力', () => {

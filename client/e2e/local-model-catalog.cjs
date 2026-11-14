@@ -182,6 +182,11 @@ if (typeof electron === 'string') {
     await click('#mdSave'); await saved(3);
     assert.equal(store.get().myModels[0].name, 'renamed-local-model');
     await js('document.querySelector(".md-model-row").scrollIntoView({block:"center"})'); await delay(80);
+    const localCredentials = await js('document.querySelector(".md-credentials").innerText');
+    assert.match(localCredentials, /本地访问密钥已配置/);
+    assert.match(localCredentials, /不使用 Hub 模型额度/);
+    assert.doesNotMatch(localCredentials, /个人额度|公司凭据/);
+    assert.equal(await js('document.querySelector("[data-pclear]").getAttribute("aria-label")'), '移除本地密钥');
     await shot('local-model-single-row');
     record('Renaming replaces the visible and persisted local ID without a stale organization row');
 

@@ -327,19 +327,48 @@ def desktop_profile(state: Path) -> Path:
     if sys.platform != 'darwin':
         return profile
     app_data = Path.home() / 'Library/Application Support'
+    resolved = state.resolve()
     reserved = [(app_data / name).resolve() for name in ('SoduWork', 'soduwork')]
-    resolved_state = state.resolve()
-    if resolved_state == (app_data / 'SoduWork/source-service').resolve():
-        # Preserve the existing default profile and its enrolled credentials.
-        profile = app_data / 'SoduWork Development/source-service-desktop'
-    elif any(resolved_state.is_relative_to(installed) for installed in reserved):
-        # Keep Hub data and dependency caches in place; isolate each custom desktop.
-        namespace = hashlib.sha256(os.fsencode(resolved_state)).hexdigest()[:20]
-        profile = app_data / 'SoduWork Development' / ('source-service-desktop-' + namespace)
-    if any(profile.resolve().is_relative_to(installed) for installed in reserved):
-        # Check before the launcher creates directories or writes endpoint configuration.
-        raise StartupError('The source desktop profile resolves inside installed SoduWork data. '
-                           'Choose an independent directory without links into the installed profile.')
+
+    def inside_installed(candidate: Path) -> bool:
+        parts = tuple(part.casefold() for part in candidate.resolve().parts)
+        return any(parts[:len(root.parts)] == tuple(part.casefold() for part in root.parts)
+                   for root in reserved)
+
+    def validate(candidate: Path) -> None:
+        # Validate before launch_desktop creates directories or writes configuration.
+        if inside_installed(candidate):
+            raise StartupError('The source desktop profile resolves inside installed client data. '
+                               'Choose an independent --data-dir or repair the development directory link; '
+                               'existing data was not changed.')
+        if os.path.lexists(candidate) and not candidate.is_dir():
+            raise StartupError('The source desktop profile is not an existing directory. '
+                               'Repair the profile path; existing data was not changed.')
+
+    if inside_installed(state) or inside_installed(profile):
+        # Keep Hub data in place. Only the source desktop profile moves out
+        # of the installed client's namespace, including custom state paths.
+        default = (app_data / 'SoduWork/source-service').resolve()
+        same_default = resolved == default or (
+            resolved.exists() and default.exists() and resolved.samefile(default))
+        if same_default:
+            # Preserve the existing default profile and its enrolled credentials.
+            profile = app_data / 'SoduWork Development/source-service-desktop'
+        else:
+            # Preserve the upstream identity, including case on sensitive volumes.
+            namespace = hashlib.sha256(os.fsencode(resolved)).hexdigest()[:20]
+            development = app_data / 'SoduWork Development'
+            profile = development / ('source-service-desktop-' + namespace)
+            validate(profile)
+            legacy = development / 'source-service-desktops' / namespace
+            if not os.path.lexists(profile) and os.path.lexists(legacy):
+                validate(legacy)
+                if legacy.is_symlink() or legacy.is_junction():
+                    raise StartupError('The previous source desktop profile must be a real directory. '
+                                       'Repair the profile path; existing data was not changed.')
+                # Reuse a prior development profile without moving or merging files.
+                profile = legacy
+    validate(profile)
     return profile
 
 
@@ -431,7 +460,10 @@ def main(argv=None) -> int:
         if args.desktop:
             check_desktop_session()
         if args.check:
+            profile = desktop_profile(args.data_dir.expanduser().resolve()) if args.desktop else None
             dependency_report(desktop=args.desktop)
+            if profile is not None:
+                print(f'Desktop profile: {profile}')
             return 0
         check_dependencies()
         state = args.data_dir.expanduser().resolve()

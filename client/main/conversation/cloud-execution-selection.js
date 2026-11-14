@@ -39,6 +39,10 @@ function create({ app, read, save, guard, identity, request, view, notify, busy 
         next.reasoningEffort = '';
       }
       if (typeof next.modelName !== 'string') throw Error('无效的模型选择');
+      next.modelName = next.modelName.trim();
+      if (next.modelName.startsWith('local:') || require('../../core/model-choice').imageChoice(next.modelName)?.name.trim().startsWith('local:')) {
+        throw Error('云端暂不支持本地模型，请选择云端可用模型');
+      }
       if (catalog.runtime(next.agentId).modelMode === 'managed') {
         const result = await models.fetchModel(current, next.modelName, undefined, undefined, false, next.agentId);
         if (!result?.ok) throw Error(result?.reason || '当前账号无法使用所选模型');

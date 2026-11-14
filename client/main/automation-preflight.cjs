@@ -3,8 +3,20 @@
 const crypto = require('node:crypto');
 const platforms = require('../core/plugin-platforms');
 const scopeOf = identity => require('./platform-connections/runtime.cjs').connectionScope(identity);
+const OPAQUE_LOCAL_MODEL = /^local:model-[a-f0-9]{32}$/;
+const ACCOUNT_RUNTIMES = new Set(['codex', 'claude']);
 const check = (key, state, label) => ({ key, state, label });
 const outcome = (state, message, checks = []) => ({ state, message, checks });
+
+function localManagedSeat(id, mode, clientId, currentClientId) {
+  const value = String(id || '').trim();
+  const runtime = value.replace(/^local:/, '').replace(/^runner:[^:]+:/, '');
+  if (!runtime || ACCOUNT_RUNTIMES.has(runtime)) return false;
+  if (value.startsWith('local:')) return true;
+  return String(mode || '').trim() === 'local' &&
+    /^runner:[^:]+:[a-z][a-z0-9-]{0,39}$/.test(value) &&
+    String(clientId || '').trim() === String(currentClientId || '').trim();
+}
 
 function merge(server, dependencies) {
   if (!dependencies || server.state === 'blocked') return server;
@@ -20,7 +32,7 @@ function merge(server, dependencies) {
 }
 
 function create({ app, identityOf, platformConnections, catalog, resolvePlugin, authorize,
-  connectorProbe, connectionScope = scopeOf, now = Date.now }) {
+  connectorProbe, localModelResolve, connectionScope = scopeOf, now = Date.now }) {
   const list = catalog || (spec => require('./jiyong-scheduled-plugins.cjs').catalog(app,identityOf,spec));
   const resolve = resolvePlugin || (id => require('./personal-plugins').resolve(app, [id]));
   const sourceCheck = authorize || (id => {
@@ -29,6 +41,7 @@ function create({ app, identityOf, platformConnections, catalog, resolvePlugin, 
       sourceIds: access.sourcesForIds(require('./personal-plugins')._read(app).plugins, [id]) });
   });
   const probeConnections = connectorProbe || require('./automation-connector-probe.cjs').probe;
+  const resolveLocalModel = localModelResolve || (modelRef => require('./local-model-store.cjs').resolve(modelRef));
   const pending = new Map(), cache = new Map();
   const platformRevision = () => platformConnections?.revision?.() ?? 0;
 
@@ -112,19 +125,47 @@ function create({ app, identityOf, platformConnections, catalog, resolvePlugin, 
 
   async function preflight(input = {}) {
     const server = input.server || {}, dependency = server.deviceDependencies;
-    if (!dependency || server.state === 'blocked') return server;
+    if (server.state === 'blocked') return server;
     try {
       const identity = await identityOf(app), scope = connectionScope(identity);
-      if (String(identity.clientId || '') !== String(dependency.ownerClientId || '')) {
+      const localModelName = String(input.localModelName || '').trim();
+      if (dependency && String(identity.clientId || '') !== String(dependency.ownerClientId || '')) {
         return merge(server, outcome('waiting', '请在计划所属电脑检查插件和连接器'));
       }
-      if (input.hub && new URL(input.hub).origin !== new URL(identity.hub).origin) {
+      if (dependency && input.hub && new URL(input.hub).origin !== new URL(identity.hub).origin) {
         return merge(server, outcome('waiting', '服务连接已变化，请重新检查执行条件'));
       }
+      if (localModelName) {
+        const localChecks = [];
+        if (!OPAQUE_LOCAL_MODEL.test(localModelName)) {
+          localChecks.push(check('local-model', 'blocked', '本地模型引用无效'));
+          const blocked = outcome('blocked', '本地模型选择无效，请重新选择本机模型', localChecks);
+          return dependency ? merge(server, blocked) : { ...server, state: 'blocked', message: blocked.message,
+            checks: [...(server.checks || []), ...blocked.checks] };
+        }
+        const localSeat = localManagedSeat(input.assigneeId, input.assigneeMode,
+          input.assigneeClientId, identity.clientId);
+        if (!localSeat) {
+          localChecks.push(check('local-model', 'blocked', '本地模型只能在本机托管型底座执行'));
+          const blocked = outcome('blocked', '本地模型只能选择本机托管型执行底座', localChecks);
+          return dependency ? merge(server, blocked) : { ...server, state: 'blocked', message: blocked.message,
+            checks: [...(server.checks || []), ...blocked.checks] };
+        }
+        let resolved;
+        try { resolved = resolveLocalModel(localModelName); } catch (_) { resolved = null; }
+        if (!resolved || resolved.localOnly !== true || String(resolved.modelRef || '') !== localModelName) {
+          localChecks.push(check('local-model', 'blocked', '本机模型已不可用，请重新选择'));
+          const blocked = outcome('blocked', '本机模型已不可用，请在模型设置中重新选择', localChecks);
+          return dependency ? merge(server, blocked) : { ...server, state: 'blocked', message: blocked.message,
+            checks: [...(server.checks || []), ...blocked.checks] };
+        }
+      }
+      if (!dependency) return server;
       const spec = dependency.plugin || {}, selected = await select(spec);
       if (selected.error) return merge(server, selected.error);
       const revision = platformRevision();
-      const key = scope + ':' + revision + ':' + selected.signature + ':' + JSON.stringify(spec);
+      const key = scope + ':' + revision + ':' + selected.signature + ':' + JSON.stringify(spec) + ':' +
+        String(input.localModelName || '') + ':' + String(input.assigneeId || '');
       const remembered = cache.get(key);
       if (!input.force && remembered && now() - remembered.at < 10000) return merge(server, remembered.value);
       if (input.force) cache.delete(key);

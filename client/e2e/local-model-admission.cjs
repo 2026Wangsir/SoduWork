@@ -27,8 +27,8 @@ const report = { ok: false, cases: [], boundary: 'Real Electron renderer IPC, pr
 const providerKey = require('node:crypto').randomBytes(24).toString('hex');
 const wireModel = 'private-admission-wire-model';
 const hubRequests = [], providerRequests = [], errors = [];
-let hubServer, providerServer, win, bridge, hub, providerUrl, localRef, account = '';
-let quotaRequests = 0, managedRequests = 0;
+let hubServer, providerServer, win, bridge, hub, providerUrl, localRef, imageRef, account = '';
+let quotaRequests = 0, managedRequests = 0, imageRequests = 0;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(read, label, timeout = 30000) {
   const deadline = Date.now() + timeout;
@@ -60,6 +60,13 @@ app.whenReady().then(async () => {
     let raw = ''; req.on('data', chunk => { raw += chunk; });
     req.on('end', () => {
       try {
+        if (req.url === '/private-admission/v1/images/generations') {
+          const body = JSON.parse(raw);
+          assert.equal(body.model, 'private-image-wire');
+          assert.equal(req.headers.authorization, 'Bearer ' + providerKey);
+          imageRequests++;
+          return reply(res, { data: [{ b64_json: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8WQAAAAASUVORK5CYII=' }] });
+        }
         assert.equal(req.url, '/private-admission/v1/chat/completions');
         const body = JSON.parse(raw);
         assert.equal(body.model, wireModel);
@@ -112,8 +119,15 @@ app.whenReady().then(async () => {
   const identityOf = () => auth.authenticatedIdentity(app, hub);
   const store = require('../main/local-model-store.cjs');
   store.configure({ app, safeStorage });
-  localRef = store.save({ providers: [{ id: 'private-admission', name: 'Private admission provider', baseUrl: providerUrl }],
-    models: [{ providerId: 'private-admission', name: wireModel }], keys: { 'private-admission': providerKey } }).myModels[0].id;
+  require('../main/local-agent-model-ipc.cjs').install({ app, ipcMain, safeStorage,
+    scopeOf: () => {
+      const id = auth.identity(app), owner = auth.localOwner(app);
+      return id && owner ? { hub: id.hub, clientId: id.clientId, owner } : null;
+    } });
+  const catalog = store.save({ providers: [{ id: 'private-admission', name: 'Private admission provider', baseUrl: providerUrl }],
+    models: [{ providerId: 'private-admission', name: wireModel },
+      { providerId: 'private-admission', name: 'private-image-wire', modality: 'image' }], keys: { 'private-admission': providerKey } });
+  localRef = catalog.myModels[0].id; imageRef = catalog.myModels[1].id;
   const agentDir = path.join(profile, 'pi-agent'); fs.mkdirSync(agentDir);
   fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({
     compaction: { enabled: false }, retry: { enabled: false }, enableInstallTelemetry: false,
@@ -144,15 +158,23 @@ app.whenReady().then(async () => {
     assert.ok((await identityOf()).session);
   }
   await login('synthetic-owner-a');
-  const opened = await invoke('pi-session-open', openOptions);
+  const defaults = await invoke('local-agent-models-get');
+  assert.equal((await invoke('local-agent-models-set', { agentId: 'pi', modelName: localRef,
+    scopeKey: defaults.scopeKey, expectedRevision: defaults.revision })).ok, true);
+  const opened = await invoke('pi-session-open', { ...openOptions, modelName: '' });
   assert.equal(opened.ok, true, opened.reason);
   const native = require('../main/agent-runtime/pi-session-bridge').get(opened.ref);
   assert.ok(native);
+  assert.equal(native.snapshot().modelSelection.name, localRef);
+  mark('A real Electron IPC default resolves through the runtime host to the exact device-owned model');
   assert.notEqual(require('../main/agent-runtime/process-session').diagnostics(app).pid, process.pid);
   const first = await invoke('pi-session-send', opened.ref, 'Confirm local inference.', [], { submissionId: 'local-admission-turn' });
   assert.equal(first.ok, true, first.reason);
   await until(() => providerRequests.length === 1 && !native.inFlight(), 'local inference completion');
   assert.match(JSON.stringify(native.snapshot().messages), /Local admission confirmed/);
+  const archivedSelections = fs.readFileSync(native.resumeLocation(), 'utf8').split('\n').filter(Boolean)
+    .map(line => JSON.parse(line)).filter(row => row.type === 'custom' && row.customType === 'soduwork.model.selection');
+  assert.equal(archivedSelections.at(-1)?.data?.name, localRef, 'The inherited default must be durably pinned to this conversation');
   assert.equal(quotaRequests, 0, 'ordinary local calls never query the Hub quota authorizer');
   await bridge.sync();
   assert.ok(hubRequests.some(row => row.route === '/api/v1/account-conversations/sync'));
@@ -168,8 +190,44 @@ app.whenReady().then(async () => {
   assert.equal(managedRequests, 0); assert.equal(providerRequests.length, 1);
   mark('Same-conversation managed turn hits production quota admission and HTTP 403 prevents inference');
 
+  const quotaBeforeImage = quotaRequests;
+  const imageChoice = 'image::device:private-admission::' + imageRef;
+  assert.equal((await invoke('pi-session-select-model', opened.ref, imageChoice)).ok, true);
+  const readOnlyImage = await invoke('pi-session-send', opened.ref, 'A read-only session must not write an image.', [], { submissionId: 'readonly-image-turn' });
+  assert.equal(readOnlyImage.ok, true, readOnlyImage.reason);
+  await until(() => js('admissionEvents.some(row=>row.kind==="error" && row.submissionId==="readonly-image-turn" && /只读/.test(row.reason))'), 'read-only image denial');
+  assert.equal(imageRequests, 0);
+  mark('Local image selection retains the production read-only write restriction');
+  const imageOpened = await invoke('pi-session-open', { ...openOptions, modelName: imageChoice, accessMode: 'standard' });
+  assert.equal(imageOpened.ok, true, imageOpened.reason);
+  const imageNative = require('../main/agent-runtime/pi-session-bridge').get(imageOpened.ref);
+  const generated = await invoke('pi-session-send', imageOpened.ref, 'Generate a fixture image.', [], { submissionId: 'local-image-turn' });
+  assert.equal(generated.ok, true, generated.reason);
+  try { await until(() => imageRequests === 1 && !imageNative.inFlight(), 'local image completion'); }
+  catch (error) {
+    report.imageFailure = { imageRequests, providerErrors: errors,
+      events: await js('admissionEvents.filter(row=>row.kind==="error").map(row=>({kind:row.kind,reason:row.reason,submissionId:row.submissionId}))'),
+      selection: imageNative.snapshot().modelSelection, inFlight: imageNative.inFlight() };
+    throw error;
+  }
+  assert.equal(quotaRequests, quotaBeforeImage);
+  assert.ok(fs.readdirSync(path.join(cwd, 'outputs')).some(name => /^image-.*\.png$/.test(name)));
+  await bridge.sync();
+  mark('Production local image turn reaches only its provider, writes a local artifact and bypasses Hub quota');
+
   assert.equal((await invoke('pi-session-select-model', opened.ref, localRef)).ok, true);
+  store.save({ models: [] });
+  const gone = await invoke('local-agent-models-get', { agentId: 'pi' });
+  assert.equal(gone.modelName, localRef); assert.equal(gone.unavailable, true);
+  const blockedDefault = await invoke('pi-session-open', { ...openOptions, modelName: '' });
+  assert.equal(blockedDefault.ok, false);
+  assert.match(blockedDefault.reason, /原本地默认模型已删除或不可用/);
+  assert.equal(providerRequests.length, 1);
+  mark('Deleting a saved Agent default blocks a new session without choosing a Hub model');
   await login('synthetic-owner-b');
+  const otherDefaults = await invoke('local-agent-models-get');
+  assert.deepEqual(otherDefaults.models, {});
+  mark('A second authenticated account cannot inherit the first account local Agent default');
   const wrongOwner = await invoke('pi-session-send', opened.ref, 'Do not reuse another account session.', [], {});
   assert.equal(wrongOwner.ok, false);
   assert.equal(providerRequests.length, 1); assert.equal(managedRequests, 0);
@@ -179,11 +237,11 @@ app.whenReady().then(async () => {
   assert.equal(providerRequests.length, 1);
   mark('Explicit logout retains the local execution login gate');
 
-  for (const value of [wireModel, providerKey, providerUrl, localRef])
+  for (const value of [wireModel, 'private-image-wire', providerKey, providerUrl, localRef, imageRef])
     assert.equal(JSON.stringify(hubRequests).includes(value), false, 'Hub request leaked private model metadata');
   assert.equal(hubRequests.some(row => row.route === '/api/v1/usage/events'), false, 'local inference has no Hub usage event');
   assert.deepEqual(errors, []);
-  report.providerRequests = providerRequests.length; report.quotaRequests = quotaRequests;
+  report.providerRequests = providerRequests.length; report.imageRequests = imageRequests; report.quotaRequests = quotaRequests;
   report.managedRequests = managedRequests; report.ok = true;
 }).catch(error => { report.error = String(error.stack || error); }).finally(async () => {
   try {

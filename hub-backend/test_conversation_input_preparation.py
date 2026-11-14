@@ -20,5 +20,13 @@ class ConversationInputPreparationTests(unittest.TestCase):
             clean_options({'sessionId': 'cloud-1', 'agentId': 'pi', 'model': 'm', 'title': '', 'text': 'x',
                            'inputPreparation': {'prompt': 'untrusted'}} , has_files=False)
 
+    def test_local_model_references_are_rejected_before_cloud_dispatch(self):
+        for model in ('local:private:model', 'image::private::local:private:model',
+                      'image::device:provider::local:private:model'):
+            with self.subTest(model=model), self.assertRaisesRegex(
+                    HTTPException, '本地模型只能在本机使用'):
+                clean_options({'sessionId': 'cloud-1', 'agentId': 'pi', 'model': model,
+                               'title': '', 'text': 'x'}, has_files=False)
+
 if __name__ == '__main__':
     unittest.main()

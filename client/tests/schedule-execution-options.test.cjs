@@ -19,6 +19,67 @@ const modern = { substrates: [
 ], modelOptions: [{ name: 'soduwork-prd-large', label: '生产大模型' }],
   models: [], defaultModel: 'soduwork-prd-large' };
 
+for (const source of ['local', 'Hub']) test('new automation selects its only ' + source + ' model despite a missing Agent default', async () => {
+  const name = source === 'local' ? 'local:model-0123456789abcdef0123456789abcdef' : 'only-hub-model';
+  const ctx = context({ taskExecutionOptions: async () => ({ substrates: [{ key: 'local:qwen', cli: 'qwen', modelPick: true }],
+    modelOptions: source === 'Hub' ? [{ name }] : [], defaultModel: '' }),
+    myModels: async () => ({ usable: source === 'local' ? [{ name, localOnly: true }] : [],
+      defaultModels: {}, defaultModelErrors: { qwen: 'No Hub default is configured' } }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), name);
+  const removed = 'local:model-fedcba9876543210fedcba9876543210';
+  ctx.SoduWorkAPI.myModels = async () => ({ usable: source === 'local' ? [{ name, localOnly: true }] : [],
+    defaultModels: { qwen: removed }, defaultModelErrors: { qwen: 'The old Agent default was deleted' } });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), name, 'a new draft may choose the sole model despite a deleted Agent default');
+  const saved = run(ctx, `_schModelFieldHtml(${JSON.stringify(removed)}, "local:qwen")`);
+  assert.match(saved, new RegExp('value="' + removed + '" selected disabled'));
+});
+
+test('a failed default catalog load remains unselected and a successful refresh selects the only local model', async () => {
+  let failed = true;
+  const name = 'local:model-0123456789abcdef0123456789abcdef';
+  const ctx = context({ taskExecutionOptions: async () => ({ substrates: [{ key: 'local:qwen', cli: 'qwen', modelPick: true }], modelOptions: [] }),
+    myModels: async () => { if (failed) throw Error('Temporary catalog failure');
+      return { usable: [{ name, localOnly: true }], defaultModelErrors: { qwen: 'No Hub default' } }; } });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), '');
+  failed = false; await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), name);
+  run(ctx, '_schEditing = { modelName: "unavailable:default" }');
+  assert.match(run(ctx, '_schAgentFieldHtml("local:qwen")'), new RegExp('value="' + name + '" selected'));
+  run(ctx, '_schEditing = { id: "saved", modelName: "local:unavailable" }');
+  assert.match(run(ctx, '_schAgentFieldHtml("local:qwen")'), /value="local:unavailable" selected disabled/);
+});
+
+test('automation defaults honor each local Agent preference and retain deleted selections', async () => {
+  const first = 'local:model-0123456789abcdef0123456789abcdef', preferred = 'local:model-fedcba9876543210fedcba9876543210';
+  const catalog = { usable: [{ name: first, localOnly: true }, { name: preferred, localOnly: true }],
+    defaultModels: { pi: preferred }, defaultModelErrors: {} };
+  const ctx = context({ taskExecutionOptions: async () => ({ ...modern, substrates: [
+    ...modern.substrates, { key: 'runner:other:pi', cli: 'pi', locationMode: 'remote', modelPick: true },
+  ] }), myModels: async () => catalog });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), preferred);
+  assert.equal(run(ctx, '_schDefaultModelFor("runner:other:pi")'), modern.defaultModel);
+  catalog.usable = [{ name: first, localOnly: true }]; catalog.defaultModelErrors.pi = 'Deleted';
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), preferred);
+  assert.match(run(ctx, '_schModelFieldHtml(_schDefaultModelFor("local:pi"), "local:pi")'), new RegExp('value="' + preferred + '" selected disabled'));
+});
+
+test('changing automation substrates uses the selected default without inheriting the previous substrate choice', async () => {
+  const pi = 'local:model-0123456789abcdef0123456789abcdef', qwen = 'local:model-fedcba9876543210fedcba9876543210';
+  const ctx = context({ taskExecutionOptions: async () => ({ ...modern, substrates: [
+    ...modern.substrates, { key: 'local:qwen', cli: 'qwen', available: true, modelPick: true },
+  ] }), myModels: async () => ({ usable: [{ name: pi, localOnly: true }, { name: qwen, localOnly: true }],
+    defaultModels: { pi, qwen }, defaultModelErrors: {} }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schDefaultModelFor("local:pi")'), pi);
+  assert.equal(run(ctx, '_schDefaultModelFor("local:qwen")'), qwen);
+  assert.equal(run(ctx, '_schDefaultModelFor("local:codex")'), '');
+});
+
 test('all automation openings share stable substrate choices and coalesce pending requests', async () => {
   let resolve, requests = 0, legacy = 0;
   const ctx = context({
@@ -94,11 +155,16 @@ test('refreshing executor options preserves an existing choice and updates only 
 });
 
 test('automation editor keeps model selection independent from the chosen Agent', async () => {
-  const ctx = context({ taskExecutionOptions: async () => modern }, {
+  const localModel = { id: 'local:model-0123456789abcdef0123456789abcdef', name: 'local:model-0123456789abcdef0123456789abcdef',
+    modelName: 'glm5.2', label: 'glm5.2', providerName: '自己模型', localOnly: true };
+  const ctx = context({ taskExecutionOptions: async () => modern,
+    myModels: async () => ({ usable: [localModel, { name: 'soduwork-prd-large', label: '生产大模型' }] }) }, {
     conversationSession: { runtimeModels: async () => ({ models: [{ id: 'gpt-5-codex', label: 'Codex 默认模型' }] }) },
   });
   await run(ctx, '_schLoadExecutionAgents({})');
-  assert.match(run(ctx, '_schModelFieldHtml("", "local:pi")'), /soduwork-prd-large/);
+  const piModels = run(ctx, '_schModelFieldHtml("", "local:pi")');
+  assert.ok(piModels.indexOf('local:model-0123456789abcdef0123456789abcdef') < piModels.indexOf('soduwork-prd-large'));
+  assert.match(piModels, /glm5\.2 · 自己模型 · 本机/);
   assert.match(run(ctx, '_schModelFieldHtml("", "local:pi")'), /selected/);
   // Native catalogs load only when that substrate is selected.
   await run(ctx, '_schLoadNativeModelOptions(_schAgents.filter(item => item.id === "local:codex"))');
@@ -107,6 +173,127 @@ test('automation editor keeps model selection independent from the chosen Agent'
   assert.doesNotMatch(run(ctx, '_schModelFieldHtml("", "local:codex")'), /<select[^>]+disabled/);
   assert.equal(run(ctx, '_schAgentAllowsModel("local:codex")'), true);
   assert.equal(run(ctx, '_schAgentAllowsModel("local:pi")'), true);
+});
+
+test('managed automation shares the model catalog, excludes image models and keeps device models off remote seats', async () => {
+  const localRef = 'local:model-' + 'b'.repeat(32), imageRef = 'local:model-' + 'd'.repeat(32);
+  for (const runtime of ['pi', 'qwen', 'opencode', 'dsh', 'kimi', 'harness2', 'codex-harness']) {
+    const ctx = context({ taskExecutionOptions: async () => ({
+      substrates: [{ key: 'local:' + runtime, cli: runtime, available: true, modelPick: true,
+        locations: [{ assigneeId: 'local:' + runtime, mode: 'local', label: 'Local device' },
+          { assigneeId: 'runner:other:' + runtime, mode: 'remote', label: 'Other device' }] }],
+      modelOptions: [{ name: 'managed-model', label: 'Managed' }],
+    }), myModels: async () => ({ usable: [
+      { name: localRef, label: 'Local custom model', modality: 'chat', localOnly: true },
+      { name: imageRef, label: 'Local image model', modality: 'image', localOnly: true },
+    ] }) }, { localModels: { get: async () => assert.fail('The automation editor must use the shared model catalog') } });
+    const agents = await run(ctx, '_schLoadExecutionAgents({})');
+    assert.deepEqual(Array.from(agents, item => item.id), ['local:' + runtime, 'runner:other:' + runtime]);
+    const local = run(ctx, `_schModelFieldHtml("", ${JSON.stringify('local:' + runtime)})`);
+    const remote = run(ctx, `_schModelFieldHtml("", ${JSON.stringify('runner:other:' + runtime)})`);
+    assert.match(local, new RegExp(localRef));assert.match(local, /Local custom model/);
+    assert.match(local, /managed-model/);assert.match(remote, /managed-model/);
+    assert.doesNotMatch(remote, new RegExp(localRef));assert.doesNotMatch(local, new RegExp(imageRef));
+  }
+});
+
+test('a current-device Runner retains its verified identity while using the shared local model catalog', async () => {
+  const localRef = 'local:model-' + 'c'.repeat(32);
+  let reads = 0;
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true,
+      locations: [
+        { assigneeId: 'runner:this-device:pi', mode: 'local', clientId: 'fixture-device', label: 'Local device' },
+        { assigneeId: 'runner:other-device:pi', mode: 'remote', clientId: 'other-device', label: 'Other device' },
+      ] }], modelOptions: [{ name: 'managed-model', label: 'Managed' }],
+  }), myModels: async () => {
+    reads++;
+    return { usable: [{ name: localRef, label: 'Local custom model', localOnly: true, modality: 'chat' }] };
+  } });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  const selected = run(ctx, '_schDefaultAgentId()');
+  assert.equal(selected, 'runner:this-device:pi');assert.equal(reads, 1);
+  assert.equal(run(ctx, '_schAgents.find(item => item.id === "runner:this-device:pi").clientId'), 'fixture-device');
+  assert.match(run(ctx, `_schModelFieldHtml("", ${JSON.stringify(selected)})`), /Local custom model/);
+  assert.doesNotMatch(run(ctx, '_schModelFieldHtml("", "runner:other-device:pi")'), /Local custom model/);
+});
+
+test('automation editor excludes local models from remote seats', async () => {
+  const localModel = { name: 'local:model-abcdefabcdefabcdefabcdefabcdefab', label: '本地测试模型', localOnly: true };
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: true,
+      locations: [{ assigneeId: 'local:pi', mode: 'local', label: '本机' },
+        { assigneeId: 'runner:desk-local:pi', mode: 'local', clientId: 'device', label: '本机 Runner' },
+        { assigneeId: 'runner:desk:pi', mode: 'remote', label: '远程 Runner' }] }],
+    modelOptions: [{ name: 'managed-model', label: '托管模型' }], defaultModel: 'managed-model',
+  }), myModels: async () => ({ usable: [localModel] }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.match(run(ctx, '_schModelFieldHtml("", "local:pi")'), /local:model-abcdefabcdefabcdefabcdefabcdefab/);
+  assert.match(run(ctx, '_schModelFieldHtml("", "runner:desk-local:pi")'), /local:model-abcdefabcdefabcdefabcdefabcdefab/);
+  assert.doesNotMatch(run(ctx, '_schModelFieldHtml("", "runner:desk:pi")'), /local:model-abcdefabcdefabcdefabcdefabcdefab/);
+  assert.match(run(ctx, '_schModelFieldHtml("", "runner:desk:pi")'), /managed-model/);
+  run(ctx, '_schAgents.find(item => item.id === "runner:desk:pi").modelPick = false');
+  assert.equal(run(ctx, '_schAgentAllowsModel("runner:desk:pi", "local:model-abcdefabcdefabcdefabcdefabcdefab")'), false);
+});
+
+test('local Pi keeps its local model picker when the runtime owns the default model', async () => {
+  const localModel = { name: 'local:model-abcdefabcdefabcdefabcdefabcdefab', label: '本地测试模型', localOnly: true };
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: false }],
+    modelOptions: [{ name: 'managed-model', label: '托管模型' }], defaultModel: 'managed-model',
+  }), myModels: async () => ({ usable: [localModel] }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schAgentAllowsModel("local:pi")'), true);
+  const field = run(ctx, '_schModelFieldHtml("", "local:pi")');
+  assert.match(field, /local:model-abcdefabcdefabcdefabcdefabcdefab/);
+  assert.doesNotMatch(field, /<select[^>]+disabled/);
+});
+
+test('an older local model selection remains visible and savable while its catalog is unavailable', async () => {
+  const localName = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: false }],
+    modelOptions: [{ name: 'managed-model', label: '托管模型' }], defaultModel: 'managed-model',
+  }), myModels: async () => ({ usable: [] }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schAgentAllowsModel("local:pi", "' + localName + '")'), true);
+  const field = run(ctx, '_schModelFieldHtml("' + localName + '", "local:pi")');
+  assert.match(field, new RegExp(localName + '.*已保存，当前不可用'));
+  assert.doesNotMatch(field, /<select[^>]+disabled/);
+});
+
+test('a missing device automation mapping remains an invalid placeholder even without a local catalog', async () => {
+  const ctx = context({ taskExecutionOptions: async () => ({
+    substrates: [{ key: 'local:qwen', cli: 'qwen', modelPick: false }], modelOptions: [],
+  }), myModels: async () => ({ usable: [] }) });
+  await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(run(ctx, '_schAgentAllowsModel("local:qwen", "local:unavailable")'), true);
+  const html = run(ctx, '_schModelFieldHtml("local:unavailable", "local:qwen")');
+  assert.match(html, /value="local:unavailable" selected disabled/);
+  assert.match(html, /本机模型选择已失效，请重新选择/);
+});
+
+test('late local catalog responses cannot repopulate a new scope or wedge refreshes', async () => {
+  let resolveLocal;
+  let calls = 0;
+  const localCatalog = new Promise(resolve => { resolveLocal = resolve; });
+  const ctx = context({
+    taskExecutionOptions: async () => modern,
+    myModels: async () => (++calls === 1 ? localCatalog : { usable: [] }),
+  });
+  const pending = run(ctx, '_schLoadExecutionAgents({})');
+  // Let the unified options request reach the deferred local catalog.
+  await new Promise(resolve => setImmediate(resolve));
+  run(ctx, '_schScope++');
+  resolveLocal({ usable: [{ name: 'local:model-abcdefabcdefabcdefabcdefabcdefab', localOnly: true }] });
+  assert.equal((await pending).length, 0);
+  assert.equal(run(ctx, '_schLocalModelOptions.length'), 0);
+
+  // The stale promise must release the coalescing slot so a refresh can run.
+  const refreshed = await run(ctx, '_schLoadExecutionAgents({})');
+  assert.equal(calls, 2);
+  assert.deepEqual(Array.from(refreshed, item => item.id), ['local:pi', 'local:codex']);
+  assert.equal(run(ctx, '_schLocalModelOptions.length'), 0);
 });
 
 test('a new automation loads the default native substrate without loading unrelated catalogs', async () => {
@@ -217,4 +404,24 @@ test('conversation automation preserves the explicitly selected substrate and mo
   assert.equal(body.assigneeId, 'local:qwen');
   assert.equal(body.modelName, 'chosen-model');
   assert.equal(body.repoId, 'repo-1');
+});
+
+test('conversation automation can persist a local model for a Pi runtime with modelPick disabled', async () => {
+  let body;
+  const localName = 'local:model-abcdefabcdefabcdefabcdefabcdefab';
+  const ctx = context({
+    taskExecutionOptions: async () => ({
+      substrates: [{ key: 'local:pi', cli: 'pi', name: 'Pi', available: true, modelPick: false }],
+      modelOptions: [{ name: 'managed-model', label: '托管模型' }],
+      defaultModel: 'managed-model',
+    }),
+    myModels: async () => ({ usable: [{ name: localName, label: '本地模型', localOnly: true }] }),
+    createSchedule: async value => { body = value; },
+  });
+  ctx.petSay = () => {};
+  await run(ctx, '_schmCreateAutomation("每日整理日报", ' +
+    '{schedule:{every:"daily",atHour:9,atMinute:0,weekday:1}}, ' +
+    '{ adapterId: "pi", modelName: "' + localName + '" })');
+  assert.equal(body.assigneeId, 'local:pi');
+  assert.equal(body.modelName, localName);
 });

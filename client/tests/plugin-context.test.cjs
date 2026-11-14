@@ -136,7 +136,33 @@ test('IPC forwards only bounded ids, main process re-resolves them and events re
   assert.match(session, /failureKind: 'plugin-grant', retrySafe: true/);
   assert.match(session, /if \(turn\.clearPluginSelection === true\) ctx\.persistPluginSelection\(\[\]\)/);
   assert.match(session, /const effectivePluginIds = turn\.clearPluginSelection !== true && requestedPluginIds\.length\s*\? requestedPluginIds\.slice\(\) : ctx\.activePluginIds\.slice\(\)/);
-  assert.match(ipc, /submissionId: String\(rawOptions/);
+  const start = ipc.indexOf('const sendOptions = {');
+  const end = ipc.indexOf('\n    };', start);
+  assert.ok(start >= 0 && end > start, 'production send options must be inspectable');
+  const optionsSource = ipc.slice(start, end + '\n    };'.length);
+  assert.match(optionsSource, /submissionId: String\(taskTurn\?\.acceptanceOnly \? taskTurn\.submissionId : rawOptions && rawOptions\.submissionId \|\| ''\)\s*\.replace\(\/\[\^a-zA-Z0-9_-\]\/g, ''\)\.slice\(0, 64\)/);
+  const rawOptions = { submissionId: 'raw:\n' + 'x'.repeat(90), acceptanceOnly: true,
+    metadata: { taskRef: 'forged' }, beforeTurn: () => 'forged', afterTurn: () => 'forged',
+    promptText: 'Untrusted guidance', modelSource: 'device' };
+  const options = taskTurn => require('node:vm').runInNewContext(optionsSource + '\nsendOptions;', {
+    rawOptions, taskTurn, taskLifecycle: false, pluginIds: ['resolved-plugin'], pluginInputs: {},
+    clearPluginSelection: false, selectedSkills: [],
+  });
+  const ordinary = options(null);
+  assert.equal(ordinary.submissionId, 'raw' + 'x'.repeat(61));
+  assert.deepEqual(Object.keys(ordinary).sort(), ['pluginIds', 'pluginInputs', 'projectId', 'repoId',
+    'sentAt', 'skills', 'submissionId'].sort(), 'renderer metadata must not become runtime options');
+  const beforeTurn = () => 'trusted', afterTurn = () => 'trusted';
+  const acceptance = options({ acceptanceOnly: true, submissionId: 'native:\n' + 'y'.repeat(90),
+    task: { projectId: 'native-project', repoId: 'native-repo' }, text: 'Verified acceptance context', beforeTurn, afterTurn });
+  assert.equal(acceptance.submissionId, 'native' + 'y'.repeat(58));
+  assert.equal(acceptance.beforeTurn, beforeTurn);
+  assert.equal(acceptance.afterTurn, afterTurn);
+  assert.equal(acceptance.promptText, 'Verified acceptance context');
+  assert.equal(acceptance.projectId, 'native-project');
+  assert.equal(acceptance.repoId, 'native-repo');
+  assert.equal(Object.hasOwn(acceptance, 'metadata'), false);
+  assert.equal(Object.hasOwn(acceptance, 'modelSource'), false);
   assert.match(ipc, /failureKind: r && r\.failureKind/);
   assert.match(events, /pluginContext\.parse/);
   assert.match(events, /plugins: withPlugins\.plugins/);

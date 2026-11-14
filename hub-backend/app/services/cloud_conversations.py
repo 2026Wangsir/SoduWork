@@ -23,6 +23,7 @@ from ..conversation_handoff_models import ConversationHandoff as Handoff
 from ..models import Attachment, Task
 from . import conversation_handoffs as handoffs, storage
 from . import cloud_code_delivery
+from .schedule_run_contracts import is_local_model_reference
 
 MAX_FILES = 20
 MAX_TOTAL_BYTES = 96 * 1024 * 1024
@@ -44,6 +45,8 @@ def clean_options(raw, has_files=False):
         raise HTTPException(400, "云端会话编号格式不正确")
     if out["agentId"] not in AGENTS:
         raise HTTPException(422, "当前服务尚未配置此 Agent 的云端执行支持")
+    if is_local_model_reference(out["model"]):
+        raise HTTPException(409, "本地模型只能在本机使用，不能用于云端会话")
     input_preparation = raw.get("inputPreparation")
     if input_preparation is not None:
         if (not isinstance(input_preparation, dict)

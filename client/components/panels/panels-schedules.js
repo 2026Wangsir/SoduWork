@@ -17,7 +17,9 @@ let _schAgents = [];
 let _schAgentReason = '';
 let _schAgentLoading = null;
 let _schModelOptions = [];
+let _schLocalModelOptions = [];
 let _schDefaultModel = '';
+let _schAgentDefaultModels = {}, _schAgentDefaultErrors = {};
 let _schNativeModelOptions = Object.create(null);
 let _schRepos = [];
 let _schTemplates = [];
@@ -659,7 +661,11 @@ function _wireSchForm() {
       atMinute: window.ScheduleTiming.clockNumber(document.getElementById('schM').value),
       assigneeId: document.getElementById('schWho').value,
       assigneeType: 'agent',
-      modelName: mode === 'direct' && _schAgentAllowsModel(document.getElementById('schWho')?.value)
+      assigneeMode: _schAgents.find(item => String(item.id) === String(document.getElementById('schWho').value))?.mode ||
+        _schAgents.find(item => String(item.id) === String(document.getElementById('schWho').value))?.locationMode || '',
+      assigneeClientId: _schAgents.find(item => String(item.id) === String(document.getElementById('schWho').value))?.clientId || '',
+      modelName: mode === 'direct' && _schAgentAllowsModel(document.getElementById('schWho')?.value,
+        document.getElementById('schModel')?.value)
         ? (document.getElementById('schModel')?.value || '') : '',
       repoId: document.getElementById('schRepo').value,
       flow: false,
@@ -861,7 +867,7 @@ function _wireSchForm() {
     if (event.catalogRefresh) { _schRefreshModelField(); scheduleProbe(); return; }
     // A different substrate may have a different model namespace. Never carry
     // the previous substrate's explicit model into the new selection.
-    _schRefreshModelField('');
+    _schRefreshModelField(_schDefaultModelFor(event.target.value));
     const selected = document.getElementById('schWho').value;
     await _schLoadNativeModelOptions(_schAgents.filter(item => item.id === selected));
     if (!isCurrent() || document.getElementById('schWho').value !== selected) return;
@@ -905,6 +911,9 @@ function _wireSchForm() {
     }
     const modelOptions = typeof _schModelOptionsFor === 'function'
       ? _schModelOptionsFor(body.assigneeId) : _schModelOptions;
+    if (body.modelName && !modelOptions.some(item => item.name === body.modelName)) {
+      if (typeof petSay === 'function') petSay('原模型或默认模型已不可用，请主动选择可用模型'); return;
+    }
     if (_schAgentAllowsModel(body.assigneeId) &&
         modelOptions.length && !body.modelName) {
       if (typeof petSay === 'function') petSay('\u8bf7\u9009\u62e9\u4e00\u4e2a\u6a21\u578b'); return;

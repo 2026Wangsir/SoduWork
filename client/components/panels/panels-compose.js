@@ -756,6 +756,7 @@
     const taskSession = q.taskSession === true || q.taskSession === 1 || q.taskSession === '1';
     if (q.newSession && !q.chatId) {
       global.ComposeExecution?.reset();
+      void global.ComposeModelPicker?.resetNewDraft?.();
       _accessConsent?.reset();
       _rememberComposeDraft();
       /*

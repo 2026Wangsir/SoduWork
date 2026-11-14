@@ -4,7 +4,7 @@ const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const store = require('./local-model-store.cjs');
 
-function install({ app, ipcMain, safeStorage }) {
+function install({ app, ipcMain, safeStorage, changed = () => {} }) {
   store.configure({ app, safeStorage });
   function assertDesk(event) {
     const frame = event.senderFrame, url = frame?.url || event.sender.getURL();
@@ -14,8 +14,18 @@ function install({ app, ipcMain, safeStorage }) {
     }
   }
   ipcMain.handle('local-models-get', event => { assertDesk(event); return store.get(); });
-  ipcMain.handle('local-models-save', (event, input) => { assertDesk(event); return store.save(input || {}); });
-  ipcMain.handle('local-models-test', (event, providerId, modelName) => { assertDesk(event); return store.test(providerId || '', modelName || ''); });
+  ipcMain.handle('local-models-save', (event, input) => {
+    assertDesk(event);
+    const result = store.save(input || {});
+    changed();
+    return result;
+  });
+  ipcMain.handle('local-models-test', async (event, providerId, modelName) => {
+    assertDesk(event);
+    const result = await store.test(providerId || '', modelName || '');
+    if (result.ok) changed();
+    return result;
+  });
 }
 
 module.exports = { install };

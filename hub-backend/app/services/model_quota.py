@@ -13,6 +13,17 @@ VERSION = 2
 RECEIPT_TTL = 30 * 24 * 60 * 60  # Allow the existing durable outbox to settle offline work.
 
 
+def managed_runtime(value):
+    """Return only model-catalog runtimes, excluding account-owned executors."""
+    from .agent_execution_options import GATEWAY_MODEL_KINDS
+    runtime = str(value or "").strip().lower().removeprefix("local:")
+    if runtime.startswith("custom-"):
+        # Personal executable identities stay on the device; funding tickets
+        # bind them to the Hub's managed ACP selector.
+        return "custom-acp"
+    return runtime if runtime == "custom-acp" or "local:" + runtime in GATEWAY_MODEL_KINDS else ""
+
+
 def scope(provider, key_from):
     return "personal" if key_from == "mine" or (
         key_from == "none" and provider.get("personal") is True) else "platform"
@@ -27,14 +38,14 @@ def binding(conf):
         hashlib.sha256).hexdigest()
 
 
-def usage_token(client, conf):
+def usage_token(client, conf, runtime="pi"):
     from .model_config_guard import revision
     return sign_claims({
         "uid": str(client.user_ref or ""), "cid": str(client.id),
         "ver": int(client.auth_version or 1),
         "provider": str(conf.get("provider") or ""), "model": str(conf.get("model") or ""),
         "revision": str(revision(client)) + ":" + binding(conf),
-        "scope": conf.get("quotaScope", "platform"), "runtime": "pi",
+        "scope": conf.get("quotaScope", "platform"), "runtime": managed_runtime(runtime),
     }, token_type="model-quota-usage", ttl_seconds=RECEIPT_TTL)
 
 
@@ -43,8 +54,9 @@ def reported_scope(client, payload):
     if not isinstance(token, str) or len(token) > 8192:
         return "platform"
     claims = verify_claims(token, token_type="model-quota-usage")
-    runtime = str(payload.get("agent") or payload.get("agentKey") or "").strip().lower().removeprefix("local:")
-    if not claims or claims.get("scope") != "personal" or claims.get("runtime") != "pi" or runtime != "pi":
+    runtime = managed_runtime(payload.get("agent") or payload.get("agentKey"))
+    if (not claims or claims.get("scope") != "personal" or
+            not managed_runtime(runtime) or claims.get("runtime") != runtime):
         return "platform"
     expected = {"uid": str(client.user_ref or ""), "cid": str(client.id),
                 "ver": int(client.auth_version or 1),

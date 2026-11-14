@@ -63,6 +63,13 @@ class PiRuntimeConfigTests(unittest.TestCase):
         restored = self.environment()
         self.assertEqual(restored["PI_CODING_AGENT_DIR"], first["PI_CODING_AGENT_DIR"])
 
+    def test_keyless_local_model_omits_inherited_credentials(self):
+        with patch.dict(os.environ, {"SODUWORK_LLM_KEY": "unrelated-personal-key"}):
+            env = self.environment(llm={**self.llm, "key": "", "localOnly": True})
+        provider = json.loads((Path(env["PI_CODING_AGENT_DIR"]) / "models.json").read_text())["providers"]["company"]
+        self.assertEqual(provider["apiKey"], "soduwork-local-no-key")
+        self.assertNotIn("SODUWORK_LLM_KEY", env)
+
     def test_missing_model_configuration_fails_before_cli_start(self):
         for field in ("base", "key", "model"):
             with self.subTest(field=field), self.assertRaises(RuntimeError):

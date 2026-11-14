@@ -31,7 +31,7 @@ function create({ beforeRetry } = {}) {
       retry: true, modelRecovery: true, continuing: true, goalMode,
       recoveryBeforeTurn: originalBeforeTurn,
       beforeTurn: async function (...args) {
-        await item.options.beforeRetry?.();
+        await item.options.beforeRetry?.(...args);
         await beforeRetry?.({ authExpired });
         await originalBeforeTurn?.apply(this, args);
       },

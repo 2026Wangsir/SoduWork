@@ -13,9 +13,13 @@ function fixture(get = async () => ({ providers: [], myModels: [], revision: 1 }
     localStorage: { getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) },
     soduWorkAPI: { localModels: { get, save: async value => { saves.push(value); return { ok: true }; } },
-      ...(options.localRequirementParse ? { conversationSession: { localRequirementParse: options.localRequirementParse } } : {}) },
-    fetch: async (url, options) => { requests.push({ url, body: options?.body && JSON.parse(options.body) });
-      return new Response(JSON.stringify({ ok: true })); },
+      ...(options.authenticated ? { deviceAuthBootstrap: async () => ({ ok: true, stored: true,
+        clientId: 'fixture-device', user: { id: 'alice' }, session: 'fixture-session', expiresIn: 1800 }) } : {}),
+      ...(options.localRequirementParse ? { conversationSession: { localRequirementParse: options.localRequirementParse } } : {}),
+      ...(options.automationModels ? { automationModels: options.automationModels } : {}) },
+    fetch: async (url, options) => { const body = options?.body && JSON.parse(options.body);
+      requests.push({ url, body });
+      return new Response(JSON.stringify({ ok: true, id: 'schedule', modelSource: body?.modelSource || 'managed' })); },
   };
   box.window = box;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../api.js'), 'utf8'), box);
@@ -34,24 +38,48 @@ test('desktop model references never reach remote Agent defaults or probes', asy
   assert.equal(f.requests.length, 2);
 });
 
-test('non-Pi runtimes cannot resolve local credentials or forward their reference', async t => {
+test('legacy requirement dispatch refuses device models before making a Hub request', async () => {
+  const f = fixture();
+  await assert.rejects(f.api.dispatchToAI('requirement', { id: 'local:qwen' }, '', {}, 'local:model-0123456789abcdef0123456789abcdef'), /本地模型/);
+  assert.equal(f.requests.length, 0);
+});
+
+test('calls without an explicit local execution context cannot resolve or forward local credentials', async t => {
   const store = require('../main/local-model-store.cjs');
   const modelConfig = require('../main/pi-session/model-config');
   t.mock.method(store, 'resolve', () => { throw Error('Must not read local credentials'); });
   const fetchImpl = () => { throw Error('Must not contact Hub'); };
-  for (const agent of ['harness2', 'codex', 'custom-example']) {
+  for (const agent of ['pi', 'harness2', 'codex', 'custom-example']) {
     const result = await modelConfig.fetchModel(null, 'local:private:model', 1000, fetchImpl, false, agent);
     assert.equal(result.ok, false);
-    assert.match(result.reason, /本机 Pi/);
+    assert.match(result.reason, /本机受管底座调用/);
   }
   assert.equal(store.resolve.mock.callCount(), 0);
 });
 
-test('local selections use an on-device parser and never reach remote parsing, plans or schedules', async () => {
+test('managed local runtimes resolve the on-device model without contacting Hub', async t => {
+  const store = require('../main/local-model-store.cjs');
+  t.mock.method(store, 'resolve', () => ({
+    name: 'qwen-local-wire', modelRef: 'local:private:model', runtimeId: 'local:private:model',
+    baseUrl: 'http://127.0.0.1:11434/v1', key: '', authMode: 'none',
+    provider: 'ollama', providerName: 'Ollama', localOnly: true,
+  }));
+  const fetchImpl = () => { throw Error('Hub must not receive local model requests'); };
+  for (const agent of ['harness2', 'qwen', 'opencode', 'dsh', 'kimi']) {
+    const result = await require('../main/pi-session/model-config').fetchModel(
+      null, 'local:private:model', 1000, fetchImpl, false, agent, { allowLocal: true });
+    assert.equal(result.ok, true, agent);
+    assert.equal(result.model.localOnly, true);
+    assert.equal(result.model.wireModelId, 'qwen-local-wire');
+    assert.equal(result.model.key, '');
+  }
+});
+
+test('legacy or malformed local references use an on-device parser and never reach remote plans or schedules', async () => {
   const f = fixture(undefined, { localRequirementParse: async params => ({ ok: true,
     text: JSON.stringify({ title: 'Local draft', note: params.input, checklist: ['Keep local'], kind: 'requirement',
       priority: 'normal', due: '', tags: ['local'] }) }) });
-  for (const model of ['local:private:model', 'image::private::local:private:model']) {
+  for (const model of ['local:private:model', 'image::private::local:private:model', 'image::device:private::local:private:model']) {
     const parsed = await f.api.parseTaskText('Retain this draft.', model);
     assert.equal(parsed.title, 'Local draft');
     assert.match(parsed.note, /Retain this draft/);
@@ -63,6 +91,86 @@ test('local selections use an on-device parser and never reach remote parsing, p
   assert.equal(f.requests.length, 0);
   await f.api.createSchedule({ modelName: 'managed-model' });
   assert.equal(f.requests.length, 1);
+});
+
+test('local automation model selections stay on the device and are cleared when replaced', async () => {
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  const saved = [], removed = [];
+  const f = fixture(undefined, { authenticated: true, automationModels: {
+    set: async input => { saved.push(input); return { ok: true, modelName: input.modelName }; },
+    remove: async input => { removed.push(input); return { ok: true, modelName: '' }; },
+  } });
+  await f.api.registerClient();
+  await f.api.createSchedule({ title: 'local', assigneeId: 'local:pi', modelName: model });
+  assert.equal(f.requests[0].body.modelName, '');
+  assert.equal(saved[0].modelName, model);
+  await assert.rejects(f.api.createSchedule({ title: 'local runner', assigneeId: 'runner:desk:pi', assigneeMode: 'local',
+    assigneeClientId: 'another-device', modelName: model }), /本地模型只能选择本机托管型/);
+  await f.api.updateSchedule('schedule', { assigneeId: 'local:pi', modelName: 'managed-model' });
+  assert.equal(removed.length, 1);
+  await assert.rejects(f.api.updateSchedule('schedule', { assigneeId: 'runner:desk:pi', modelName: model }), /本地模型只能选择本机托管型/);
+  assert.equal(f.requests.length, 2);
+});
+
+test('local automation creation and editing fail closed without native validation or storage', async () => {
+  const model = 'local:model-0123456789abcdef0123456789abcdef';
+  const f = fixture();
+  await assert.rejects(f.api.preflightSchedule({ assigneeId: 'local:pi', modelName: model }), /无法验证本地模型/);
+  await assert.rejects(f.api.updateSchedule('schedule', { assigneeId: 'local:pi', modelName: model }), /无法保存自动化本地模型选择/);
+  assert.equal(f.requests.length, 0);
+});
+
+test('unavailable automation placeholders never reach Hub or mutate device selections', async () => {
+  const mutations = [];
+  const f = fixture(undefined, { authenticated: true, automationModels: {
+    set: async input => { mutations.push(input); return { ok: true }; },
+    remove: async input => { mutations.push(input); return { ok: true }; },
+  } });
+  await f.api.registerClient();
+  for (const modelName of ['unavailable:default', ' unavailable:default ', 'local:unavailable']) {
+    const request = { assigneeId: 'local:pi', modelName };
+    for (const call of [() => f.api.preflightSchedule(request), () => f.api.createSchedule(request),
+      () => f.api.updateSchedule('schedule', request)]) {
+      await assert.rejects(call, error => {
+        assert.equal(error.code, 'MODEL_SELECTION_REQUIRED');
+        assert.match(error.message, modelName.trim() === 'local:unavailable'
+          ? /请重新选择可验证的本地模型/ : /请选择可用模型/);
+        assert.doesNotMatch(error.message, /unavailable:/);
+        return true;
+      });
+    }
+  }
+  assert.equal(f.requests.length, 0);
+  assert.deepEqual(mutations, []);
+});
+
+test('opaque automation references stay local for every managed runtime and verified current-device Runner seat', async () => {
+  const model = 'local:model-' + 'a'.repeat(32);
+  for (const runtime of ['pi', 'qwen', 'opencode', 'dsh', 'kimi', 'harness2', 'codex-harness']) {
+    const writes = [];
+    const f = fixture(undefined, { authenticated: true, automationModels: {
+      set: async input => { writes.push(input); return { ok: true }; },
+    } });
+    await f.api.registerClient();
+    await f.api.createSchedule({ modelName: model, assigneeId: 'local:' + runtime });
+    await f.api.createSchedule({ modelName: model, assigneeId: 'runner:this-device:' + runtime,
+      assigneeMode: 'local', assigneeClientId: 'fixture-device' });
+    assert.deepEqual(f.requests.map(row => row.body.modelName), ['', '']);
+    assert.deepEqual(f.requests.map(row => row.body.modelSource), ['device', 'device']);
+    assert.deepEqual(writes.map(row => row.modelName), [model, model]);
+    assert(writes.every(row => row.owner === 'account:alice' && row.clientId === 'fixture-device'));
+    assert.doesNotMatch(JSON.stringify(f.requests), /local:model-/);
+    await assert.rejects(f.api.createSchedule({ modelName: 'image::device:private::' + model,
+      assigneeId: 'local:' + runtime }), /当前设备可验证的本地模型/);
+    await assert.rejects(f.api.createSchedule({ modelName: model, assigneeId: 'runner:other-device:' + runtime }), /本地模型/);
+    await assert.rejects(f.api.createSchedule({ modelName: model, assigneeId: 'runner:other-device:' + runtime,
+      assigneeMode: 'local', assigneeClientId: 'other-device' }), /本地模型/);
+    assert.equal(f.requests.length, 2);
+  }
+  const account = fixture();
+  for (const runtime of ['codex', 'claude'])
+    await assert.rejects(account.api.createSchedule({ modelName: model, assigneeId: 'local:' + runtime }), /本地模型/);
+  assert.equal(account.requests.length, 0);
 });
 
 test('a failed local parser preserves the original requirement for manual editing', async () => {
@@ -162,5 +270,26 @@ test('local model references cannot bypass managed dispatch or native runtime ad
     { agent: 'codex', modelMode: 'account' }]) {
     await assert.rejects(beforeTurn(() => assert.fail('local reference disclosed to Hub'), owner(), undefined,
       { ...runtime, localModel: () => ({ localOnly: true }) })({ modelName: 'local:fixture:model' }));
+  }
+});
+
+test('wrapped local image references never reach Hub quota admission', async () => {
+  const { beforeTurn } = require('../main/conversation/quota-admission.cjs');
+  for (const agent of ['pi', 'qwen', 'codex', 'claude']) {
+    await assert.rejects(beforeTurn(() => assert.fail('local reference disclosed to Hub'), owner(), undefined,
+      { agent, modelMode: agent === 'codex' || agent === 'claude' ? 'account' : 'managed' })({
+      modelName: 'image::private::local:model-' + 'a'.repeat(32),
+    }));
+  }
+});
+
+test('managed Runner local turns skip Hub quota admission', async () => {
+  const { beforeTurn } = require('../main/conversation/quota-admission.cjs');
+  for (const agent of ['qwen', 'opencode', 'codex-harness']) {
+    let called = false;
+    const hook = beforeTurn(() => { called = true; }, owner(), undefined,
+      { agent, modelMode: 'managed', localModel: async () => ({ localOnly: true }) });
+    await hook({ modelName: 'local:fixture:model' });
+    assert.equal(called, false, agent);
   }
 });

@@ -448,6 +448,10 @@ function _bind(el) {
         ctx._sessionOptions.modelName = selection.name;
         ctx._sessionOptions.modelLabel = selection.model?.label || selection.name;
         if (draft) void ctx._workCards?.saveDraftSelection?.(); ctx._render(); },
+      modelAvailabilityChanged: selection => {
+        if (ctx._snap) ctx._snap.modelSelection = selection;
+        ctx._render();
+      },
       thinkingChanged: thinking => { if (ctx._snap) ctx._snap.thinking = thinking;
         if (draftControls.active()) {
           if (ctx._sessionOptions.adapterId === 'codex') ctx._sessionOptions.reasoningEffort = thinking.level || '';

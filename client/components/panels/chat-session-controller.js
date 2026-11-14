@@ -436,6 +436,10 @@ async function _sendCore(textOverride, sendOptions) {
     const accessEpoch = ctx._viewEpoch, sendScopeEpoch = ctx._draftScopeEpoch, sendOwnerScope = ctx._draftOwnerScope();
     if (ctx._composerControls?.waitForAccess && !await ctx._composerControls.waitForAccess()) return false;
     if (accessEpoch !== ctx._viewEpoch) return false;
+    if ((ctx._snap?.modelSelection?.model || ctx._model)?.unavailable) {
+      ctx._fail('原本地模型已删除或不可用，请主动选择可用模型后继续发送');
+      return false;
+    }
     const input = el.querySelector('#nchatInput');
     const useComposer = textOverride == null || sendOptions?.useComposer === true;
     const pendingTask = ctx._collabTasks?.get(ctx._activeCollabTaskId);

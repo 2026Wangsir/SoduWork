@@ -179,6 +179,7 @@ _WANT_COLUMNS = {
         # Legacy adoption stamps head without replaying the source-provenance revision.
         ("source_requirement", "{json} NOT NULL DEFAULT '{{}}'"),
         ("model_name", "VARCHAR(300) NOT NULL DEFAULT ''"),
+        ("model_source", "VARCHAR(16) NOT NULL DEFAULT 'managed'"),
         ("created_by", "VARCHAR(36)"),
         ("time_zone", "VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai'"),
         ("required_capabilities", "{json} NOT NULL DEFAULT '[]'"),
@@ -449,6 +450,11 @@ def _backfill_data(conn) -> None:
          "WHERE created_by IS NULL OR created_by = ''"),
     ):
         conn.execute(text(sql))
+
+    model_privacy = import_module("migrations.versions.0089_schedule_model_source")
+    model_privacy.scrub_schedule_models(conn)
+    model_privacy.scrub_receipts(conn)
+    import_module("migrations.versions.0090_requirement_creator").migrate_data(conn)
 
     # Pre-Alembic ledgers predate occurrence identities. Backfill before adding the unique
     # index so adoption remains safe even when the historical table already has many rows.

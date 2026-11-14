@@ -10,6 +10,9 @@ async function generate({ handle, identity, choice, text, submissionId, signal, 
   fetchImpl = global.fetch }) {
   const selected = imageChoice(choice);
   if (!selected) return { ok: false, reason: '请选择可用的图片模型' };
+  if (selected.name.startsWith('local:')) return require('./local-image-turn.cjs').generate({
+    handle, selected, text, submissionId, signal, push, emit, fetchImpl,
+  });
   const generationId = submissionId || randomUUID();
   const callId = 'image-' + generationId;
   const args = { prompt: text, model: selected.name, providerId: selected.providerId, generationId };

@@ -63,6 +63,22 @@ class AdmissionHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["data"]["ok"])
         self.assertEqual(result["data"].get("executionStartedAt"), 0)
 
+    async def test_failed_followup_native_history_keeps_local_model_metadata_private(self):
+        self.archive()
+        run = local_base.rehydrate(self.ref)
+        run.update(model="private-wire", modelLocalOnly=True,
+                   tokens={"input": 99}, usage={"input": 99},
+                   usageReceipts=[{"localOnly": True, "reportable": False, "usage": {"input": 99}}])
+        self.refuse()
+        remote = await self.runner._job({"op": "job.session", "ref": self.ref})
+        self.assertEqual(remote["data"]["model"], "")
+        self.assertEqual(remote["data"]["activeExecutionSelection"]["modelName"], "")
+        self.assertEqual(remote["data"]["tokens"], {})
+        self.assertEqual(remote["data"]["usage"], {})
+        self.assertEqual([row["text"] for row in remote["data"]["items"]], ["first prompt", "saved answer"])
+        local = await self.runner._job({"op": "job.session", "ref": self.ref, "_localParent": True})
+        self.assertEqual(local["data"]["model"], "private-wire")
+
     async def test_queued_and_preparing_followup_never_expose_the_previous_launch(self):
         self.archive()
         item = self.queue.submit("turn-two", self.ref, admission.INTERACTIVE, "comment", {})[2]

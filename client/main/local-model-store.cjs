@@ -263,7 +263,8 @@ function resolve(modelRef) {
   if (!provider || (provider.authMode !== 'none' && !value.keys[provider.id])) return null;
   return { ...model, modelRef: model.id, runtimeId: model.id, configRevision: value.revision, baseUrl: provider.baseUrl,
     key: provider.authMode === 'none' ? '' : value.keys[provider.id],
-    provider: provider.id, providerName: provider.name, kind: provider.kind, localOnly: true,
+    provider: provider.id, providerName: provider.name, kind: provider.kind, authMode: provider.authMode,
+    localOnly: true,
     keyFrom: 'local' };
 }
 async function test(providerId, modelName, fetchImpl = global.fetch) {

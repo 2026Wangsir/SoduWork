@@ -182,6 +182,111 @@ class TokenQuotaTests(unittest.IsolatedAsyncioTestCase):
         retry = await self.http.post(route, headers=self.headers, json={**scope, "action": "prepare"})
         self.assertEqual(retry.status_code, 403, retry.text)
 
+    async def test_device_owned_native_receipts_do_not_consume_platform_model_allowance(self):
+        from app.agent_catalog import AGENTS
+        await self.override("limited", 0)
+        for agent, spec in AGENTS.items():
+            if spec.get("modelMode") != "managed":
+                continue
+            with self.subTest(agent=agent):
+                tid = "private-receipt-" + agent
+                async with self.sessions() as session:
+                    session.add(models.Task(id=tid, title="Local execution receipt", status="todo",
+                        owner_client_id=self.devices[0].id, owner_user_id=self.user.id,
+                        work_routing={"executionSubmissionMode": "manual"}))
+                    await session.commit()
+                scope = {"conversationId": "local-conversation", "turnId": "local-turn",
+                         "executor": "native", "modelSource": "device", "agentId": "local:" + agent}
+                for action in ("prepare", "start", "started", "complete"):
+                    response = await self.http.post("/api/v1/tasks/" + tid + "/conversation-turn",
+                        headers=self.headers, json={**scope, "action": action})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()["turn"]["modelSource"], "device")
+                    self.assertEqual(response.json()["turn"]["modelAgentId"], agent)
+                self.assertEqual(response.json()["turn"]["state"], "completed")
+                retagged = await self.http.post("/api/v1/tasks/" + tid + "/conversation-turn",
+                    headers=self.headers, json={**scope, "action": "prepare", "modelSource": "managed"})
+                self.assertEqual(retagged.status_code, 409, retagged.text)
+                # A later managed turn cannot inherit an earlier device-owned source.
+                managed = await self.http.post("/api/v1/tasks/" + tid + "/conversation-turn",
+                    headers=self.headers, json={**scope, "turnId": "managed-next", "action": "prepare",
+                                               "modelSource": "managed"})
+                self.assertEqual(managed.status_code, 403, managed.text)
+        self.assertEqual((await self.http.get("/api/v1/client-auth/authorize-ai", headers=self.headers)).status_code, 403)
+        async with self.sessions() as session:
+            self.assertEqual(await client_access.monthly_tokens(session, self.user.id), 0)
+
+    async def test_device_receipt_source_cannot_be_retagged_or_used_for_remote_execution(self):
+        await self.override("unlimited")
+        tid = "immutable-model-source"
+        async with self.sessions() as session:
+            session.add(models.Task(id=tid, title="Immutable source", status="todo",
+                owner_client_id=self.devices[0].id, owner_user_id=self.user.id))
+            await session.commit()
+        route = "/api/v1/tasks/" + tid + "/conversation-turn"
+        scope = {"conversationId": "source-conversation", "turnId": "source-turn", "executor": "native"}
+        prepared = await self.http.post(route, headers=self.headers, json={**scope, "action": "prepare"})
+        self.assertEqual(prepared.status_code, 200, prepared.text)
+        await self.override("limited", 0)
+        retagged = await self.http.post(route, headers=self.headers, json={**scope, "action": "start",
+            "modelSource": "device", "agentId": "local:pi"})
+        self.assertEqual(retagged.status_code, 409, retagged.text)
+        for patch_body in ({"executor": "dispatch"}, {"executor": "workflow"},
+                           {"agentId": "local:codex"}, {"agentId": "local:claude"},
+                           {"agentId": "runner:remote:pi"}, {"model": "local:model-private"}):
+            rejected = await self.http.post(route, headers=self.headers, json={**scope, "turnId": "new-turn",
+                "action": "prepare", "modelSource": "device", "agentId": "local:pi", **patch_body})
+            self.assertEqual(rejected.status_code, 422, rejected.text)
+            self.assertNotIn("local:model-private", rejected.text)
+        for route, body in (("/api/v1/tasks/parse", {"modelSource": "device"}),
+                            ("/api/v1/cloud-conversations/quota-check", None)):
+            response = await self.http.post(route, headers=self.headers,
+                **({"json": body} if body is not None else {"data": {"options": json.dumps({"modelSource": "device"})}}))
+            self.assertEqual(response.status_code, 403, response.text)
+
+    async def test_device_receipts_keep_account_and_device_ownership_checks(self):
+        await self.override("limited", 0)
+        async with self.sessions() as session:
+            session.add(models.Task(id="private-owned-task", title="Owned receipt", status="todo",
+                owner_client_id=self.devices[0].id, owner_user_id=self.user.id))
+            await session.commit()
+        body = {"action": "prepare", "conversationId": "owned-chat", "turnId": "owned-turn",
+                "executor": "native", "modelSource": "device", "agentId": "local:pi"}
+        route = "/api/v1/tasks/private-owned-task/conversation-turn"
+        other_device = await self.http.post(route, headers=self.second_headers, json=body)
+        self.assertEqual(other_device.status_code, 404, other_device.text)
+        async with self.sessions() as session:
+            user = await session.get(models.User, self.user.id)
+            user.is_active = False
+            await session.commit()
+        inactive = await self.http.post(route, headers=self.headers, json=body)
+        self.assertEqual(inactive.status_code, 403, inactive.text)
+
+    async def test_native_receipts_reject_private_references_with_managed_or_legacy_sources(self):
+        await self.override("unlimited")
+        async with self.sessions() as session:
+            session.add(models.Task(id="private-reference-task", title="Private reference", status="todo",
+                owner_client_id=self.devices[0].id, owner_user_id=self.user.id))
+            await session.commit()
+        route = "/api/v1/tasks/private-reference-task/conversation-turn"
+        for model in ("local:model-private", "image::device:provider::local:model-private"):
+            for source in ({}, {"modelSource": "managed"}):
+                with self.subTest(model=model, source=source):
+                    response = await self.http.post(route, headers=self.headers, json={"action": "prepare",
+                        "conversationId": "private-chat", "turnId": "private-turn", "executor": "native",
+                        "executionChoice": "native", "agentId": "local:pi", "model": model, **source})
+                    self.assertEqual(response.status_code, 422, response.text)
+                    self.assertNotIn(model, response.text)
+        async with self.sessions() as session:
+            task = await session.get(models.Task, "private-reference-task")
+            self.assertNotIn("conversationTurn", task.work_routing or {})
+        ordinary = await self.http.post(route, headers=self.headers, json={"action": "prepare",
+            "conversationId": "hub-chat", "turnId": "hub-turn", "executor": "native",
+            "executionChoice": "native", "agentId": "local:pi", "model": "image::device:provider::ordinary-hub-model"})
+        self.assertEqual(ordinary.status_code, 200, ordinary.text)
+        self.assertEqual(ordinary.json()["task"]["workRouting"]["executionContext"]["model"],
+                         "image::device:provider::ordinary-hub-model")
+
     async def test_multiple_devices_share_user_quota_and_people_have_distinct_limits(self):
         await self.policy(1000)
         await self.override("limited", 100)

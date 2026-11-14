@@ -518,6 +518,7 @@ _PERSIST_KEYS += ("executionStartedAt",)
 _PERSIST_KEYS += ("accessPolicy", "nextAccessPolicy", "appliedAccessPolicy", "skillSelection")
 _PERSIST_KEYS += ("conversationMode", "turnStartSeq", "admissionKey", "reasoningEffort", "codexTransport")
 _PERSIST_KEYS += ("turnEndIdentity", "admissionStartSeq")
+_PERSIST_KEYS += ("usageReceipts", "modelLocalOnly", "activeUsageOwner")
 
 
 def _save_meta(ref: str) -> None:
@@ -526,6 +527,9 @@ def _save_meta(ref: str) -> None:
         run = _RUNS.get(ref)
         if not run:
             return
+        from . import runner_usage_receipts
+        if run.get("error"):
+            run["error"] = runner_usage_receipts.redact_metadata(run, run["error"], diagnostic=True)
         _record_terminal(ref, run)
         if run.get("cli") == "codex":
             run["codexTransport"] = (run.get("cfg") or {}).get(_account_acp.TRANSPORT_KEY, run.get("codexTransport") or "")
@@ -910,7 +914,8 @@ def _prepare_codex_home(env: dict) -> None:
     _codex_runtime_home.clean_skills(env)
 
 
-def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: bool = True) -> dict:
+def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: bool = True,
+             runtime_root: str | None = None) -> dict:
     """Build the child environment; native recovery terminals may omit model admission.
 
     That internal exception does not obtain credentials or authorize a managed turn.
@@ -948,12 +953,12 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
         # DSH's restricted-token sandbox requires a separate runtime temp root.
         # Keep its existing sandbox/approval policy; isolate only host internals.
         from .dsh_runtime import prepare_temp, apply_access_env
-        prepare_temp(env, _data_root(), runtime_ref, work_root)
+        prepare_temp(env, runtime_root or _data_root(), runtime_ref, work_root)
         apply_access_env(env, cfg.get("accessPolicy"))
     if prof is _PROFILES.get("codex"):
         # Give each session an independent CODEX_HOME to avoid desktop and concurrent-task cache conflicts.
         # Copy authentication state only, excluding personal hooks, MCP configuration, caches, and history.
-        codex_home = _codex_runtime_home.prepare(env, _data_root(), runtime_ref)
+        codex_home = _codex_runtime_home.prepare(env, runtime_root or _data_root(), runtime_ref)
     # Pass the out-of-repository MCP configuration path to the bridge.
     if (cfg or {}).get("mcpServers"):
         env["SODUWORK_MCP_SERVERS"] = str(cfg["mcpServers"])
@@ -966,7 +971,7 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
             env[str(target)] = os.environ[str(source)]
     if prof is _PROFILES.get("opencode"):
         from .opencode_runtime_config import prepare_environment
-        prepare_environment(env, _data_root())
+        prepare_environment(env, runtime_root or _data_root())
     # Use the task owner's Git identity and credentials.
     # Inject them before the needs_llm early return.
     # Self-authenticated runtimes still need Git credentials for code delivery.
@@ -978,20 +983,22 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
     # Set this before the needs_llm early return so agents using native accounts also inherit it.
     _git_host_no_proxy(env, str((cfg or {}).get("repoGitUrl") or ""))
     if prof is _PROFILES.get("harness2"):
-        return _no_proxy_for(_harness2_runtime.environment(env, cfg, runtime_ref=runtime_ref),
+        return _no_proxy_for(_harness2_runtime.environment(env, cfg, runtime_ref=runtime_ref,
+                             **({"artifact_root": runtime_root} if runtime_root else {})),
                              str((cfg.get("llm") or {}).get("base") or ""))
     if not prof.get("needs_llm"):
         if prof.get("acp_key"):
-            _acp_agents.home_env(prof["acp_key"], env, _data_root())
+            _acp_agents.home_env(prof["acp_key"], env, runtime_root or _data_root())
         if prof is _PROFILES.get("codex"):
             env["CODEX_HOME"] = codex_home
             _account_acp.prepare_env(env, cfg, _codex_bin() or "")
         return env
     llm = (cfg or {}).get("llm") or {}
     base, key, model = llm.get("base", ""), llm.get("key", ""), llm.get("model", "")
+    local_only = llm.get("localOnly") is True
     kind = llm.get("kind") or "openai-compat"
     acp_key = str(prof.get("acp_key") or "")
-    if not (base and key and model):
+    if not (base and model and (key or local_only)):
         if prof is _PROFILES.get("pi"):
             if require_model:
                 raise RuntimeError("Pi 没有拿到本次派发的模型配置，请检查模型授权后重试。")
@@ -1000,7 +1007,7 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
             from .pi_runtime_config import prepare_session_environment
             with _LOCK:
                 execution = dict(_RUNS.get(runtime_ref) or {})
-            prepare_session_environment(env, _data_root(), runtime_ref, execution)
+            prepare_session_environment(env, runtime_root or _data_root(), runtime_ref, execution)
             for name in list(env):
                 if name.upper() == "SODUWORK_LLM_KEY":
                     del env[name]
@@ -1016,17 +1023,20 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
                 "为其配置或授权模型后重试；或在执行机上登录 %s 的个人账号。"
                 % (prof.get("name") or acp_key, prof.get("name") or acp_key))
         return env
-    env["SODUWORK_LLM_KEY"] = key
+    if key:
+        env["SODUWORK_LLM_KEY"] = key
+    else:
+        env.pop("SODUWORK_LLM_KEY", None)
     if acp_key:
         _acp_agents.inject_llm_env(
             acp_key, env, llm,
             mode=str((cfg or {}).get("_soduwork_agent_mode") or "work"))
         # Keep agent state directories outside restricted home-directory locations.
         # Some security policies block the rename operations required for session archival.
-        _acp_agents.home_env(acp_key, env, _data_root())
+        _acp_agents.home_env(acp_key, env, runtime_root or _data_root())
         if acp_key == "qwen":
             from . import qwen_runtime
-            qwen_runtime.configure(env, llm, _data_root(), runtime_ref)
+            qwen_runtime.configure(env, llm, runtime_root or _data_root(), runtime_ref)
         return _no_proxy_for(env, base)
 
     if prof.get("name") == "Pi":
@@ -1035,7 +1045,7 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
         from .pi_runtime_config import prepare
         with _LOCK:
             execution = dict(_RUNS.get(runtime_ref) or {})
-        prepare(env, _data_root(), llm, window(cfg) or _CTX_WINDOW_DEFAULT, runtime_ref, execution)
+        prepare(env, runtime_root or _data_root(), llm, window(cfg) or _CTX_WINDOW_DEFAULT, runtime_ref, execution)
         return _no_proxy_for(env, base)
     # OpenCode's default external_directory permission asks for confirmation, which unattended execution cannot provide.
     # Grant only the authorized Runner work root rather than enabling all permissions.
@@ -1061,7 +1071,7 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
         "$schema": "https://opencode.ai/config.json",
         "provider": {"company": {
             "npm": provider_pkg, "name": "SoduWork 模型服务",
-            "options": {"baseURL": base, "apiKey": "{env:SODUWORK_LLM_KEY}"},
+            "options": {"baseURL": base, **({"apiKey": "{env:SODUWORK_LLM_KEY}"} if key else {})},
             "models": {model: {"name": "公司 coding 模型",
                 "limit": {"context": context_limit, "output": min(output_limit, context_limit)},
                 "modalities": {

@@ -324,6 +324,7 @@
         '<div class="nthink-body" data-thinking-body="' + k + '" data-user-content>' + ctx.esc(b.text) + '</div></div>';
     }
     if (b.kind === 'text') {
+      if (acceptance.supersededText(mi, blockIndex)) return '';
       // Stream Markdown at a bounded rate without discarding earlier content;
       // settled blocks use the ordinary sanitized Markdown cache.
       const streaming = ctx._snap && ctx._snap.status === 'streaming' &&

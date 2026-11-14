@@ -114,10 +114,12 @@ def issue_session(client: Client) -> tuple[str, int]:
 def issue_proxy_ticket(client: Client, *, quota_runtime: str = "", quota_binding: str = "") -> tuple[str, int]:
     if client.auth_state != "active" or not client.user_ref:
         raise DeviceAuthError("这台 SoduWork 还没有被管理员激活", 403)
+    from .model_quota import managed_runtime
+    runtime = managed_runtime(quota_runtime)
     token = sign_claims(
         {"cid": client.id, "uid": client.user_ref, "ver": int(client.auth_version or 1),
-         **({"quotaRuntime": "pi", "quotaBinding": quota_binding}
-            if quota_runtime == "pi" and quota_binding else {})},
+         **({"quotaRuntime": runtime, "quotaBinding": quota_binding}
+            if runtime and quota_binding else {})},
         ttl_seconds=AGENT_TTL_SECONDS,
         token_type="ai-proxy",
     )

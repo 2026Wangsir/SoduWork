@@ -20,6 +20,29 @@ function fixture() {
   return { root, safeStorage };
 }
 
+test('successful local IPC changes invalidate runtime discovery without notifying Hub', async t => {
+  const f = fixture(), handlers = new Map(), app = { getPath: () => f.root };
+  const originalTest = store.test;
+  t.after(() => { store.test = originalTest; store.configure(null); fs.rmSync(f.root, { recursive: true, force: true }); });
+  let changes = 0;
+  require('../main/local-model-ipc.cjs').install({ app, safeStorage: f.safeStorage,
+    ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+    changed: () => { changes++; modelConfig.invalidate(); } });
+  const url = require('node:url').pathToFileURL(path.resolve(__dirname, '../desk.html')).href;
+  const frame = { url }, event = { senderFrame: frame, sender: { mainFrame: frame } };
+  const generation = modelConfig.generation();
+  const saved = handlers.get('local-models-save')(event, { providers: [{ id: 'local',
+    baseUrl: 'http://127.0.0.1:8686/v1', authMode: 'none' }], models: [{ providerId: 'local', name: 'fixture' }] });
+  assert.equal(saved.usable.length, 1);
+  assert.equal(changes, 1); assert.equal(modelConfig.generation(), generation + 1);
+  assert.throws(() => handlers.get('local-models-save')({ ...event, senderFrame: { url: 'https://untrusted.invalid' } }, {}));
+  assert.equal(changes, 1);
+  store.test = async () => ({ ok: false });
+  await handlers.get('local-models-test')(event, 'local', 'fixture'); assert.equal(changes, 1);
+  store.test = async () => ({ ok: true });
+  await handlers.get('local-models-test')(event, 'local', 'fixture'); assert.equal(changes, 2);
+});
+
 test('local model configuration is encrypted and resolves without a Hub identity', async t => {
   const f = fixture();
   t.after(() => { store.configure(null); fs.rmSync(f.root, { recursive: true, force: true }); });
@@ -30,7 +53,7 @@ test('local model configuration is encrypted and resolves without a Hub identity
   assert.equal(fs.readFileSync(path.join(f.root, 'local-models.secure.json'), 'utf8').includes('llama3'), false);
   const resolved = store.resolve('local:local:llama3');
   assert.equal(resolved.baseUrl, 'http://127.0.0.1:8686/v1');
-  const result = await modelConfig.fetchModel(null, 'local:local:llama3');
+  const result = await modelConfig.fetchModel(null, 'local:local:llama3', undefined, undefined, false, 'pi', { allowLocal: true });
   assert.equal(result.ok, true);
   assert.equal(result.localOnly, true);
   assert.equal(result.model.baseUrl, resolved.baseUrl);
@@ -57,7 +80,7 @@ test('long Unicode local model references survive creation, selection and saved 
   const selection = require('../main/conversation/model-selection');
   const preference = selection.preference({ getPath: () => f.root }, 'long-local-ref');
   const opaque = store.canonicalReference(modelRef);
-  const current = selection.create({ resolve: ref => modelConfig.fetchModel(null, ref),
+  const current = selection.create({ resolve: ref => modelConfig.fetchModel(null, ref, undefined, undefined, false, 'pi', { allowLocal: true }),
     persist: ref => preference.write(ref), apply: model => {
       assert.equal(model.id, opaque);
       assert.equal(model.wireModelId, name);
@@ -281,7 +304,7 @@ test('agent runtime resolves local credentials through the trusted desktop host'
     assert.equal(ref, 'local:local:qwen3');
     return store.resolve(ref);
   } });
-  const result = await modelConfig.fetchModel(null, 'local:local:qwen3');
+  const result = await modelConfig.fetchModel(null, 'local:local:qwen3', undefined, undefined, false, 'pi', { allowLocal: true });
   assert.equal(result.ok, true);
   assert.equal(result.model.key, 'secret');
   assert.equal(calls, 1);

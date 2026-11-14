@@ -32,7 +32,9 @@ test('人工分析使用验收提示与固定版本，完成后不提交决策�
   assert.match(turn.text, /交付成果/);
   assert.match(turn.text, /验收确认卡/);
   assert.deepEqual(turn.attachmentIds, ['file-a']);
-  assert.equal(turn.afterTurn, undefined);
+  assert.equal(typeof turn.afterTurn, 'function');
+  await turn.afterTurn('stopped');
+  assert.equal(f.notices.length, 0);
   assert.ok(f.calls.every(c => !c.body));
 });
 
@@ -73,7 +75,9 @@ test('manual-only deliveries reject automatic review before execution, including
   const options = { identity: {}, taskId: 't', requested: { acceptanceMode: 'auto' }, runtime: f.runtime, request: f.request };
   await assert.rejects(prepare(options), /手动验收/);
   const analysis = await prepare({ ...options, requested: {} });
-  assert.equal(analysis.afterTurn, undefined);
+  assert.equal(typeof analysis.afterTurn, 'function');
+  await analysis.afterTurn('failed');
+  assert.equal(f.notices.length, 0);
   f.context.readiness.requiresHumanConfirmation = false;
   const queued = await prepare(options);
   f.context.readiness.requiresHumanConfirmation = true;
