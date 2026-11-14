@@ -165,6 +165,14 @@ function create({ identityOf, fetch = fetchWithDeviceAuthRetry, discovery = requ
         .map(([domain]) => invalidate(domain, actor(identity))));
     }).catch(() => {});
   }));
+  // Quota is a wake-up signal only. The renderer's account refresh owns its
+  // authoritative snapshot; do not add a second /client-auth/me cache here.
+  subscriptions.push(discovery.register('quota', () => {
+    Promise.resolve(identityOf()).then(identity => {
+      if (closed || !accountId(identity)) return;
+      return capture(actor(identity)).then(captured => notify('quota', captured));
+    }).catch(() => {});
+  }));
   return { read, invalidate, close() {
     closed = true;
     for (const off of subscriptions) off();

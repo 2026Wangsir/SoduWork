@@ -213,3 +213,47 @@ test('the member editor rejects invalid caps, saves a zero pause and retains unl
   assert.equal(calls[1][1].custom.totalLimit, null)
   page.unmount()
 })
+
+test('page refresh reloads member quotas without changing the catalog revision, search or open editor', async () => {
+  const calls = []
+  let member = { id: 'alice', username: 'alice', displayName: 'Alice', isActive: true,
+    assignment: { revision: 8, mode: 'custom', hasTrial: false, custom: baseAllowance },
+    quota: { totalLimited: true, limit: 1000, used: 1000, exceeded: true, models: [] } }
+  const api = {
+    quotaPlans: async () => structuredClone(config),
+    quotaMembers: async args => { calls.push(args); return { items: [member], total: 1 } },
+  }
+  const page = await createComponentHarness(new URL('../src/screens/QuotaManagement.jsx', import.meta.url), { dependencies: {
+    '../api.js': { api }, '../ui.jsx': { Icon: 'Icon', Loading: 'Loading' },
+    './QuotaMembers.jsx': { __esModule: true, default: 'QuotaMembers' },
+    './QuotaEditors.jsx': { DefaultEditor: 'DefaultEditor', PlanEditor: 'PlanEditor' },
+    './quota-management.css': {},
+  } })
+  page.render(); await page.flush()
+  page.act(() => page.nodes(node => node.props.id === 'qm-tab-members')[0].props.onClick())
+  const memberProps = () => page.nodes(node => node.type === 'QuotaMembers')[0].props
+  const members = await createComponentHarness(new URL('../src/screens/QuotaMembers.jsx', import.meta.url), { props: memberProps(), dependencies: {
+    '../api.js': { api }, '../ui.jsx': { Icon: 'Icon' },
+    './QuotaEditors.jsx': { MemberEditor: 'MemberEditor' }, './quota-model.js': model,
+  } })
+  const settleMembers = async () => { await new Promise(resolve => setTimeout(resolve, 280)); await members.flush() }
+  members.render(); await settleMembers()
+  members.act(() => members.nodes(node => node.type === 'input')[0].props.onChange({ target: { value: 'alice' } }))
+  await settleMembers()
+  members.act(() => members.nodes(node => node.type === 'button' && node.props.className === 'admin-text-action')[0].props.onClick())
+  const editing = members.nodes(node => node.type === 'MemberEditor')[0].props.member
+  const before = calls.length
+  member = { ...member, assignment: { ...member.assignment, revision: 9 },
+    quota: { ...member.quota, limit: 1000000, exceeded: false } }
+  page.act(() => page.nodes(node => node.type === 'header')[0].props.children[1].props.onClick())
+  await page.flush()
+  assert.equal(memberProps().config.revision, config.revision)
+  members.render(memberProps()); await settleMembers()
+  assert.equal(calls.length, before + 1, 'refresh must reload assignments independently of catalog edits')
+  assert.equal(calls.at(-1).q, 'alice')
+  assert.equal(members.nodes(node => node.type === 'input')[0].props.value, 'alice')
+  assert.equal(members.nodes(node => node.props.className === 'qm-status ')[0].props.children, '\u53ef\u4f7f\u7528')
+  assert.equal(members.nodes(node => node.type === 'MemberEditor')[0].props.member, editing,
+    'an open editor must retain its draft snapshot and original conflict revision')
+  members.unmount(); page.unmount()
+})

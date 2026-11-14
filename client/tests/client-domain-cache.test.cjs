@@ -243,3 +243,27 @@ test('notification responses without valid revisions retain body change detectio
     assert.equal(f.changes.length, 3, 'losing the valid revision retains body comparison');
   }
 });
+
+test('quota wake-ups reach the current account without creating a competing cached snapshot', async t => {
+  const f = fixture(t);
+  for (let i = 0; i < 20; i++) f.wake.get('quota')({quota: {exceeded: false}});
+  await settle(); await f.advance(50);
+  assert.deepEqual(f.changes, [['quota', f.scope()]]);
+  assert.equal(f.calls(), 0, 'quota wake-ups never read or cache an account response in main');
+  await assert.rejects(f.cache.read('quota', f.scope()), /\u4e0d\u652f\u6301/);
+  await f.advance(120000);
+  assert.equal(f.calls(), 0, 'a hint-only domain does not start background HTTP polling');
+});
+
+test('quota hints discard an obsolete account, device, Hub or authorization version before delivery', async t => {
+  for (const next of [identity('bob'), identity('alice', 'other'), identity('alice', 'desktop', 2),
+    {...identity(), hub: 'https://other-hub.invalid'}]) {
+    const f = fixture(t);
+    f.wake.get('quota')(); await settle();
+    f.setIdentity(next); await f.advance(50);
+    assert.equal(f.changes.length, 0, 'the old scheduled hint must not be delivered under a new identity');
+    f.wake.get('quota')(); await settle(); await f.advance(50);
+    assert.deepEqual(f.changes, [['quota', f.scope()]]);
+    assert.equal(f.calls(), 0);
+  }
+});

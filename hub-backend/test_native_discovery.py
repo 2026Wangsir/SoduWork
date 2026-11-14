@@ -41,6 +41,15 @@ def cluster(enabled=False, redis=None):
 
 
 class PresenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quota_refresh_hint_is_scoped_and_protocol_two_only(self):
+        message = {"t": "native-discovery", "protocol": 2, "topics": ["quota"]}
+        self.assertEqual(discovery.heartbeat_topics(json.dumps(message)), ["quota"])
+        self.assertIsNone(discovery.heartbeat_topics(json.dumps({**message, "protocol": 1})))
+        from app.realtime import hub
+        with patch.object(hub, "publish", new_callable=AsyncMock) as publish:
+            await discovery.wake("device", "owner", "quota")
+            publish.assert_awaited_once_with("device", {"type": "native-discovery", "topic": "quota"}, user_id="owner")
+
     async def test_local_lease_scope_expiry_and_memory_bound(self):
         time = [10.0]
         presence = discovery.Presence(cluster(), lambda: time[0], max_entries=2)

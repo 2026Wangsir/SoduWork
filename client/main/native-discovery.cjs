@@ -3,7 +3,7 @@
 const { accountScopeKey } = require('./device-auth-request');
 const LEGACY_TOPICS = new Set(['remote-screen', 'personal-relay']);
 const EXTENDED_TOPICS = new Set(['automation-inbox', 'cloud-execution-sync', 'conversation-projects',
-  'models', 'config', 'team-messages']);
+  'models', 'config', 'team-messages', 'quota']);
 function scopeOf(identity) {
   let version = '';
   try { version = JSON.parse(Buffer.from(String(identity?.session || '').split('.')[0], 'base64url')).ver ?? ''; } catch (_) {}

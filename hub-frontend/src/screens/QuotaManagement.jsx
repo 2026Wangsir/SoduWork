@@ -13,7 +13,7 @@ export default function QuotaManagement() {
   const [tab, setTab] = useState('plans'), [editor, setEditor] = useState(null), [revision, setRevision] = useState(0)
   async function load() {
     setLoading(true); setError('')
-    try { setConfig(await api.quotaPlans()) } catch (e) { setError(e.message) }
+    try { setConfig(await api.quotaPlans()); setRevision(value => value + 1) } catch (e) { setError(e.message) }
     finally { setLoading(false) }
   }
   useEffect(() => { let active = true; api.quotaPlans().then(next => { if (active) { setConfig(next); setLoading(false) } }).catch(e => { if (active) { setError(e.message); setLoading(false) } }); return () => { active = false } }, [])

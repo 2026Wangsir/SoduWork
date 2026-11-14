@@ -13,7 +13,7 @@ from .cluster_bus import bus
 TTL_SECONDS = 30
 TOPICS = frozenset({"remote-screen", "personal-relay"})
 EXTENDED_TOPICS = frozenset({"automation-inbox", "cloud-execution-sync", "conversation-projects",
-                             "models", "config", "team-messages"})
+                             "models", "config", "team-messages", "quota"})
 
 
 class PresenceUnavailable(RuntimeError):

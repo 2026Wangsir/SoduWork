@@ -8,7 +8,7 @@ from ..models import Client
 from . import native_discovery
 
 log = logging.getLogger("uvicorn.error")
-TOPICS = frozenset({"conversation-projects", "models", "config", "team-messages"})
+TOPICS = frozenset({"conversation-projects", "models", "config", "team-messages", "quota"})
 MAX_PENDING = 4096
 MAX_TARGETS = 10000
 MAX_CONCURRENT = 32
@@ -33,6 +33,43 @@ async def device_changed(client, topic):
 async def models_changed(session):
     """Organization catalog changes affect every active device's usable metadata."""
     _queue("models", "", "")
+
+
+async def quota_changed(session, owner="", *, plan_ids=(), default_changed=False):
+    """Queue post-commit refresh hints without exposing allowances or granting access."""
+    try:
+        if owner:
+            await account_changed(session, owner, "quota")
+            return
+        if not plan_ids and not default_changed:
+            return
+        from sqlalchemy.orm import aliased
+        from ..models import AppSetting
+        from . import client_access, quota_plans
+        grant, override = aliased(AppSetting), aliased(AppSetting)
+        query = (select(Client.user_ref, grant.value, override.value)
+                 .outerjoin(grant, grant.key == quota_plans.GRANT_PREFIX + Client.user_ref)
+                 .outerjoin(override, override.key == client_access.USER_QUOTA_PREFIX + Client.user_ref)
+                 .where(Client.auth_state == "active", Client.user_ref.is_not(None))
+                 .distinct().order_by(Client.user_ref).limit(MAX_TARGETS + 1))
+        rows = (await session.execute(query)).all()
+        if len(rows) > MAX_TARGETS:
+            log.warning("Quota invalidation fanout capped; remaining accounts use reconciliation")
+        for uid, raw_grant, raw_override in rows[:MAX_TARGETS]:
+            try:
+                assigned = quota_plans.parse(raw_grant)
+                named = assigned.get("mode") == "plan" and assigned.get("planId") in plan_ids
+                inherited = (not assigned or assigned.get("mode") == "inherit") and default_changed
+                if inherited:
+                    inherited = client_access.user_quota(quota_plans.parse(raw_override))["mode"] == "inherit"
+                if named or inherited:
+                    _queue("quota", str(uid), "")
+            except (ValueError, TypeError, KeyError):
+                # Invalid policies remain unavailable; a hint cannot repair them.
+                continue
+    except Exception as error:
+        # A failed hint must not turn an already committed admin edit into a retry.
+        log.warning("Quota invalidation delayed: %s", type(error).__name__)
 
 
 def _queue(topic, owner, device):

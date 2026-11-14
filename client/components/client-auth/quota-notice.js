@@ -3,12 +3,14 @@
   'use strict';
   const cards = new Set();
   let current = null, owner = '', revision = 0, refreshFlight = null;
+  let denialPending = false;
   let selections = new WeakMap();
+  let fallbackSelection = null;
   const composerCards = new WeakMap();
   const tx = value => global.SoduWorkI18n?.translateText?.(value) || value;
   const locale = () => global.SoduWorkI18n?.getLocale?.() || 'zh-CN';
   const localSelection = card => {
-    const selected = selections.get(card)?.model;
+    const selected = (selections.get(card) || fallbackSelection)?.model;
     if (selected?.localOnly === true) return true;
     const value = typeof selected === 'string' ? selected : selected?.id || selected?.modelRef || selected?.name || '';
     return String(value).trim().startsWith('local:');
@@ -19,28 +21,47 @@
     const config = api?.hubConfig?.();
     return [config?.hub || '', user?.id || ''].join('|');
   };
-  const copy = card => global.SoduWorkQuota.copy({ ...current,
-    personalModelsAllowed: current?.personalModelsAllowed === true && selections.get(card)?.adapterId === 'pi' }, tx, locale());
-  const personalSelectionAllowed = card => {
-    const selected = selections.get(card);
+  const copy = (card, quota) => global.SoduWorkQuota.copy({ ...quota,
+    personalModelsAllowed: quota?.personalModelsAllowed === true && (selections.get(card) || fallbackSelection)?.adapterId === 'pi' }, tx, locale());
+  const personalSelectionAllowed = (card, quota) => {
+    const selected = selections.get(card) || fallbackSelection;
     return selected?.adapterId === 'pi' && selected.model?.quotaVersion === 2 &&
-      selected.model.quotaScope === 'personal' && global.SoduWorkQuota.allowsPersonal?.(current);
+      selected.model.quotaScope === 'personal' && global.SoduWorkQuota.allowsPersonal?.(quota);
   };
   const setText = (node, value) => { if (node.textContent !== value) node.textContent = value; };
 
+  function quotaFor(card) {
+    if (!current) return null;
+    if (current.exceeded && !/^(model_exhausted|model_not_allowed)$/.test(current.reason || '')) return current;
+    const selected = (selections.get(card) || fallbackSelection)?.model;
+    const model = typeof selected === 'string' ? selected : selected?.id || '';
+    if (!model) return current;
+    const provider = selected?.quotaProvider || '';
+    const rows = (current.models || []).filter(row => row.model === model && (!provider || row.provider === provider));
+    const quota = { ...current, exceeded: false, reason: '', model: null, requestedModel: null };
+    // Each composer derives its own model limit; it never changes account truth.
+    if (rows.length === 1 && rows[0].exceeded) return { ...quota, exceeded: true, reason: 'model_exhausted', model: rows[0] };
+    if (!rows.length && current.restrictModels) return { ...quota, exceeded: true,
+      reason: 'model_not_allowed', requestedModel: { provider, model } };
+    return quota;
+  }
+
   function render(card) {
-    const show = current?.exceeded === true && !personalSelectionAllowed(card) && !localSelection(card);
+    const quota = quotaFor(card);
+    const unconfirmed = denialPending && card.dataset.feedback === 'failed';
+    const show = (unconfirmed || quota?.exceeded === true && !personalSelectionAllowed(card, quota)) && !localSelection(card);
     card.hidden = !show;
     if (!show) return;
-    const value = copy(card);
+    const value = unconfirmed ? { title: tx('请刷新查看当前额度'),
+      guidance: tx('暂时无法刷新，请稍后重试。'), used: '', timing: '' } : copy(card, quota);
     setText(card.querySelector('[data-quota-title]'), value.title);
     setText(card.querySelector('[data-quota-guidance]'), value.guidance);
     setText(card.querySelector('[data-quota-summary]'), tx('额度详情'));
     const detail = card.querySelector('[data-quota-detail]');
-    const planName = current?.planId === 'trial' && current?.planName === '试用'
-      ? tx('试用') : current?.planName || '';
+    const planName = unconfirmed ? '' : quota?.planId === 'trial' && quota?.planName === '试用'
+      ? tx('试用') : quota?.planName || '';
     const rows = [planName, value.used, value.timing];
-    for (const model of (current?.models || []).slice(0, 100)) {
+    for (const model of (unconfirmed ? [] : quota?.models || []).slice(0, 100)) {
       const remaining = model.remaining === null ? tx('不限额') :
         tx('剩余 {tokens} Tokens').replace('{tokens}', new Intl.NumberFormat(locale()).format(model.remaining || 0));
       rows.push([model.provider, model.model].filter(Boolean).join(' / ') + ' · ' + remaining);
@@ -63,17 +84,13 @@
   }
 
   function update(detail = {}) {
+    const userId = global.SoduWorkAPI?.clientAuthSnapshot?.()?.user?.id;
+    if (detail.user?.id && userId && detail.user.id !== userId) return;
     const nextOwner = scope();
-    if (owner !== nextOwner) { owner = nextOwner; current = null; selections = new WeakMap(); refreshFlight = null; revision++; }
+    if (owner !== nextOwner) reset();
     if (detail.quota && typeof detail.quota === 'object') {
-      const next = detail.quota;
-      const selected = current?.model || current?.requestedModel;
-      if (!next.exceeded && selected && /^(model_exhausted|model_not_allowed)$/.test(current?.reason || '')) {
-        const row = (next.models || []).find(item => item.provider === selected.provider && item.model === selected.model);
-        current = row?.exceeded ? { ...next, exceeded: true, reason: 'model_exhausted', model: row }
-          : !row && next.restrictModels ? { ...next, exceeded: true, reason: 'model_not_allowed', requestedModel: selected }
-            : next;
-      } else current = next;
+      if (detail.quota !== current) denialPending = false;
+      current = detail.quota;
     }
     paint();
   }
@@ -81,15 +98,26 @@
   function show(value) {
     const found = global.SoduWorkQuota?.detail(value);
     if (!found) return false;
-    update({ quota: found.quota || (current?.exceeded ? current : { enabled: true, exceeded: true }) });
+    if (owner !== scope()) reset();
+    // Delayed failures are refresh hints, not newer account snapshots. A first
+    // failure can explain the rejected turn until the authenticated read ends.
+    if (!current) update({ quota: found.quota || { enabled: true, exceeded: true } });
+    denialPending = true;
+    void refresh(true);
     return true;
   }
 
-  async function refresh() {
-    if (refreshFlight) return refreshFlight;
-    const requestScope = scope(), requestRevision = revision;
+  async function refresh(recheck = false) {
+    if (owner !== scope()) reset();
     const api = global.SoduWorkAPI;
-    if (typeof api?.clientAuthMe !== 'function') return;
+    if (typeof api?.clientAuthMe !== 'function' || !api.clientAuthSnapshot?.()?.user?.id) return;
+    if (refreshFlight) {
+      // A new hint must also reach the shared API coordinator while this card
+      // awaits an older read. All callers then receive its final recheck result.
+      if (recheck === true) void api.clientAuthMe().catch(() => {});
+      return refreshFlight;
+    }
+    const requestScope = scope(), requestRevision = revision;
     const flight = Promise.resolve().then(() => api.clientAuthMe()).then(result => {
       if (requestScope !== scope() || requestRevision !== revision) return;
       if (!result?.quota) throw Error('Allowance response missing');
@@ -107,6 +135,7 @@
 
   function mount(composer) {
     if (!composer?.parentElement) return null;
+    if (owner !== scope()) reset();
     const previous = composer.previousElementSibling;
     if (previous?.classList.contains('soduwork-quota-card')) { composerCards.set(composer, previous); return previous; }
     const card = document.createElement('aside');
@@ -133,39 +162,26 @@
   }
 
   function modelChanged(selection, adapterId = '', surface) {
+    if (owner !== scope()) reset();
     const composer = composerCards.has(surface) ? surface : surface?.querySelector?.('.work-composer');
     const card = composer && composerCards.get(composer);
-    if (card) selections.set(card, { model: selection && typeof selection === 'object' ? selection : null, adapterId });
-    else if (!selection) selections = new WeakMap();
-    if (!current) return;
-    const modelSpecific = /^(model_exhausted|model_not_allowed)$/.test(current.reason || '');
-    if (current.exceeded && !modelSpecific) { paint(); return; }
-    const model = typeof selection === 'string' ? selection : selection?.id || '';
-    const provider = selection?.quotaProvider || '';
-    const rows = (current.models || []).filter(row => row.model === model && (!provider || row.provider === provider));
-    current = { ...current, exceeded: false, reason: '', model: null, requestedModel: null };
-    // Ambiguous provider names are rechecked by admission rather than guessed here.
-    if (rows.length === 1 && rows[0].exceeded) current = { ...current, exceeded: true, reason: 'model_exhausted', model: rows[0] };
-    else if (model && !rows.length && current.restrictModels) current = { ...current, exceeded: true,
-      reason: 'model_not_allowed', requestedModel: { provider, model } };
+    if (card) selections.set(card, { model: selection || null, adapterId });
+    else if (!selection) { selections = new WeakMap(); fallbackSelection = null; }
+    else fallbackSelection = { model: selection, adapterId };
     paint();
   }
-  function refreshIfBlocked() { if (current?.exceeded) return refresh(); }
+  function isBlocked() { return denialPending || current?.exceeded === true || [...cards].some(card => card.isConnected && quotaFor(card)?.exceeded); }
+  function refreshIfBlocked() { if (isBlocked()) return refresh(); }
   function markRestored() {
-    if (!current?.exceeded) return false;
-    // A restoration notification is an authoritative user-facing signal. Hide
-    // the stale card immediately, then reconcile with the Hub in the
-    // background so a model-specific limit can still be shown if it remains.
-    current = { ...current, exceeded: false, reason: '', model: null, requestedModel: null };
-    for (const card of cards) delete card.dataset.feedback;
-    global.ClientAuth?.clearQuotaNotice?.();
-    revision++;
-    refreshFlight = null;
-    paint();
-    return refresh();
+    if (!isBlocked()) return false;
+    // Compatibility entry point: only a successful Hub read confirms recovery.
+    return refresh(true);
   }
-  function reset() { current = null; selections = new WeakMap(); refreshFlight = null; owner = scope(); revision++; paint(); }
+  function reset() { current = null; denialPending = false; selections = new WeakMap(); fallbackSelection = null; refreshFlight = null; owner = scope(); revision++; paint(); }
   global.addEventListener('soduwork-data-scope-changed', reset);
+  global.addEventListener('soduwork-domain-changed', event => {
+    if (event?.detail?.domain === 'quota') void refresh(true);
+  });
   global.addEventListener('soduwork-locale-change', paint);
-  global.SoduWorkQuotaNotice = { mount, update, show, reset, refresh, refreshIfBlocked, markRestored, modelChanged };
+  global.SoduWorkQuotaNotice = { mount, update, show, reset, refresh, refreshIfBlocked, isBlocked, markRestored, modelChanged };
 })(window);
