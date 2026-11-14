@@ -1033,7 +1033,8 @@ def _env_for(prof: dict, cfg: dict, runtime_ref: str = "", *, require_model: boo
             mode=str((cfg or {}).get("_soduwork_agent_mode") or "work"))
         # Keep agent state directories outside restricted home-directory locations.
         # Some security policies block the rename operations required for session archival.
-        _acp_agents.home_env(acp_key, env, runtime_root or _data_root())
+        _acp_agents.home_env(acp_key, env, runtime_root or _data_root(),
+                            **({"installation_root": _data_root()} if acp_key == "dsh" and runtime_root else {}))
         if acp_key == "qwen":
             from . import qwen_runtime
             qwen_runtime.configure(env, llm, runtime_root or _data_root(), runtime_ref)

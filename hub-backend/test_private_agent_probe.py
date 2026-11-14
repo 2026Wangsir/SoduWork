@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.agent_catalog import AGENTS
-from app.services import agent_setup, local_base
+from app.services import agent_setup, dsh_runtime, local_base
 from runner_main import Runner
 
 
@@ -58,6 +58,62 @@ class PrivateProbeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PrivateProbeProcessTests(unittest.TestCase):
+    def test_dsh_private_probe_reuses_installed_code_but_cleans_its_own_home_and_temp(self):
+        identity = agent_setup._new_job("dsh", "probe", private=True)
+        roots = []
+        original = local_base._env_for
+
+        def prepare(*args, **kwargs):
+            roots.append(kwargs["runtime_root"])
+            return original(*args, **kwargs)
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="soduwork-dsh-installed-") as data:
+                installed = Path(dsh_runtime.host_root(data))
+                package = installed / "node_modules" / "@deepseek-ai" / "dsh" / "package.json"
+                package.parent.mkdir(parents=True)
+                package.write_text('{"version":"fixture"}', encoding="utf-8")
+                before = package.read_bytes()
+
+                def command(_bin, _args, workspace, _cfg, _prof):
+                    source = "\n".join([
+                        "import json, os",
+                        "from pathlib import Path",
+                        "installed = Path(" + repr(str(installed)) + ")",
+                        "root = Path(" + repr(roots[-1]) + ").resolve()",
+                        "workspace = Path(" + repr(workspace) + ").resolve()",
+                        "assert Path(os.environ['DSH_PATH']).resolve() == installed.resolve()",
+                        "assert (installed / 'node_modules/@deepseek-ai/dsh/package.json').is_file()",
+                        "home, temporary = Path(os.environ['DSH_HOME']).resolve(), Path(os.environ['TMPDIR']).resolve()",
+                        "assert home.is_relative_to(root) and temporary.is_relative_to(root)",
+                        "assert not temporary.is_relative_to(workspace) and not workspace.is_relative_to(temporary)",
+                        "assert os.environ['DSH_PERMISSION_MODE'] == 'read-only'",
+                        "(home / 'private-probe-state').write_text('isolated')",
+                        "print(json.dumps(" + repr({"type": "text", "part": {"text": agent_setup._TOKEN}}) + "), flush=True)",
+                    ])
+                    return [sys.executable, "-c", source]
+
+                with patch.object(local_base, "_data_root", return_value=data), \
+                        patch.object(agent_setup, "_bin_of", return_value=sys.executable), \
+                        patch.object(agent_setup, "_short", return_value="fixture-version"), \
+                        patch.dict(agent_setup._PROFILES["dsh"], {"start": lambda *args: ["fixture"]}), \
+                        patch.object(agent_setup, "_command_argv", side_effect=command), \
+                        patch.object(local_base, "_env_for", side_effect=prepare), \
+                        patch.object(agent_setup, "_save_probe") as save:
+                    agent_setup._guard(identity, agent_setup._run_probe, "dsh", dict(LOCAL))
+                result = agent_setup.job(identity, include_private=True)
+                self.assertTrue(result["ok"], result)
+                self.assertEqual(result["state"], "done")
+                self.assertEqual(result["lines"], [])
+                self.assertNotIn("private-probe", json.dumps(result))
+                save.assert_not_called()
+                self.assertEqual(package.read_bytes(), before)
+                self.assertEqual([p for p in installed.rglob('*') if p.is_file()], [package])
+                self.assertTrue(roots)
+                self.assertTrue(all(not Path(root).exists() for root in roots))
+        finally:
+            agent_setup._JOBS.pop(identity, None)
+
     def run_process(self, key, *, success=True):
         identity = agent_setup._new_job(key, "probe", private=True)
         roots = []

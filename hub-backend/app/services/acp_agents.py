@@ -129,11 +129,12 @@ def runtime_issue(key: str, *, probe: bool = False) -> str:
     return dsh_runtime.runtime_issue(expected_version=expected)
 
 
-def home_env(key: str, env: dict, work_root: str) -> None:
+def home_env(key: str, env: dict, work_root: str, *, installation_root: str | None = None) -> None:
     """Keep private agent state under the Runner's managed data root.
 
     DSH's Windows encryption-filter compatibility is installed by apply_env;
     merely relocating its home does not fix same-volume staging failures.
+    Private probes relocate writable state, not the installed runtime code.
     """
     declaration = (CATALOG.get(key) or {}).get("home") or {}
     if key == "claude":
@@ -158,7 +159,7 @@ def home_env(key: str, env: dict, work_root: str) -> None:
     from . import agent_shell
     agent_shell.apply(env, key)
     if key == "dsh":
-        dsh_runtime.apply_env(env, work_root)
+        dsh_runtime.apply_env(env, installation_root or work_root)
 
 
 def inject_llm_env(key: str, env: dict, llm: dict, *, mode: str = "work") -> None:
