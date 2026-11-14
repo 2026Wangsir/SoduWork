@@ -130,7 +130,7 @@ function sessionSnapshot(session, scanned, recovered) {
   for (const file of pluginDrafts.collect(session.cwd, got)) {
     const existing = items.findIndex(row => row.path && path.resolve(row.path) === file.path);
     const previous = existing >= 0 ? items[existing] : null;
-    const item = { ...file, ...previous, pluginDraft: true, pluginPackage: file.pluginPackage,
+    const item = { ...file, ...previous, pluginDraft: true, pluginPackage: file.pluginPackage, skillPackage: file.skillPackage === true,
       pluginName: file.pluginName, pluginVersion: file.pluginVersion,
       // Identity/superseded come from this scan's merge, never from the row the
       // earlier snapshot cached here — a rename must move the identity forward.
@@ -141,6 +141,9 @@ function sessionSnapshot(session, scanned, recovered) {
       preview: false, actions: ['open', 'reveal'] };
     if (existing >= 0) items[existing] = item; else items.push(item);
   }
+  // Delivery consumers need the same installation metadata as the artifact index.
+  const indexedByPath = new Map(items.filter(item => item.path).map(item => [path.resolve(item.path), item]));
+  delivery.items = (delivery.items || []).map(item => item.path && indexedByPath.get(path.resolve(item.path)) || item);
   return { got: got || {}, delivery, items };
 }
 
@@ -197,7 +200,7 @@ function publicArtifact(ref, item) {
     primary: item ? item.primary !== false : true,
     processEvidence: Boolean(item && item.processEvidence),
     changedInTurn: Boolean(item && item.changedInTurn),
-    ...(item && item.pluginDraft ? { pluginDraft: true, pluginPackage: Boolean(item.pluginPackage),
+    ...(item && item.pluginDraft ? { pluginDraft: true, pluginPackage: Boolean(item.pluginPackage), skillPackage: Boolean(item.skillPackage),
       pluginName: safeText(item.pluginName, 120), pluginVersion: safeText(item.pluginVersion, 40),
       pluginIdentity: safeText(item.pluginIdentity, 160), pluginSuperseded: item.pluginSuperseded === true,
       pluginRevision: safeText(item.pluginRevision, 64), pluginRevisionAt: Number(item.pluginRevisionAt || item.at || 0) } : {}),

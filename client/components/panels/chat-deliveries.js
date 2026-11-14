@@ -46,7 +46,9 @@
     return Number.isSafeInteger(round) && round > 0 ? round : 0;
   }
   function groupFiles(files, taskId, ownerRound = 0) {
-    let candidates = (files || []).filter(f => (f.taskId || f.cloudTaskId || '') === (taskId || '') && !f.processEvidence && !f.pluginDraft && f.role !== 'evidence' && (taskId ? f.role === 'supporting' || f.primary !== false || f.remoteMaterialized : f.primary !== false));
+    let candidates = (files || []).filter(f => (f.taskId || f.cloudTaskId || '') === (taskId || '') &&
+      !f.processEvidence && (!f.pluginDraft || f.skillPackage && /\.skill$/i.test(f.name || f.relative || f.path || '')) &&
+      f.role !== 'evidence' && (taskId ? f.role === 'supporting' || f.primary !== false || f.remoteMaterialized : f.primary !== false));
     if (taskId) {
       const round = ownerRound || Math.max(0, ...candidates.map(f => Number(f.round) || 0));
       candidates = candidates.filter(f => (Number(f.round) || 0) === round).sort((a, b) => String(a.at).localeCompare(String(b.at)));

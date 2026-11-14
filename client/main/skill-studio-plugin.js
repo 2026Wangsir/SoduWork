@@ -24,7 +24,7 @@ function body(app) {
       '先读取本轮插件资源目录内的 references/studio/SKILL.md，遵循其中的梳理、编写、校验、业务测试与交付步骤。',
       '辅助脚本位于同一资源目录的 references/studio/scripts/skill-package.cjs，需要 Node.js 18+。不得执行导入包中的未知脚本。',
       '支持 portable、codex、claude、copilot、soduwork 五种目标布局；默认 all。只有缺少会改变结果的信息时才询问。',
-      '产出真实 SKILL.md、资源、可下载的目标包、检查报告及变更说明，不能只返回 JSON。SoduWork 安装草稿只是额外交付。',
+      '产出真实 SKILL.md、资源、可下载的目标包、检查报告及变更说明，不能只返回 JSON。SoduWork 目标交付 .skill 技能包，通过技能导入入口安装并在技能列表使用。',
       '更新已有 Skill 时先复制到新候选目录、保留原材料和权限；跨平台不兼容配置必须说明并单独调整，不能静默丢弃。',
       '使用现有成果登记并保留其他成果。安装和发布必须经用户确认，企业审核流程保持不变。没有实际运行的宿主不得写成已验证。',
     ].join('\n'),

@@ -107,11 +107,26 @@
     input.click();
   }
   const repairs = new Set();
+  async function openSkillPackage(result, ctx, isCurrent = () => true) {
+    const scope = global.SoduWorkAPI?.taskStorageKey?.('ops');
+    const packet = result.skillPackage;
+    if (!packet?.base64 || !packet.name || typeof ctx.openSkillImport !== 'function') throw Error('技能安装入口不可用，请更新并重启 SoduWork');
+    const bytes = Uint8Array.from(atob(packet.base64), char => char.charCodeAt(0));
+    const file = new File([bytes], packet.name, { type: 'application/zip' });
+    const preview = await global.SoduWorkAPI.preflightMySkill(file);
+    if (!isCurrent() || scope !== global.SoduWorkAPI?.taskStorageKey?.('ops')) return false;
+    if (preview?.ok !== true) throw Error('技能包预检没有通过');
+    ctx.openSkillImport(file, preview);
+    return true;
+  }
   async function openConversationDraft(ref, target, button, ctx) {
     if (button && button.disabled) return;
+    const scope = global.SoduWorkAPI?.taskStorageKey?.('ops');
+    const isCurrent = () => scope === global.SoduWorkAPI?.taskStorageKey?.('ops') && button?.isConnected !== false;
     const label = button && button.textContent;
     const errorEl = button?.closest?.('.nplugin-draft')?.querySelector('.nplugin-draft-error');
     const card = button?.closest?.('.nplugin-draft');
+    let skillArtifact = card?.dataset?.skillPackage === 'true';
     let report = card?.querySelector?.('.nplugin-checks');
     if (!report && card?.appendChild && global.document?.createElement) {
       report = global.document.createElement('div'); report.className = 'nplugin-checks';
@@ -134,11 +149,18 @@
       const api = global.soduWorkAPI && (global.soduWorkAPI.conversationSession || global.soduWorkAPI.piSession);
       if (!api || typeof api.pluginDraft !== 'function') throw Error('请更新并重启 SoduWork 后安装会话插件');
       const result = await api.pluginDraft(ref, target);
+      if (!isCurrent()) return;
       if (!result || !result.ok) throw Error(result && result.reason || '草稿读取失败');
+      if (result.kind === 'skill') {
+        skillArtifact = true;
+        if (!await openSkillPackage(result, ctx, isCurrent)) return;
+        checks.push({ state: 'passed', label: '技能包检查通过' }); paint();
+        return;
+      }
       draft = result.body;
       checks.push({state:'passed',label:'已读取本会话的实际草稿和随包资源'}); paint();
       const preview = await global.SoduWorkAPI.preflightPluginDraft(result.body);
-      if(button?.isConnected===false)return;
+      if (!isCurrent()) return;
       if(draft.template==='app'){
         const hint=card?.querySelector?.('.nplugin-draft-copy span');if(hint)hint.textContent='即用已生成，可以检查并安装';
         const mark=card?.querySelector?.('.nplugin-draft-icon');
@@ -149,7 +171,7 @@
       if (preview.ok === false || preview.checks?.some(check => check.ok === false)) throw Error((preview.checks||[]).filter(check=>check.ok===false).map(check=>check.label).join('\n')||'预检仍有未通过项');
       global.SoduWorkCapabilityPlugins.openLocalImport(result.body, preview, ctx);
     } catch (error) {
-      if(button?.isConnected===false)return;
+      if (!isCurrent()) return;
       const message = errorText(error);
       if (errorEl) { errorEl.textContent = message; errorEl.hidden = false; }
       checks.push({state:'failed',label:message}); paint();
@@ -176,7 +198,10 @@
           };
           try {
             if (!api?.send) throw Error('原开发会话发送接口不可用');
-            const prompt = ['请修复本会话刚生成的即用交付包，保留用户已有内容。',
+            const prompt = skillArtifact ? ['请修复本会话刚生成的技能包，保留 SKILL.md 和全部业务资源。',
+              '目标成果：' + target, '本次检查错误：' + message,
+              '读取实际文件，修复并校验技能，在新目录重新导出 SoduWork .skill 包并登记交付。不要改成插件，不执行导入包中的未知脚本，不扩大权限。'].join('\n')
+              : ['请修复本会话刚生成的即用交付包，保留用户已有内容。',
               '目标成果：' + target, '即用：' + String(draft?.key || '待读取') + '；版本：' + String(draft?.version || '待读取'),
               '本次检查错误：' + message,
               '读取实际文件→定位修复→提升版本号→运行随包 validate.cjs→重新登记交付；不要只解释错误，不扩大权限，不修改其他业务工程。'].join('\n');
@@ -185,7 +210,7 @@
               outcome = event; finish();
             });
             expiry = setTimeout(() => { off(); repairs.delete(repairKey); repair.disabled = false; repair.textContent = '重新检查'; repair.onclick = () => openConversationDraft(ref,target,button,ctx); }, 600000);
-            accepted = await api.send(ref,prompt,[],{source:'jiyong-repair',submissionId});
+            accepted = await api.send(ref,prompt,[],{source:skillArtifact ? 'skill-repair' : 'jiyong-repair',submissionId});
             if (!accepted?.ok) { clearTimeout(expiry); throw Error(accepted?.reason || '修复请求发送失败'); }
             repair.textContent = accepted?.queued ? '已加入原会话队列' : '已在原会话发起修复';
             finish();
@@ -197,5 +222,5 @@
     }
     finally { if (button) { button.disabled = false; button.textContent = label; } }
   }
-  global.SoduWorkPluginMakerUtils = { html, errorText, values, clone, compareVersions, nextVersion, resourceMarkup, choosePackage, openConversationDraft };
+  global.SoduWorkPluginMakerUtils = { html, errorText, values, clone, compareVersions, nextVersion, resourceMarkup, choosePackage, openConversationDraft, openSkillPackage };
 })(window);

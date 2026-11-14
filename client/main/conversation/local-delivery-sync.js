@@ -29,7 +29,8 @@ function create({ notify = () => {}, snapshotFiles = artifacts.snapshotAsync } =
       if (states.get(handle) !== state || state.latest !== token) return;
       const declared = indexed.delivery?.source === 'manifest';
       const primary = (indexed.delivery?.presentation === 'summary' ? [] : indexed.delivery?.items || indexed.items || [])
-        .filter(file => file.primary !== false && !file.processEvidence && !file.pluginDraft && file.role !== 'evidence');
+        .filter(file => file.primary !== false && !file.processEvidence && file.role !== 'evidence' &&
+          (!file.pluginDraft || file.skillPackage && /\.skill$/i.test(file.name || file.relative || file.path || '')));
       const closures = new Map();
       for (const file of primary) {
         if (!handle.cwd || !file.path || !file.artifactId) continue;
@@ -50,7 +51,8 @@ function create({ notify = () => {}, snapshotFiles = artifacts.snapshotAsync } =
       const included = new Set([...files.map(file => file.relative || file.name),
         ...files.flatMap(file => closures.get(file.artifactId)?.manifest.files.map(row => row.path) || [])]);
       const versions = await Promise.all((indexed.items || []).filter(file =>
-        !file.processEvidence && !file.pluginDraft && file.role !== 'evidence' &&
+        !file.processEvidence && file.role !== 'evidence' &&
+        (!file.pluginDraft || file.skillPackage && /\.skill$/i.test(file.name || file.relative || file.path || '')) &&
         (included.has(file.relative || file.name) || !handle.cwd)).map(async file => {
         if (!file.path) return [file.artifactId, file.at || 0, file.size || 0];
         try {

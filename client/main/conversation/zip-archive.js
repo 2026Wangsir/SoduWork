@@ -57,6 +57,9 @@ async function createEntries(entries) {
   for (const item of entries) prepared.push({ ...item, compressed: await deflate(item.bytes, { level: 3 }) });
   return encode(prepared);
 }
+function createEntriesSync(entries) {
+  return encode(entries.map(item => ({ ...item, compressed: zlib.deflateRawSync(item.bytes, { level: 6 }) })));
+}
 function createZip(root) {
   const base = fs.realpathSync(root); const { result, total } = collect(base);
   const archive = encode(result.map(item => { const bytes = fs.readFileSync(item.full); return {
@@ -69,4 +72,4 @@ function createZip(root) {
 // Keep the synchronous primitive for worker/test callers. Native UI handlers
 // must use the bounded worker so scanning, reads, zlib and CRC stay off-thread.
 function createZipAsync(root, options) { return require('./zip-archive-worker').create(root, options); }
-module.exports = { createZip, createZipAsync, createEntries, collect, MAX_BYTES, MAX_FILES };
+module.exports = { createZip, createZipAsync, createEntries, createEntriesSync, collect, MAX_BYTES, MAX_FILES };

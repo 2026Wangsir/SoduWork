@@ -5,13 +5,15 @@ const { createRequire } = require('node:module');
 const { entryCandidates } = require('../pi-session/session-helpers');
 
 function runtimeEntry(app, optional = false) {
-  const entry = app && app.skillRuntimeEntry || entryCandidates(app).find(fs.existsSync);
+  // Artifact scans also run without an app handle in packaged processes.
+  const runtimeApp = app || { isPackaged: Boolean(process.resourcesPath) };
+  const entry = runtimeApp.skillRuntimeEntry || entryCandidates(runtimeApp).find(fs.existsSync);
   if (!entry && !optional) throw Error('未找到会话内核，无法校验 Skill');
   return entry;
 }
 
 function parse(content, name, app) {
-  const fail = reason => { throw Error('Skill ' + name + '：' + reason + '。请修正 SKILL.md 后重新导入'); };
+  const fail = reason => { throw Error('Skill ' + (name || 'SKILL.md') + '：' + reason + '。请修正 SKILL.md 后重新导入'); };
   // Resolve from the actual Pi entry, including packaged resources. A separate
   // parser dependency could disagree with the runtime or be absent in a build.
   const yaml = createRequire(runtimeEntry(app))('yaml');
@@ -44,7 +46,7 @@ function parse(content, name, app) {
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) fail('YAML 文件头必须是字段映射');
   if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 64) fail('name 必须是 1–64 字符的文本');
-  if (data.name !== name) fail('name 与包清单名称不一致');
+  if (name !== undefined && data.name !== name) fail('name 与包清单名称不一致');
   if (typeof data.description !== 'string' || !data.description.trim()) fail('description 必须是非空文本');
   if (data.description.length > 1024) fail('description 超过 1024 字符');
   if (data.compatibility !== undefined && typeof data.compatibility !== 'string') fail('compatibility 必须是文本');

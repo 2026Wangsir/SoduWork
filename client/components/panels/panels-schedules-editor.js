@@ -95,11 +95,7 @@ function _schNormalizeExecutionAgents(result) {
       ? item.locations : [null];
     for (const location of locations) {
       const remote = location && location.mode === 'remote';
-      // This device's Pi is reported as a concrete Runner seat, but local
-      // model references execute in the owner's desktop conversation.
-      // Remote targets retain their concrete identity.
-      const localPi = item.key === 'local:pi' && location?.mode === 'local';
-      const locationId = localPi ? 'local:pi' : String((location && (location.assigneeId || location.id)) || item.key);
+      const locationId = String((location && (location.assigneeId || location.id)) || item.key);
       const locationLabel = String((location && location.label) || item.locationLabel || '');
       rows.push({
         // A group such as local:pi can contain several concrete seats. Keep
@@ -162,22 +158,18 @@ function _schNativeOptionsFor(agentId) {
   return (_schNativeModelOptions && _schNativeModelOptions[String(agentId || '')]) || [];
 }
 
-let _schLocalModelOptions = [];
-
 function _schModelOptionsFor(agentId) {
   const agent = _schAgents.find(item => String(item.id) === String(agentId || ''));
-  if (String(agentId || '') === 'local:pi' && (!agent || agent.mode !== 'remote')) {
-    return _schNormalizeModelOptions({ modelOptions:
-      _schNativeOptionsFor(agentId).concat(_schModelOptions, _schLocalModelOptions) });
-  }
   return agent && agent.nativeModelPick ? _schNativeOptionsFor(agent.id) : _schModelOptions;
 }
 
 async function _schLoadNativeModelOptions(agents) {
   const scope = _schScope;
-  const rows = (agents || []).filter(item => item && item.nativeModelPick);
+  const nativeAgents = (agents || []).filter(item => item && item.nativeModelPick);
+  if (!nativeAgents.length) return;
   const bridge = window.soduWorkAPI && (window.soduWorkAPI.conversationSession || window.soduWorkAPI.piSession);
-  if (bridge && typeof bridge.runtimeModels === 'function') await Promise.all(rows.map(async agent => {
+  if (!bridge || typeof bridge.runtimeModels !== 'function') return;
+  await Promise.all(nativeAgents.map(async agent => {
     const adapterId = String(agent.cli || agent.id || '').replace(/^local:/, '');
     if (!adapterId) return;
     try {
@@ -187,17 +179,6 @@ async function _schLoadNativeModelOptions(agents) {
       if (scope === _schScope && _schNativeModelOptions) _schNativeModelOptions[agent.id] = [];
     }
   }));
-  const localPi = (agents || []).some(item => String(item?.id || '') === 'local:pi' && item.mode !== 'remote');
-  if (localPi) {
-    try {
-      const catalog = await window.soduWorkAPI?.localModels?.get();
-      const local = (Array.isArray(catalog?.usable) ? catalog.usable : []).filter(row =>
-        row?.localOnly === true && row.modality !== 'image' && row.modality !== 'video');
-      if (scope === _schScope) _schLocalModelOptions = _schNormalizeModelOptions({ modelOptions: local });
-    } catch (_) {
-      if (scope === _schScope) _schLocalModelOptions = [];
-    }
-  }
 }
 
 /*
@@ -209,7 +190,6 @@ async function _schLoadExecutionAgents(context) {
   if (_schAgentLoading) return _schAgentLoading;
   const scope = _schScope;
   _schNativeModelOptions = Object.create(null);
-  _schLocalModelOptions = [];
   _schAgentLoading = (async () => {
     if (SoduWorkAPI.taskExecutionOptions) {
       try {
@@ -508,7 +488,6 @@ function _schResetScope() {
   _schRows = null; _schLoading = null; _schLoadError = '';
   _schAgents = []; _schAgentReason = ''; _schAgentLoading = null;
   _schModelOptions = []; _schDefaultModel = ''; _schNativeModelOptions = Object.create(null);
-  _schLocalModelOptions = [];
   _schRepos = []; _schTemplates = [];
   _schPluginCache = Object.create(null); _schPluginLoading = Object.create(null);
   _schmGeneration++; _schmItems = []; _schmLoading = null;

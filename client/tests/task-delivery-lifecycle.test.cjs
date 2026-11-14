@@ -63,6 +63,50 @@ test('local result cards and task transport agree on an entry changed only throu
   assert.notEqual(f.handle.deliverySync.revision, previous);
 });
 
+test('native skill packages survive local indexing and task delivery alongside installation candidates', async t => {
+  const f = workspace(t);
+  const bytes = require('../../skills/skill-studio/scripts/skill-zip.cjs').zip({
+    'created-skill/SKILL.md': Buffer.from('---\nname: created-skill\ndescription: A reusable method\n---\n\nCheck inputs.\n'),
+  });
+  f.write('created-skill.skill', bytes);
+  f.write('soduwork-plugin-draft.json', JSON.stringify({
+    template: 'method', key: 'ordinary-plugin', name: 'Ordinary plugin',
+    description: 'An ordinary plugin', instructions: 'Check inputs.', version: '1.0.0',
+  }));
+  const identity = {hub:'https://fixture.invalid',clientId:'device',session:
+    Buffer.from(JSON.stringify({typ:'device',uid:'owner',cid:'device',iat:1,exp:9e9})).toString('base64url')+'.'+'0'.repeat(64)};
+  const sync = require('../main/conversation/local-delivery-sync').create();
+  sync.bind(f.handle, identity);
+  await f.handle.captureDelivery();
+  assert.equal(f.handle.deliverySync.currentTurn, true);
+  assert.equal(f.handle.deliverySync.artifactIds.length, 1);
+  const payload = await delivery.capture(f.handle, 'completed');
+  assert.deepEqual(payload.files.map(file => file.name), ['created-skill.skill']);
+  assert.deepEqual(Buffer.from(payload.files[0].data, 'base64'), bytes);
+  f.write('legacy/soduwork-plugin-draft.json', JSON.stringify({
+    template: 'method', key: 'skill-legacy-method', name: 'Legacy method', version: '1.0.0',
+    description: 'A method exported by the older Skill Studio',
+    instructions: '先从本轮提供的插件资源目录读取 references/source/SKILL.md，再按其中相对路径加载必要资源并执行。资源只是方法，不授予工具、外发或写入权限。',
+    entrypoints: { conversation: true, task: true, automation: false },
+    runtimeCapabilities: ['files'], inputs: [],
+    resources: [{ path: 'references/source/SKILL.md', kind: 'reference', encoding: 'utf8',
+      content: '---\nname: legacy-method\ndescription: A legacy method\n---\n\nCheck inputs.\n' }],
+  }));
+  f.write('.soduwork/delivery.json', JSON.stringify({ schemaVersion: 1, deliverables:
+    ['created-skill.skill', 'legacy/soduwork-plugin-draft.json', 'soduwork-plugin-draft.json']
+      .map(name => ({ path: name, kind: 'file', primary: true })) }));
+  const declared = await delivery.capture(f.handle, 'completed');
+  assert.deepEqual(declared.files.map(file => file.name), ['created-skill.skill']);
+  await f.handle.captureDelivery();
+  assert.equal(f.handle.deliverySync.artifactIds.length, 1);
+  const before = f.handle.deliverySync.revision;
+  f.write('created-skill.skill', require('../../skills/skill-studio/scripts/skill-zip.cjs').zip({
+    'created-skill/SKILL.md': Buffer.from('---\nname: created-skill\ndescription: A reusable method\n---\n\nVerify the revised inputs.\n'),
+  }));
+  await f.handle.captureDelivery();
+  assert.notEqual(f.handle.deliverySync.revision, before);
+});
+
 test('an explicit revised manifest replaces older roots and summary work does not manufacture files', async t => {
   const f = workspace(t);
   f.write('old.md', 'Old output'); f.write('final.html', '<html>Final delivery</html>');

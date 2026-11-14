@@ -238,7 +238,7 @@ sh start.sh --data-dir "D:/SoduWork-local" --port 18990
 - `runtime/`、`home/`：此实例专用的运行目录与 Agent 配置。
 - `venv/`、`application/`：独立依赖与从当前源码同步的运行副本。不要直接编辑这里的代码，业务附件应通过产品管理。
 - `startup.log`：依赖安装、构建、迁移与服务器日志。
-- `desktop.log` 记录联动桌面客户端的日志。桌面账号和会话配置通常位于数据目录下的 `desktop-profile/`。使用 macOS 默认数据目录时，桌面配置保存在 `~/Library/Application Support/SoduWork Development/source-service-desktop`，与正式客户端的配置目录隔离。桌面配置同样属于私密数据。
+- `desktop.log` 记录联动桌面客户端的日志。桌面账号和会话配置通常位于数据目录下的 `desktop-profile/`。在 macOS 上，如果数据目录位于 `~/Library/Application Support/SoduWork` 或 `soduwork` 内，桌面配置会单独保存在 `~/Library/Application Support/SoduWork Development/` 下，与正式客户端隔离。默认数据目录继续使用 `source-service-desktop`；不同自定义数据目录使用各自稳定的独立配置目录，Hub 数据和已下载的依赖留在原处。启动器会在写入前拒绝指回正式客户端配置的符号链接。桌面配置同样属于私密数据。
 
 更新源码后停止并重新运行同一条命令即可，启动器只更新自己的代码副本并保留数据。更新前应在服务停止时备份**整个数据目录**及单独存放的桌面配置目录；回退时同时恢复匹配版本的源码和数据备份，不能只降低源码版本。
 

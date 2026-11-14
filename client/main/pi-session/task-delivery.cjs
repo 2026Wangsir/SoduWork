@@ -12,7 +12,8 @@ async function capture(handle, outcome) {
   const snapshot = await artifacts.snapshotAsync(handle);
   if (snapshot?.delivery?.presentation === 'summary') return null;
   let items = (snapshot?.delivery?.items || snapshot?.items || []).filter(item =>
-    item?.path && !item.processEvidence && !item.pluginDraft && item.primary !== false);
+    item?.path && !item.processEvidence && item.primary !== false &&
+    (!item.pluginDraft || item.skillPackage && /\.skill$/i.test(item.name || item.relative || item.path)));
   if (!items.length) return null;
   const options = { completedTurn: true, includeEntries: true, snapshot, turnSince: snapshot?.got?.turnSince };
   let captured;

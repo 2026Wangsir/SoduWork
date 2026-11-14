@@ -1,6 +1,7 @@
 """Skill Studio real export/import contract; isolated files only, no model or Hub writes."""
-import base64
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -8,7 +9,17 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
-from app.services import plugin_packages, plugin_drafts, plugin_skill_cache
+
+# Import-time development settings must never create credentials in the checkout.
+for key, value in {
+    "AUTH_SECRET": "skill-studio-isolated-contract-signing-secret",
+    "ADMIN_PASS": "skill-studio-isolated-contract-password",
+    "DATABASE_URL": "sqlite+aiosqlite:///:memory:",
+}.items():
+    if not os.environ.get(key):
+        os.environ[key] = value
+
+from app.services import plugin_packages, runner_skills, skill_packages
 
 ROOT = Path(__file__).resolve().parent.parent
 WRITER = ROOT / "skills/skill-studio/scripts/skill-package.cjs"
@@ -48,26 +59,28 @@ class SkillStudioTests(unittest.TestCase):
                     self.assertIn("$purchase-check", ui)
                     self.assertNotIn("allow_implicit_invocation: false", ui)
 
-    def test_soduwork_zip_import_local_draft_republish_and_runner_materialization(self):
+    def test_soduwork_package_import_and_runner_materialization(self):
         report = self.build()
         row = next(x for x in report["exports"] if x["target"] == "soduwork")
         package = self.output / row["file"]
-        parsed = plugin_packages.parse(package.read_bytes())
-        self.assertFalse(parsed["capabilities"]["hasWorkflow"])
-        self.assertEqual(parsed["manifest"]["key"], "skill-purchase-check")
-        self.assertFalse(parsed["signature"])
-        self.assertEqual(parsed["capabilities"]["bundledSkills"][0]["name"], "purchase-check")
-        restored = plugin_packages.personal_draft(parsed)
-        resources = {x["path"]: base64.b64decode(x["content"]) for x in restored["resources"]}
+        self.assertEqual(package.suffix, ".skill")
+        parsed = skill_packages.parse(package.read_bytes(), package.name)
+        self.assertEqual(parsed["name"], "purchase-check")
+        self.assertEqual(parsed["fileCount"], 4)
         for file in self.source.rglob("*"):
             if file.is_file():
-                self.assertEqual(resources["references/source/" + file.relative_to(self.source).as_posix()], file.read_bytes())
-        # The existing draft publisher must remain able to republish it, not lose resources.
-        republished = plugin_packages.parse(plugin_drafts.build(restored))
-        self.assertEqual(parsed["resources"], republished["resources"])
-        cache = self.root / "cache"
-        with patch.object(plugin_skill_cache, "skill_root", return_value=str(cache)):
-            actual = plugin_packages.materialize_skills(str(package), parsed["checksum"], parsed["capabilities"])
+                self.assertEqual(parsed["files"][file.relative_to(self.source).as_posix()], file.read_bytes())
+        with patch.object(skill_packages, "root", return_value=str(self.root / "skill-store")):
+            installed = skill_packages.install(parsed, "personal", "fixture-owner")
+            self.assertEqual(installed["scope"], "personal")
+            self.assertEqual(skill_packages.active(owner_client_id="fixture-owner"), [installed])
+            self.assertEqual(skill_packages.active(owner_client_id="other-owner"), [])
+            self.assertEqual(skill_packages.install(parsed, "personal", "fixture-owner")["path"], installed["path"])
+            self.assertEqual(len(skill_packages.active(owner_client_id="fixture-owner")), 1)
+            bundle = runner_skills.build([installed])
+        with patch.object(runner_skills, "_data_root", return_value=str(self.root / "runner-cache")):
+            actual = runner_skills.install(bundle, hashlib.sha256(bundle).hexdigest())
+        self.assertEqual(actual[0]["name"], "purchase-check")
         loaded = Path(actual[0]["path"])
         self.assertEqual((loaded / "references/rules.md").read_bytes(), (self.source / "references/rules.md").read_bytes())
         self.assertEqual((loaded / "assets/报价.csv").read_bytes(), (self.source / "assets/报价.csv").read_bytes())
@@ -94,17 +107,25 @@ class SkillStudioTests(unittest.TestCase):
         file.write_text(content, encoding="utf8")
         report = self.build()
         row = next(x for x in report["exports"] if x["target"] == "soduwork")
-        parsed = plugin_packages.parse((self.output / row["file"]).read_bytes())
-        self.assertEqual(parsed["capabilities"]["bundledSkills"][0]["description"],
+        parsed = skill_packages.parse((self.output / row["file"]).read_bytes())
+        self.assertEqual(parsed["description"],
                          "Check purchase inputs. Report missing evidence.")
 
-    def test_soduwork_personal_draft_uses_existing_backend_exporter(self):
-        self.build()
-        raw = json.loads((self.output / "soduwork-plugin-draft.json").read_text(encoding="utf8"))
-        parsed = plugin_packages.parse(plugin_drafts.build(raw))
-        self.assertFalse(parsed["capabilities"]["hasWorkflow"])
-        self.assertEqual(len(parsed["resources"]), 4)
-        self.assertTrue(any(x["name"] == "purchase-check" for x in parsed["capabilities"]["bundledSkills"]))
+    def test_skill_installation_preserves_scripts_without_running_them(self):
+        sentinel = self.root / "must-not-exist"
+        scripts = self.source / "scripts"
+        scripts.mkdir()
+        script = ("from pathlib import Path\nPath(%r).write_text('BAD')\n" % str(sentinel)).encode()
+        (scripts / "business.py").write_bytes(script)
+        report = self.build()
+        row = next(x for x in report["exports"] if x["target"] == "soduwork")
+        parsed = skill_packages.parse((self.output / row["file"]).read_bytes())
+        with patch.object(skill_packages, "root", return_value=str(self.root / "skill-store")):
+            installed = skill_packages.install(parsed, "personal", "fixture-owner")
+        self.assertTrue(parsed["hasScripts"])
+        self.assertEqual((Path(installed["path"]) / "scripts/business.py").read_bytes(), script)
+        self.assertFalse(sentinel.exists())
+        self.assertFalse((self.output / "soduwork-plugin-draft.json").exists())
 
 
     def test_exports_preserve_license_and_provenance_without_bundled_vendor_skills(self):
@@ -119,10 +140,9 @@ class SkillStudioTests(unittest.TestCase):
                 for name, body in documents.items():
                     self.assertEqual(archive.read(row["skillRoot"] + name), body)
                 if row["target"] == "soduwork":
-                    restored = plugin_packages.personal_draft(plugin_packages.parse(package.read_bytes()))
-                    resources = {x["path"]: base64.b64decode(x["content"]) for x in restored["resources"]}
+                    restored = skill_packages.parse(package.read_bytes())
                     for name, body in documents.items():
-                        self.assertEqual(resources["references/source/" + name], body)
+                        self.assertEqual(restored["files"][name], body)
 
 
 if __name__ == "__main__":

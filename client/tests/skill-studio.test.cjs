@@ -46,7 +46,7 @@ test('built-in is usable in the existing conversation catalog, without any enter
   assert.equal(JSON.parse(run.stdout).exports.length, 5);
   assert.equal(fs.existsSync(path.join(f.root, 'personal-plugins.json')), false);
 });
-test('all targets contain real packages and SoduWork draft can install and resolve the same skill', async t => {
+test('all targets contain real packages and SoduWork exports a native skill package', async t => {
   const f = await fixture(t);
   f.write('assets/报价.csv', '物料,数量\n灯具,2\n');
   const report = build(f);
@@ -58,14 +58,16 @@ test('all targets contain real packages and SoduWork draft can install and resol
     assert.ok(row.files.includes(row.skillRoot + 'SKILL.md'));
     assert.ok(row.files.includes(row.skillRoot + 'assets/报价.csv'));
   }
-  const draft = JSON.parse(fs.readFileSync(path.join(f.out, 'soduwork-plugin-draft.json'), 'utf8'));
-  assert.equal(personal.preflight(draft).ok, true);
-  const installed = personal.create(f.app, draft);
-  const detail = personal.get(f.app, installed.plugin.pluginId);
-  const bundle = resources.materialize(detail.localDraft.resources, f.root, detail.key);
-  assert.equal(fs.readFileSync(path.join(bundle.directory, 'references/source/assets/报价.csv'), 'utf8'), '物料,数量\n灯具,2\n');
-  assert.match(personal.resolve(f.app, [installed.plugin.pluginId], { cwd: f.root }).items[0].context, /references\/source\/SKILL.md/);
-  assert.equal(personal.create(f.app, draft).created, false);
+  const native = report.exports.find(row => row.target === 'soduwork');
+  assert.match(native.file, /-soduwork\.skill$/);
+  assert.equal(native.skillRoot, 'purchase-check/');
+  const entries = require('../main/plugin-package-reader.cjs')._readEntries(fs.readFileSync(path.join(f.out, native.file)));
+  for (const [name, bytes] of Object.entries(validate(f.source).files)) {
+    assert.deepEqual(entries.get(native.skillRoot + name), bytes);
+  }
+  assert.equal(entries.has('plugin.json'), false);
+  assert.equal(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')), false);
+  assert.equal(fs.readdirSync(f.out).some(name => name.endsWith('.soduwork-plugin')), false);
 });
 test('adjustment preserves all original materials and reports only actual changes', async t => {
   const f = await fixture(t), original = path.join(f.root, 'original', 'purchase-check');
@@ -95,13 +97,10 @@ test('building is deterministic and never overwrites previous outputs', async t 
   assert.throws(() => build(f), /already exists/);
   assert.throws(() => build({ ...f, out: path.join(f.source, 'output') }), /inside the source/);
 });
-test('package scripts are not executed during validate, export, install or resolve', async t => {
+test('package scripts are not executed during validation or export', async t => {
   const f = await fixture(t), sentinel = path.join(f.root, 'must-not-exist');
   f.write('scripts/business.cjs', 'require("node:fs").writeFileSync(' + JSON.stringify(sentinel) + ',"BAD");');
   build(f);
-  const draft = JSON.parse(fs.readFileSync(path.join(f.out, 'soduwork-plugin-draft.json')));
-  const made = personal.create(f.app, draft);
-  personal.resolve(f.app, [made.plugin.pluginId], { cwd: f.root });
   assert.equal(fs.existsSync(sentinel), false);
 });
 test('Claude invocation policy is preserved and cannot be silently lost in other formats', async t => {
@@ -148,6 +147,13 @@ test('unknown extensions remain portable-only', async t => {
   assert.throws(() => build(f), /Unknown frontmatter/);
   assert.equal(build({ ...f, targets: 'portable' }).exports.length, 1);
 });
+test('SoduWork rejects multiple skill roots before exporting an unimportable archive', async t => {
+  const f = await fixture(t);
+  f.write('assets/example/SKILL.md', '---\nname: example\ndescription: A nested example\n---\n\nCheck the example.\n');
+  assert.throws(() => build(f), /exactly one SKILL.md/);
+  assert.equal(fs.existsSync(f.out), false);
+  assert.equal(build({ ...f, targets: 'portable' }).exports.length, 1);
+});
 test('secrets are rejected without echoing their contents', async t => {
   const f = await fixture(t), secret = 'sk-' + 'abcdefghijklmnopqr';
   f.write('references/bad.txt', secret);
@@ -182,8 +188,7 @@ test('invalid CLI flags, targets and SemVer are actionable failures', async t =>
   assert.throws(() => cli(['validate', '--source', f.source, '--version', '1.0.0']), /only/);
   assert.throws(() => build({ ...f, targets: 'unknown' }), /Unsupported target/);
   for (const v of ['01.0.0', '1.0', '1.0.0-01']) assert.throws(() => build({ ...f, version: v }), /SemVer/);
-  assert.throws(() => build({ ...f, version: '1.0.0-beta.1+build.2' }), /SoduWork currently/);
-  assert.equal(build({ ...f, targets: 'portable', version: '1.0.0-beta.1+build.2' }).version, '1.0.0-beta.1+build.2');
+  assert.equal(build({ ...f, version: '1.0.0-beta.1+build.2' }).version, '1.0.0-beta.1+build.2');
 });
 
 test('missing optional studio resources do not break the existing builder or ordinary plugin resolution', async t => {
@@ -210,28 +215,26 @@ test('duplicate current skill-studio targets are collapsed', async t => {
   const f = await fixture(t), report = build({ ...f, targets: 'soduwork,soduwork' });
   assert.equal(report.exports.length, 1);
   assert.equal(report.exports[0].target, 'soduwork');
-  assert.match(report.exports[0].file, /-soduwork\.soduwork-plugin$/);
-  assert.ok(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')));
-  assert.equal(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')), true);
+  assert.match(report.exports[0].file, /-soduwork\.skill$/);
+  assert.ok(fs.existsSync(path.join(f.out, report.exports[0].file)));
+  assert.equal(fs.existsSync(path.join(f.out, 'soduwork-plugin-draft.json')), false);
 });
 
 
-test('Skill Studio draft and translated-name archive produce one install candidate', async t => {
+test('Skill Studio exports remain skill install candidates after renaming', async t => {
   const f = await fixture(t);
   const report = build(f);
   const candidates = require('../main/pi-session/plugin-draft-candidates');
   const files = fs.readdirSync(f.out).map(name => ({ path: path.join(f.out, name) }));
   const rows = candidates.collect(f.out, { files });
-  const current = rows.filter(row => !row.pluginSuperseded);
-  assert.equal(current.length, 1);
-  assert.equal(current[0].name, 'soduwork-plugin-draft.json');
-  assert.equal(current[0].pluginIdentity, 'key:skill-purchase-check');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].skillPackage, true);
+  assert.equal(rows[0].pluginIdentity, 'skill:purchase-check');
   const archive = path.join(f.out, report.exports.find(row => row.target === 'soduwork').file);
-  const renamed = path.join(f.out, 'arbitrary-export-name.soduwork-plugin');
+  const renamed = path.join(f.out, 'arbitrary-export-name.skill');
   fs.renameSync(archive, renamed);
   const onlyArchive = candidates.collect(f.out, { files: [{ path: renamed }] });
   assert.equal(onlyArchive.length, 1);
-  assert.equal(onlyArchive[0].pluginIdentity, current[0].pluginIdentity);
-  assert.equal(onlyArchive[0].pluginName, current[0].pluginName);
-  assert.equal(onlyArchive[0].pluginVersion, '1.0.0');
+  assert.equal(onlyArchive[0].skillPackage, true);
+  assert.equal(onlyArchive[0].pluginIdentity, rows[0].pluginIdentity);
 });

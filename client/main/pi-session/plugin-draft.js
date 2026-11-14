@@ -94,21 +94,24 @@ function readCandidate(found, app) {
     if (stat.size > MAX_BYTES) return { ok: false, reason: '插件草稿超过 24MB，无法安全读取' };
     const bytes = fs.readFileSync(found.file.path);
     if (bytes.length > MAX_BYTES) return { ok: false, reason: '插件草稿超过 24MB，无法安全读取' };
+    const source = { sessionId: String(found.handle.sessionId || ''),
+      relative: String(found.file.relative || DRAFT_NAME), at: found.at };
+    const skillPackages = require('./skill-package-candidate');
+    if (candidates.SKILL_ARCHIVE.test(found.file.path)) return skillPackages.result(skillPackages.read(bytes, app), source);
     const body = candidates.ARCHIVE.test(found.file.path)
       ? require('../plugin-package-reader.cjs').readPersonalArchive(bytes)
       : candidates.parseJson(bytes.toString('utf8'));
     if (!body || Array.isArray(body) || typeof body !== 'object') {
       return { ok: false, reason: '插件草稿不是有效的 JSON 对象' };
     }
+    const collected = resources.collect(body, found.file.path, found.handle.cwd);
+    const skill = skillPackages.fromLegacy(collected, app, candidates.ARCHIVE.test(found.file.path) ? bytes : undefined);
+    if (skill) return skillPackages.result(skill, source);
     return {
       ok: true,
       body: require('../jiyong-edit-source.cjs').reconcile({app,cwd:found.handle.cwd,file:found.file.path,
-        body:resources.collect(body, found.file.path, found.handle.cwd)}),
-      source: {
-        sessionId: String(found.handle.sessionId || ''),
-        relative: String(found.file.relative || DRAFT_NAME),
-        at: found.at,
-      },
+        body:collected}),
+      source,
     };
   } catch (error) {
     return { ok: false, reason: '读取插件草稿失败：' + String((error && error.message) || error) };

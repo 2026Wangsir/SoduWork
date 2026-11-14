@@ -46,3 +46,16 @@ test('a startup check finishing after its chat card is removed cannot open insta
  finish({ok:true,checks:[{ok:true,label:'首屏通过'}]});await checking;
  assert.equal(f.imports(),0);assert.equal(f.messages.length,0);assert.equal(f.button.disabled,false);
 });
+
+test('a malformed skill requests a skill repair in its original conversation', async () => {
+  const f = fixture();
+  f.card.dataset.skillPackage = 'true';
+  f.window.soduWorkAPI.conversationSession.pluginDraft = async () => ({ ok: false, reason: 'Invalid skill ZIP' });
+  await f.open();
+  await f.card.children[0].children.at(-1).onclick();
+  assert.equal(f.messages[0].options.source, 'skill-repair');
+  assert.match(f.messages[0].text, /SKILL\.md/);
+  assert.match(f.messages[0].text, /\.skill/);
+  assert.doesNotMatch(f.messages[0].text, /即用|validate\.cjs/);
+  f.emit('error');
+});

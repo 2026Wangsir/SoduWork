@@ -160,6 +160,110 @@ class LocalStartupTests(unittest.TestCase):
             self.assertEqual(start.desktop_profile(state), profile)
             self.assertEqual(start.desktop_profile(self.state), self.state / 'desktop-profile')
 
+    def directory_link(self, target: Path, link: Path) -> None:
+        if os.name == 'nt':
+            # Junctions exercise real path resolution without symbolic-link privileges.
+            subprocess.run(['node', '-e',
+                            "require('node:fs').symlinkSync(process.argv[1], process.argv[2], 'junction')",
+                            str(target), str(link)], check=True, capture_output=True)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+
+    def test_macos_custom_desktop_profiles_are_stable_and_keep_hub_data_in_place(self):
+        import json
+        for case, name in enumerate(('SoduWork', 'soduwork')):
+            with self.subTest(installed_name=name):
+                home = Path(self.temp.name) / ('home-' + str(case))
+                app_data = home / 'Library/Application Support'
+                installed = app_data / name
+                states = [installed / 'skill-install-verification', installed / 'another-instance']
+                profiles = []
+                for index, state in enumerate(states):
+                    state.mkdir(parents=True)
+                    marker = state / 'soduwork.db'
+                    marker.write_bytes(b'Existing Hub data must stay in place')
+                    endpoint = 'http://127.0.0.1:' + str(18990 + index)
+                    with patch.object(Path, 'home', return_value=home), patch.object(sys, 'platform', 'darwin'):
+                        profile = start.desktop_profile(state)
+                        self.assertFalse(profile.resolve().is_relative_to(installed.resolve()))
+                        self.assertTrue(profile.resolve().is_relative_to((app_data / 'SoduWork Development').resolve()))
+                        self.assertEqual(start.desktop_profile(state), profile)
+                        self.assertEqual(start.desktop_profile(state / 'unused/..'), profile)
+                        with patch.object(start.subprocess, 'Popen') as popen:
+                            start.launch_desktop(state, state / 'application/client', {}, endpoint, io.BytesIO())
+                        self.assertEqual(Path(popen.call_args.kwargs['env']['SODUWORK_USER_DATA']), profile)
+                    profiles.append(profile)
+                    self.assertEqual(marker.read_bytes(), b'Existing Hub data must stay in place')
+                    self.assertFalse((state / 'desktop-profile').exists())
+                    self.assertEqual(json.loads((profile / 'hub-endpoint.json').read_text()), {'hub': endpoint})
+                    self.assertEqual(json.loads((profile / 'chat-config.json').read_text()),
+                                     {'workDir': str(state / 'workspaces')})
+                self.assertNotEqual(profiles[0], profiles[1])
+                self.assertEqual(json.loads((profiles[0] / 'hub-endpoint.json').read_text()),
+                                 {'hub': 'http://127.0.0.1:18990'})
+
+    def test_macos_profile_path_aliases_preserve_default_compatibility_and_custom_identity(self):
+        home = Path(self.temp.name)
+        app_data = home / 'Library/Application Support'
+        default = app_data / 'SoduWork/source-service'
+        custom = app_data / 'SoduWork/custom-service'
+        default.mkdir(parents=True)
+        custom.mkdir()
+        default_alias, custom_alias = home / 'default-alias', home / 'custom-alias'
+        self.directory_link(default, default_alias)
+        self.directory_link(custom, custom_alias)
+        with patch.object(Path, 'home', return_value=home), patch.object(sys, 'platform', 'darwin'):
+            expected = app_data / 'SoduWork Development/source-service-desktop'
+            self.assertEqual(start.desktop_profile(default), expected)
+            self.assertEqual(start.desktop_profile(default_alias), expected)
+            custom_profile = start.desktop_profile(custom)
+            self.assertNotEqual(custom_profile, expected)
+            self.assertEqual(start.desktop_profile(custom_alias), custom_profile)
+
+    def test_desktop_profile_redirect_does_not_match_sibling_names_or_other_platforms(self):
+        home = Path(self.temp.name)
+        app_data = home / 'Library/Application Support'
+        with patch.object(Path, 'home', return_value=home):
+            with patch.object(sys, 'platform', 'darwin'):
+                for state in (self.state, app_data / 'SoduWork-other/test',
+                              app_data / 'SoduWork Development/test'):
+                    self.assertEqual(start.desktop_profile(state), state / 'desktop-profile')
+            for platform in ('win32', 'linux'):
+                with self.subTest(platform=platform), patch.object(sys, 'platform', platform):
+                    for state in (self.state, app_data / 'SoduWork/source-service',
+                                  app_data / 'SoduWork/custom-service'):
+                        self.assertEqual(start.desktop_profile(state), state / 'desktop-profile')
+
+    def test_macos_desktop_rejects_final_profile_links_before_writing_installed_configuration(self):
+        for location in ('external-profile', 'development-root'):
+            with self.subTest(location=location):
+                home = Path(self.temp.name) / location
+                app_data = home / 'Library/Application Support'
+                installed = app_data / 'SoduWork'
+                installed.mkdir(parents=True)
+                endpoint = installed / 'hub-endpoint.json'
+                endpoint.write_text('installed endpoint must not change', encoding='utf-8')
+                credential = installed / 'device-auth.json'
+                credential.write_text('installed credential fixture', encoding='utf-8')
+                if location == 'external-profile':
+                    state = home / 'external-service'
+                    state.mkdir()
+                    self.directory_link(installed, state / 'desktop-profile')
+                else:
+                    state = installed / 'source-service'
+                    state.mkdir()
+                    self.directory_link(installed, app_data / 'SoduWork Development')
+                before = sorted(str(p.relative_to(home)) for p in home.rglob('*'))
+                with patch.object(Path, 'home', return_value=home), patch.object(sys, 'platform', 'darwin'), \
+                        patch.object(start.subprocess, 'Popen') as popen:
+                    with self.assertRaises(start.StartupError):
+                        start.launch_desktop(state, state / 'application/client', {},
+                                             'http://127.0.0.1:18990', io.BytesIO())
+                    popen.assert_not_called()
+                self.assertEqual(endpoint.read_text(), 'installed endpoint must not change')
+                self.assertEqual(credential.read_text(), 'installed credential fixture')
+                self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob('*')), before)
+
     def test_refuses_existing_unrelated_data_without_changes(self):
         self.state.mkdir()
         private = self.state / ".env"

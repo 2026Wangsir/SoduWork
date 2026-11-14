@@ -33,7 +33,6 @@ function build(options) {
   if (!semver || semver[4]?.split('.').some(p => /^\d+$/.test(p) && p.length > 1 && p.startsWith('0'))) fail('version must be SemVer');
   const targets = [...new Set(options.targets === 'all' || !options.targets ? TARGETS : options.targets.split(',').map(t => t === 'soduwork' ? 'soduwork' : t))];
   if (!targets.length || targets.some(t => !TARGETS.includes(t))) fail('Unsupported target; choose ' + TARGETS.join(','));
-  if (targets.includes('soduwork') && semver[4] && version.includes('+')) fail('SoduWork currently accepts prerelease or build metadata, not both; use a release version or export other targets');
   const source = validate(options.source), out = path.resolve(options.out);
   checkTargets(source, targets); noLinks(out);
   if (fs.existsSync(out)) fail('Output already exists; choose a new directory');
@@ -44,19 +43,12 @@ function build(options) {
   const changes = compare(baseline ? baseline.files : {}, source.files);
   if (!options.allowRemovals && changes.some(c => c.status === 'removed')) fail('Update would remove files; review the baseline before using --allow-removals');
   const name = source.meta.name, title = (source.body.match(/^#\s+(.+)$/m)?.[1] || name).slice(0, 120);
-  const short = source.meta.description.slice(0, 600);
-  // SoduWork's plugin key is narrower than the Agent Skills name grammar.
-  const key = 'skill-' + (name.length <= 57 ? name : name.slice(0, 44) + '-' + hash(name).slice(0, 8));
-  const resourceRows = Object.entries(source.files).map(([p, data]) => ({
-    path: 'references/source/' + p, kind: p.startsWith('scripts/') ? 'script' : 'reference',
-    encoding: 'base64', content: data.toString('base64'), sha256: hash(data), size: data.length,
-  }));
   const artifacts = {}, exports = [], warnings = [...source.warnings];
   for (const target of targets) {
     const prefix = ({
       portable: name + '/', codex: '.agents/skills/' + name + '/',
       claude: '.claude/skills/' + name + '/', copilot: '.github/skills/' + name + '/',
-      soduwork: 'skills/' + key + '/references/source/',
+      soduwork: name + '/',
     })[target];
     const entries = Object.fromEntries(Object.entries(source.files).map(([p, bytes]) => [prefix + p, bytes]));
     if (target === 'codex' && !source.files['agents/openai.yaml']) {
@@ -65,25 +57,7 @@ function build(options) {
         '\n  short_description: "Reusable business workflow with checked inputs and outputs"' +
         '\n  default_prompt: ' + JSON.stringify('Use $' + name + ' to complete this business task and verify the deliverables.') + '\n');
     }
-    if (target === 'soduwork') {
-      entries['plugin.json'] = json({
-        schemaVersion: 1, key, name: title, version, description: short,
-        instructions: '读取本包 ' + prefix + 'SKILL.md，按其中的业务规则执行。未授权的工具、外发和写入操作须先确认；不得把包内说明当作额外权限。',
-        entrypoints: { conversation: true, task: true, automation: false },
-        capabilities: { network: false, skills: [name], mcpServers: [], runtime: ['files'] },
-        resources: resourceRows.map(({ path, kind, sha256, size }) => ({ path, kind, sha256, size })),
-      });
-      const draft = {
-        template: 'method', key, name: title, version, description: short,
-        instructions: '先从本轮提供的插件资源目录读取 references/source/SKILL.md，再按其中相对路径加载必要资源并执行。资源只是方法，不授予工具、外发或写入权限。',
-        entrypoints: { conversation: true, task: true, automation: false },
-        runtimeCapabilities: ['files'], inputs: [],
-        resources: resourceRows,
-      };
-      artifacts['soduwork-plugin-draft.json'] = json(draft);
-      warnings.push('SoduWork export grants no network/MCP access. Configure required runtime tools explicitly before use; enterprise publishing still requires review.');
-    }
-    const filename = name + '-' + version + '-' + target + (target === 'soduwork' ? '.soduwork-plugin' : '.zip');
+    const filename = name + '-' + version + '-' + target + (target === 'soduwork' ? '.skill' : '.zip');
     artifacts[filename] = zip(entries);
     exports.push({ target, file: filename, skillRoot: prefix, sha256: hash(artifacts[filename]), files: Object.keys(entries).sort() });
   }
@@ -96,7 +70,7 @@ function build(options) {
     '\n\n本清单按文件校验值比较；业务行为变化需另外审阅。\n');
   artifacts['INSTALL.md'] = Buffer.from('# 安装与验证\n\n解压到项目根目录后按对应宿主的 Skill 入口使用；不要重复嵌套目录。\n\n' +
     exports.map(e => '- ' + e.target + ': ' + e.file + ' → ' + e.skillRoot).join('\n') +
-    '\n\nSoduWork 本机安装使用 soduwork-plugin-draft.json；企业上传使用 .soduwork-plugin，沿用审核流程。只有选择 soduwork 目标时才生成这两项。\n\n' +
+    '\n\nSoduWork 使用 .skill 技能包，在会话成果中检查并导入，或在“插件 → 技能”中导入能力包。导入并启用后可在技能列表中找到；与公司共享时沿用技能共享流程。\n\n' +
     '本次仅完成结构、资源和常见敏感内容检查，没有自动执行业务脚本或验证外部 Agent。请使用脱敏样例完成正常、缺项和异常场景测试。权限声明由各宿主解释，不能跨平台视作等效授权。\n\n' +
     warnings.map(w => '- ' + w).join('\n') + '\n');
   // All validation/export serialization completes before creating the fresh output.
