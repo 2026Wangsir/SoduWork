@@ -413,8 +413,7 @@ class LocalStartupTests(unittest.TestCase):
                 sentinel = installed / 'device-auth.json'
                 sentinel.write_text('installed-identity', encoding='utf-8')
                 state = installed / 'custom-service'
-                with patch.object(Path, 'home', return_value=home), patch.object(sys, 'platform', 'darwin'), \
-                        patch.object(start.subprocess, 'Popen') as popen:
+                with patch.object(Path, 'home', return_value=home), patch.object(sys, 'platform', 'darwin'):
                     canonical = start.desktop_profile(state)
                     legacy = canonical.parent / 'source-service-desktops' / canonical.name.removeprefix('source-service-desktop-')
                     candidate = canonical if kind.startswith('canonical-') else legacy
@@ -430,10 +429,12 @@ class LocalStartupTests(unittest.TestCase):
                         if kind.endswith('dangling-link'):
                             target.rmdir()
                     before = sorted(str(p.relative_to(home)) for p in home.rglob('*'))
-                    with self.assertRaisesRegex(start.StartupError, 'existing data was not changed'):
-                        start.launch_desktop(state, state / 'application/client', {},
-                                             'http://127.0.0.1:18990', io.BytesIO())
-                    popen.assert_not_called()
+                    # Windows fixture links require a real subprocess; mock only the desktop launch.
+                    with patch.object(start.subprocess, 'Popen') as popen:
+                        with self.assertRaisesRegex(start.StartupError, 'existing data was not changed'):
+                            start.launch_desktop(state, state / 'application/client', {},
+                                                 'http://127.0.0.1:18990', io.BytesIO())
+                        popen.assert_not_called()
                     self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob('*')), before)
                     self.assertEqual(sentinel.read_text(encoding='utf-8'), 'installed-identity')
 
