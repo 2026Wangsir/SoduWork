@@ -141,8 +141,10 @@ async def password_login(body: PasswordLogin,
         email = email_auth.normalize_email(body.email)
         await email_auth.password_budget(session, email, client.id)
         user = await client_access.find_login_user(session, body.email)
-        if user is None or not verify_password(body.password, user.password_hash):
-            raise _invalid_credentials()
+        if user is None:
+            raise client_access.ClientAccessError("未找到该账号，请检查输入是否正确。", code="ACCOUNT_NOT_FOUND", status=401)
+        if not verify_password(body.password, user.password_hash):
+            raise client_access.ClientAccessError("密码不正确，请重新输入。", code="PASSWORD_INCORRECT", status=401)
         return await complete_login(session, client, user, body)
     except client_access.ClientAccessError as exc:
         await session.rollback()
