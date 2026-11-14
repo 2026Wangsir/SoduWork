@@ -217,8 +217,14 @@ async def apply_plugin_rollout(
 ):
     plugin = await _plugin(session, user, plugin_id)
     target_version_id = str(body.get("targetVersionId") or "")
-    binding_ids = list(body.get("bindingIds") or [])
-    expected_versions = dict(body.get("expectedVersions") or {})
+    raw_binding_ids = body.get("bindingIds") or []
+    raw_expected_versions = body.get("expectedVersions") or {}
+    if not isinstance(raw_binding_ids, list):
+        raise HTTPException(status_code=400, detail="bindingIds 必须是数组")
+    if not isinstance(raw_expected_versions, dict):
+        raise HTTPException(status_code=400, detail="expectedVersions 必须是对象")
+    binding_ids = list(raw_binding_ids)
+    expected_versions = dict(raw_expected_versions)
     try:
         result = await plugin_rollout.execute(
             session, plugin, target_version_id,
