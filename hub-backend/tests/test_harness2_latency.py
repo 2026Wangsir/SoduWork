@@ -192,9 +192,8 @@ class Harness2LatencyTests(unittest.TestCase):
                 planning = [body for body in requests if not body.get('tools')]
                 phases = [body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0] for body in planning]
                 self.assertEqual(phases, ['base1', 'inv1.a1', 'inv1.a1', 'dom1.a1', 'inv1', 'dom1', 'c1.a1', 'c1'])
-                self.assertEqual([row['max_tokens'] for row in planning[1:3]], [4096, 8192])
-                self.assertTrue(all(row['max_tokens'] == 8192 for row in planning[2:]
-                                    if '.a1' in row['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]))
+                self.assertEqual([row['max_tokens'] for row in planning[1:3]], [4096, 16384])
+                self.assertTrue(all(row['max_tokens'] == 16384 for row in planning[2:]))
                 self.assertEqual(planning[1]['messages'], planning[2]['messages'])
                 self.assertEqual(len(requests), 9)
                 self.assertEqual(len([row for row in requests if row.get('tools')]), 1)
@@ -208,6 +207,33 @@ class Harness2LatencyTests(unittest.TestCase):
                 self.assertIn('Hello from the verified native executor.', child.stdout)
                 self.assertEqual(exhausted, [])
                 self.assertNotIn(model['key'], child.stdout + child.stderr)
+
+    def test_configured_output_limit_recovers_across_planning_phase_kinds(self):
+        from tests.test_harness2_native_executor import NativeExecutorTests
+        helper = NativeExecutorTests()
+        for first_limited_phase in ('base1', 'inv1.a1'):
+            with self.subTest(first_limited_phase=first_limited_phase), tempfile.TemporaryDirectory() as folder:
+                def respond(body):
+                    if body.get('tools'):
+                        return helper.response('Completed greeting after bounded recovery.')
+                    phase = body['messages'][0]['content'].split('stage=', 1)[1].splitlines()[0]
+                    value = helper.response('{"files":{},"notes":"verified"}' if '.a1' in phase else 'Respond politely.')
+                    needs_headroom = phase != 'base1' or first_limited_phase == 'base1'
+                    if needs_headroom and body['max_tokens'] < (12000 if '.a1' in phase else 3000):
+                        value['choices'][0]['message']['content'] = 'INCOMPLETE_PROPOSAL'
+                        value['choices'][0]['finish_reason'] = 'length'
+                    return value
+                with streaming_endpoint(respond) as (model, requests, _exhausted):
+                    child = self.process_turn(Path(folder), {**model, 'maxOutputTokens': 36384})
+                self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                planning = [body for body in requests if not body.get('tools')]
+                retry_index = 1 if first_limited_phase == 'base1' else 2
+                self.assertEqual(len(planning), 8)
+                self.assertEqual(planning[retry_index - 1]['messages'], planning[retry_index]['messages'])
+                self.assertTrue(all(body['max_tokens'] == 16384 for body in planning[retry_index:]))
+                self.assertEqual(len([body for body in requests if body.get('tools')]), 1)
+                self.assertNotIn('INCOMPLETE_PROPOSAL', json.dumps(requests))
+                self.assertIn('Completed greeting after bounded recovery.', child.stdout)
 
     def test_always_on_reasoning_recovers_within_declared_cap_and_stays_enabled(self):
         from tests.test_harness2_native_executor import NativeExecutorTests
@@ -235,7 +261,7 @@ class Harness2LatencyTests(unittest.TestCase):
     def test_full_turn_rejects_persistent_limit_or_user_cap_without_native_execution(self):
         from tests.test_harness2_native_executor import NativeExecutorTests
         helper = NativeExecutorTests()
-        for limit, expected in [(32768, [4096, 8192]), (1024, [1024])]:
+        for limit, expected in [(32768, [4096, 16384]), (1024, [1024])]:
             with self.subTest(limit=limit), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 def respond(body):

@@ -38,7 +38,7 @@ class RefinementBudget:
         self.started = clock()
         self.calls = 0
         self.retries = 0
-        self._recovered_allowances = {}
+        self._recovered_allowance = 0
         self.reported_tokens = 0
         self._failed = False
         self._lock = threading.RLock()
@@ -82,10 +82,9 @@ class RefinementBudget:
             allowance = 4096 if proposal else 2048
             if model.get("reasoning") is True and not can_disable_reasoning(model):
                 allowance *= 2
-            # Reuse successful recovery headroom for later phases of the same
-            # kind. Otherwise every proposal would hit the same artificial cap
-            # after the turn's only retry has already been consumed.
-            allowance = max(allowance, self._recovered_allowances.get(proposal, 0))
+            # A turn has one retry across all phases. Reuse successful recovery
+            # headroom instead of reverting to the smaller initial phase cap.
+            allowance = max(allowance, self._recovered_allowance)
             bounded_model = {**model, "maxOutputTokens": min(limit, allowance)}
             timeout = min(MAX_REQUEST_SECONDS, self._remaining())
             self.calls += 1
@@ -112,8 +111,9 @@ class RefinementBudget:
                         # Keep the provider's precise first failure after its
                         # usage has been charged, even if no retry budget remains.
                         raise truncated
-                    recovery_limit = min(limit, MAX_RECOVERY_OUTPUT_TOKENS,
-                                         bounded_model["maxOutputTokens"] * 2)
+                    # Give the single retry up to 16K tokens, within the model
+                    # limit, instead of only doubling the small initial cap.
+                    recovery_limit = min(limit, MAX_RECOVERY_OUTPUT_TOKENS)
                     if self.retries or recovery_limit <= bounded_model["maxOutputTokens"]:
                         raise
                     self.retries += 1
@@ -126,7 +126,7 @@ class RefinementBudget:
                 result = complete({**model, "maxOutputTokens": recovery_limit},
                                   messages, usage, timeout=timeout)
                 with self._lock:
-                    self._recovered_allowances[proposal] = recovery_limit
+                    self._recovered_allowance = recovery_limit
             with self._lock:
                 self._remaining()
         except Exception:

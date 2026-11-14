@@ -62,11 +62,14 @@ Smoke checks live in [`smoke/`](smoke/). To run one directly, use its module fro
 
 Harness² completes seven tool-free planning stages before native execution. If a
 complete provider response explicitly reaches its output-token limit, the whole
-turn permits one retry of that same stage with at most twice its initial token
-allowance, capped at 16,384 tokens and the configured model limit. Both attempts
+turn permits one retry of that same stage with up to 16,384 output tokens, capped
+by the configured model output limit, instead of doubling the small initial
+planning allowance. Both attempts
 retain their reported usage and share the existing turn deadline and token budget.
 The client receives a retry progress message. Successful recovery headroom is reused
-for later stages of the same kind within the configured cap, without more retries.
+for all later planning stages within the configured cap, without more retries.
+Increasing the model's maximum output gives recovery more room up to 16,384 tokens;
+it does not increase the seven-stage count, turn deadline, or total token budget.
 Partial plans are discarded; broken
 streams, HTTP failures and native execution are not retried by this recovery path.
 Persistent truncation or a lower configured cap still fails before execution.
