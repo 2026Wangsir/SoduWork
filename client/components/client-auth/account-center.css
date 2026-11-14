@@ -12,6 +12,10 @@
 .ac-auth-form{gap:14px}.ac-auth-form label{color:var(--ink-2);font-size:13px;font-weight:500}
 .ac-auth .ac-auth-form input,.ac-form input{width:100%;min-width:0;height:40px;padding:9px 11px;border:1px solid var(--line-3);border-radius:var(--r-md);box-sizing:border-box;background:var(--bg-0);color:var(--ink);font:400 14px var(--font-ui);outline:none}
 .ac-auth .ac-auth-form input:focus,.ac-form input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.ac-auth .ac-auth-form input[aria-invalid="true"]{border-color:var(--s-danger,#b33847)}
+.ac-auth .ac-auth-form input[aria-invalid="true"]:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--s-danger,#b33847) 14%,transparent)}
+.ac-auth .ac-auth-form .ac-field-error{color:var(--s-danger,#b33847);font-size:13px;font-weight:400;line-height:1.6;overflow-wrap:anywhere}
+.ac-auth .ac-auth-form .ac-field-hint{color:var(--ink-3);font-size:13px;font-weight:400}
 .ac-auth input::placeholder,.ac-form input::placeholder{color:var(--ink-4)}
 .ac-auth input:disabled,.ac-form input:disabled{background:var(--bg-1);color:var(--ink-3)}
 .ac-auth .ac-code-row,.ac-code-row,.ac-password-row{display:flex;align-items:center;gap:8px;min-width:0}

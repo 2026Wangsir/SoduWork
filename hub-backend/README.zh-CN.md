@@ -78,6 +78,20 @@ Harness² 在原生执行前完成七个无工具推演阶段。仅当模型完�
 
 OpenCode 原生和 ACP 执行均保留当前回合的模型停止原因。达到输出 token 上限时，即使已有部分文本且原生进程正常退出，也会标记为未完成；已有进度和会话保留，可人工继续。ACP 适配器使用单次调用的临时插件，只观察原生会话、回合标识及停止原因；缺少完成证据时阻止成功结算，不重试工具或改变权限。执行 `python3 e2e_opencode_turn_outcome.py --binary /path/to/opencode`，可用明确指定的已安装二进制和隔离的本地回环模型服务进行验收。
 
+## OpenCode 安装与网络诊断
+
+受管安装器依次尝试明确配置的镜像、当前连接的 Hub 和官方发行源。macOS 上通过 Python 安装器下载归档时，每次尝试都会按协议合并系统 HTTP/HTTPS 代理与环境变量覆盖值。明确设为空的代理变量会禁用对应协议的系统代理。来自系统的代理同时保留系统绕过规则和 `NO_PROXY`；空 `NO_PROXY` 不会取消系统例外。显式代理覆盖仍采用标准环境绕过行为，当前 Hub 的精确来源（协议、主机、端口）保持直连。TLS 证书校验和固定 SHA-256 校验始终启用。这些下载规则不改变 npm 依赖安装或模型网关的连接策略。
+
+准备 Hub 镜像时，应使用与客户端预期一致的代码版本和固定 OpenCode 版本。不带参数运行 `fetch_opencode_assets.py` 只准备 Windows 资产。若需服务 Apple Silicon 和 Intel Mac，在该 Hub 代码目录的 `hub-backend/` 下运行：
+
+```sh
+python3 fetch_opencode_assets.py darwin-arm64 darwin-x64 darwin-x64-baseline
+```
+
+脚本先验证固定 SHA-256，再将文件发布到 `downloads/opencode/`。部署这些文件后，通过 `GET /api/v1/download/opencode/info` 核对版本、平台和 `filename`，再用精确文件名下载 `/api/v1/download/opencode/{filename}`。`available: true` 仅代表文件存在；还需按固定摘要校验下载内容。Runner 在解压前也会独立校验该摘要。在代码目录准备好文件，不代表远程 Hub 已提供这些文件。
+
+安装失败时，查看本地 Runner 的 `runner.log` 中的结构化网络诊断及失败阶段。元数据请求、部分下载、摘要校验或 `--version` 探测单独成功，都不等于安装完成：下载、完整性校验、解压、可执行文件版本检查、执行依赖准备和激活必须全部成功，之后还要单独验证模型执行。共享诊断时不得包含凭据和原始代理配置；证书问题应修复可信证书配置，不得关闭 TLS 校验。
+
 ## API 概览
 
 - 客户端契约（设备登记 → 管理员激活 → 短期 `Device` 会话；长期设备密钥在 Hub 只存摘要）

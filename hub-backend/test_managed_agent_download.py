@@ -65,6 +65,15 @@ class DownloadNetworkTest(unittest.TestCase):
                                              side_effect=lambda: dict(registry), create=True))
         self.stack.enter_context(patch.object(managed_agent_network, "sys", SimpleNamespace(platform="win32")))
 
+    def macos(self, settings):
+        # Patch discovery only, so the same loopback downloads also run on CI
+        # hosts without the macOS SystemConfiguration helper.
+        self.stack.enter_context(patch.object(urllib.request, "getproxies_macosx_sysconf",
+                                             side_effect=lambda: dict(settings), create=True))
+        self.stack.enter_context(patch.object(urllib.request, "proxy_bypass_macosx_sysconf",
+                                             return_value=False, create=True))
+        self.stack.enter_context(patch.object(managed_agent_network, "sys", SimpleNamespace(platform="darwin")))
+
     def download(self, url, body, name="archive.zip"):
         target = self.directory / name
         notices = []
@@ -84,6 +93,122 @@ class DownloadNetworkTest(unittest.TestCase):
         self.download(origin + "/asset.zip", b"origin", "direct.zip")
         self.assertEqual(direct, ["/asset.zip"])
         self.assertEqual(len(proxied), 1)
+
+    def test_macos_no_proxy_only_keeps_system_proxy_and_explicit_bypass(self):
+        origin, direct = self.server()
+        proxy, proxied = self.server(body=b"proxy")
+        self.macos({"http": proxy})
+        os.environ["NO_PROXY"] = "hub.example.invalid"
+        self.download(origin + "/asset.zip", b"proxy")
+        self.assertEqual(proxied, [origin + "/asset.zip"])
+        self.assertEqual(direct, [])
+        os.environ["no_proxy"] = "127.0.0.1"
+        self.download(origin + "/asset.zip", b"origin", "direct.zip")
+        self.assertEqual(direct, ["/asset.zip"])
+        self.assertEqual(len(proxied), 1)
+
+    def test_macos_environment_overrides_only_its_protocol_and_preserves_empty_values(self):
+        self.macos({"http": "http://system.fixture:80",
+                    "https": "http://system.fixture:443"})
+        os.environ.update(NO_PROXY="hub.example.invalid", HTTP_PROXY="http://upper.fixture:80",
+                          http_proxy="http://lower.fixture:80")
+        self.assertEqual(managed_agent_network._proxies(include_macos_system=True), {
+            "no": "hub.example.invalid", "http": "http://lower.fixture:80",
+            "https": "http://system.fixture:443"})
+        os.environ["http_proxy"] = ""
+        self.assertNotIn("http", managed_agent_network._proxies(include_macos_system=True))
+        self.assertEqual(managed_agent_network._proxies(include_macos_system=True)["https"], "http://system.fixture:443")
+        os.environ["HTTPS_PROXY"] = ""
+        self.assertNotIn("https", managed_agent_network._proxies(include_macos_system=True))
+        os.environ["https_proxy"] = "http://lower.fixture:443"
+        self.assertEqual(managed_agent_network._proxies(include_macos_system=True)["https"], "http://lower.fixture:443")
+        os.environ["no_proxy"] = ""
+        self.assertNotIn("no", managed_agent_network._proxies(include_macos_system=True))
+
+    def test_macos_native_consumers_keep_existing_proxy_discovery(self):
+        self.macos({"https": "http://system.fixture:443"})
+        os.environ["NO_PROXY"] = "hub.example.invalid"
+        with patch.object(urllib.request, "getproxies", return_value={"no": "hub.example.invalid"}) as original:
+            self.assertEqual(managed_agent_network._proxies(), {"no": "hub.example.invalid"})
+        original.assert_called_once_with()
+
+    def test_macos_system_proxy_keeps_system_exceptions_beside_environment_bypass(self):
+        origin, direct = self.server()
+        proxy, proxied = self.server(body=b"proxy")
+        self.macos({"http": proxy})
+        host = urllib.parse.urlsplit(origin).netloc
+        cases = ((True, "unrelated.fixture"), (True, ""), (False, "127.0.0.1"))
+        for index, (system_bypass, no_proxy) in enumerate(cases):
+            with self.subTest(system_bypass=system_bypass, no_proxy=no_proxy):
+                # A different protocol's override must not discard this
+                # system proxy's exceptions or simple-host bypass policy.
+                with (patch.object(os, "environ", {"HTTPS_PROXY": proxy, "NO_PROXY": no_proxy}),
+                      patch.object(urllib.request, "proxy_bypass_macosx_sysconf",
+                                   side_effect=lambda target: system_bypass and target == host)):
+                    self.download(origin + "/asset.zip", b"origin", "system-bypass-%d.zip" % index)
+        self.assertEqual(direct, ["/asset.zip"] * len(cases))
+        self.assertEqual(proxied, [])
+
+    def test_macos_explicit_scheme_proxy_keeps_environment_bypass_semantics(self):
+        origin, direct = self.server()
+        system_proxy, system_requests = self.server(body=b"system proxy")
+        override, proxied = self.server(body=b"override")
+        self.macos({"http": system_proxy})
+        with patch.object(urllib.request, "proxy_bypass_macosx_sysconf", return_value=True) as bypass:
+            with patch.object(os, "environ", {"http_proxy": override, "NO_PROXY": "unrelated.fixture"}):
+                self.download(origin + "/asset.zip", b"override", "explicit-proxy.zip")
+            with patch.object(os, "environ", {"http_proxy": override, "NO_PROXY": "127.0.0.1"}):
+                self.download(origin + "/asset.zip", b"origin", "explicit-bypass.zip")
+            with patch.object(os, "environ", {"http_proxy": "", "NO_PROXY": "unrelated.fixture"}):
+                self.download(origin + "/asset.zip", b"origin", "explicit-empty.zip")
+            bypass.assert_not_called()
+        self.assertEqual(proxied, [origin + "/asset.zip"])
+        self.assertEqual(direct, ["/asset.zip", "/asset.zip"])
+        self.assertEqual(system_requests, [])
+
+    def test_macos_proxy_changes_are_read_again_between_download_attempts(self):
+        origin, direct = self.server()
+        good, received = self.server(body=b"proxy")
+        settings = {}
+        bad, failed = self.server(status=503, on_request=lambda: settings.update(http=good))
+        settings["http"] = bad
+        self.macos(settings)
+        os.environ["NO_PROXY"] = "hub.example.invalid"
+        self.download(origin + "/asset.zip", b"proxy")
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(len(received), 1)
+        self.assertEqual(direct, [])
+
+    def test_macos_hub_is_direct_and_its_redirect_uses_the_system_proxy(self):
+        origin, direct = self.server(body=b"must use proxy")
+        hub, redirected = self.server(status=302, headers={"Location": origin + "/asset.zip"})
+        proxy, proxied = self.server(body=b"proxy")
+        self.macos({"http": proxy})
+        os.environ.update(NO_PROXY="unrelated.fixture", SODUWORK_HUB_HTTP_BASE=hub + "/")
+        self.download(hub + "/redirect", b"proxy")
+        self.assertEqual(redirected, ["/redirect"])
+        self.assertEqual(proxied, [origin + "/asset.zip"])
+        self.assertEqual(direct, [])
+
+    def test_macos_missing_hub_asset_falls_back_through_the_system_proxy(self):
+        hub, first = self.server(status=404)
+        origin, direct = self.server(body=b"must use proxy")
+        proxy, proxied = self.server(body=b"archive")
+        self.macos({"http": proxy})
+        os.environ.update(NO_PROXY="unrelated.fixture", SODUWORK_HUB_HTTP_BASE=hub)
+        with (patch.object(managed_agents, "_release_bases", return_value=[hub, origin]),
+              patch.object(managed_agents, "_root", return_value=self.directory),
+              patch.object(managed_agents, "_cpu_compatibility_issue", return_value=""),
+              patch.object(managed_agents, "platform_key", return_value="darwin-arm64"),
+              patch.object(managed_agents, "OPENCODE_ARTIFACTS", {
+                  "darwin-arm64": ("opencode-darwin-arm64.zip", hashlib.sha256(b"archive").hexdigest())}),
+              patch.object(managed_agents, "binary_version", return_value=""),
+              patch.object(managed_agents, "_extract_binary", side_effect=RuntimeError("fixture stop"))):
+            with self.assertRaisesRegex(RuntimeError, "fixture stop"):
+                managed_agents.install("install", lambda _: None)
+        self.assertEqual(first, ["/opencode-darwin-arm64.zip"])
+        self.assertEqual(proxied, [origin + "/opencode-darwin-arm64.zip"])
+        self.assertEqual(direct, [])
 
     def test_proxy_setting_changes_are_read_again_for_each_attempt(self):
         origin, direct = self.server()
@@ -188,8 +313,12 @@ class DownloadNetworkTest(unittest.TestCase):
         self.assertEqual(direct, [])
 
     def test_authenticated_proxy_redirect_cannot_send_credentials_to_direct_targets(self):
-        for direct_mode in ("hub", "no_proxy"):
-            with self.subTest(direct_mode=direct_mode):
+        scenarios = ((system, helper, mode)
+                     for system, helper in (("win32", "getproxies_registry"),
+                                            ("darwin", "getproxies_macosx_sysconf"))
+                     for mode in ("hub", "no_proxy"))
+        for system, helper, direct_mode in scenarios:
+            with self.subTest(system=system, direct_mode=direct_mode):
                 target_headers, proxy_headers = [], []
                 target, received = self.server(body=b"target", received_headers=target_headers)
                 origin, unused = self.server(body=b"must use proxy")
@@ -199,14 +328,15 @@ class DownloadNetworkTest(unittest.TestCase):
                 proxy_parts = urllib.parse.urlsplit(proxy)
                 credentials = proxy_parts._replace(
                     netloc="fixture-user:fixture-password@" + proxy_parts.netloc).geturl()
-                with (patch.object(urllib.request, "getproxies_registry",
+                with (patch.object(urllib.request, helper,
                                    return_value={"http": credentials}, create=True),
-                      patch.object(managed_agent_network, "sys", SimpleNamespace(platform="win32")),
+                      patch.object(urllib.request, "proxy_bypass_macosx_sysconf", return_value=False, create=True),
+                      patch.object(managed_agent_network, "sys", SimpleNamespace(platform=system)),
                       patch.object(os, "environ", {
                           "NO_PROXY": "127.0.0.1" if direct_mode == "no_proxy" else "unrelated.fixture",
                           "SODUWORK_HUB_HTTP_BASE": target if direct_mode == "hub" else "",
                       })):
-                    self.download(source + "/redirect", b"target", direct_mode + ".zip")
+                    self.download(source + "/redirect", b"target", system + "-" + direct_mode + ".zip")
                 self.assertEqual(proxied, [source + "/redirect"])
                 self.assertEqual(received, ["/asset.zip"])
                 self.assertEqual(unused, [])

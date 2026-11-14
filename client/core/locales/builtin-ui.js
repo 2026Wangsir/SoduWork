@@ -1,6 +1,9 @@
 /* System-authored capability and requirement copy, shared by renderer and main process. */
 (function (global) {
   const rows = {
+    '未找到该账号，请检查输入是否正确。': ['Account not found. Check that you entered it correctly.', 'アカウントが見つかりません。入力内容を確認してください。', '계정을 찾을 수 없습니다. 입력한 계정이 올바른지 확인하세요.'],
+    '密码不正确，请重新输入。': ['Incorrect password. Please try again.', 'パスワードが正しくありません。もう一度入力してください。', '비밀번호가 올바르지 않습니다. 다시 입력하세요.'],
+    '如果你已注册，请确认服务地址是否正确。': ['If you already have an account, check that the server address is correct.', '登録済みの場合は、サーバーのアドレスが正しいか確認してください。', '이미 가입했다면 서버 주소가 올바른지 확인하세요.'],
     '切换成果摘要面板': ['Toggle output summary panel', '成果サマリーパネルを切り替え', '산출물 요약 패널 전환'],
     '关闭成果摘要': ['Close output summary', '成果サマリーを閉じる', '산출물 요약 닫기'],
     '核对成果并选择验收方式': ['Review outputs and choose a review method', '成果を確認して検収方法を選択', '성과를 확인하고 검수 방식 선택'],

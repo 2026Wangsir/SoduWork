@@ -6,9 +6,13 @@ const uiContext = { window: {} };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../components/client-auth/account-ui.js'), 'utf8'), uiContext);
 
 function element(dataset = {}) {
-  const listeners = new Map(), classes = new Set();
+  const listeners = new Map(), classes = new Set(), attributes = new Map();
   const node = { dataset, value: '', textContent: '', className: '', hidden: false, disabled: false, checked: false,
-    focus() {}, setAttribute() {}, appendChild() {}, addEventListener(name, callback) { listeners.set(name, callback); },
+    focus() { node.focused = true; },
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+    getAttribute(name) { return attributes.get(name) ?? null; },
+    removeAttribute(name) { attributes.delete(name); },
+    appendChild() {}, addEventListener(name, callback) { listeners.set(name, callback); },
     fire(name) { return listeners.get(name)?.({ preventDefault() {} }); },
     classList: { add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
       contains(name) { return classes.has(name) || node.className.split(' ').includes(name); } } };
@@ -128,6 +132,94 @@ test('login starts with a generic account field while registration uses email ve
   assert.equal(f.gate.querySelector('.ac-account-label').textContent, '邮箱');
   assert.equal(f.mounted.accountInput.type, 'email');
   assert.equal(f.gate.querySelector('[data-send-code]').disabled, false);
+});
+
+for (const account of ['person@example.test', 'legacy.employee']) {
+  for (const [code, field, message] of [
+    ['ACCOUNT_NOT_FOUND', 'account', '未找到该账号，请检查输入是否正确。'],
+    ['PASSWORD_INCORRECT', 'password', '密码不正确，请重新输入。'],
+  ]) test(`${account} sign-in shows ${code} at the matching field`, async () => {
+    const f = view();
+    f.mounted.setPolicy({ mailReady: true, allowSelfRegistration: true });
+    f.mounted.accountInput.value = account;
+    f.mounted.passwordInput.value = 'Wrong-password';
+    f.mounted.passwordInput.type = 'text';
+    const fail = async () => ({ ok: false, status: 401, code, error: 'Unlocalized server message' });
+    f.api.clientAccountAction = fail; f.api.clientLogin = fail;
+    await f.mounted.form.fire('submit');
+    const input = field === 'account' ? f.mounted.accountInput : f.mounted.passwordInput;
+    const error = f.gate.querySelector(field === 'account' ? '#acAccountError' : '#acPasswordError');
+    assert.equal(error.hidden, false);
+    assert.equal(error.textContent, message);
+    assert.equal(input.getAttribute('aria-invalid'), 'true');
+    assert.equal(input.focused, true);
+    assert.equal(input.disabled, false);
+    assert.equal(f.mounted.accountInput.value, account);
+    assert.equal(f.mounted.passwordInput.type, 'password');
+    assert.equal(f.gate.querySelector('[data-password-toggle]').textContent, '显示');
+    assert.equal(f.gate.querySelector('[data-password-toggle]').getAttribute('aria-pressed'), 'false');
+    assert.equal(f.gate.querySelector('.soduwork-auth-status').textContent, '');
+    assert.equal(f.gate.querySelector('#acAccountErrorHint').hidden, field !== 'account');
+    assert.equal(f.gate.querySelector('.ac-auth-links').hidden, false);
+    const translatedErrors = field === 'account' ? [
+      'Account not found. Check that you entered it correctly.',
+      'アカウントが見つかりません。入力内容を確認してください。',
+      '계정을 찾을 수 없습니다. 입력한 계정이 올바른지 확인하세요.',
+    ] : [
+      'Incorrect password. Please try again.',
+      'パスワードが正しくありません。もう一度入力してください。',
+      '비밀번호가 올바르지 않습니다. 다시 입력하세요.',
+    ];
+    const translatedHints = [
+      'If you already have an account, check that the server address is correct.',
+      '登録済みの場合は、サーバーのアドレスが正しいか確認してください。',
+      '이미 가입했다면 서버 주소가 올바른지 확인하세요.',
+    ];
+    for (const [index, locale] of ['en-US', 'ja-JP', 'ko-KR'].entries()) {
+      f.setLocale(locale);
+      assert.equal(error.textContent, translatedErrors[index]);
+      if (field === 'account') assert.equal(f.gate.querySelector('#acAccountErrorHint').textContent, translatedHints[index]);
+      assert.equal(f.mounted.accountInput.value, account);
+    }
+    f.setLocale('zh-CN');
+    assert.equal(error.textContent, message);
+    if (field === 'account') assert.equal(f.gate.querySelector('#acAccountErrorHint').textContent, '如果你已注册，请确认服务地址是否正确。');
+    // Editing a password does not dismiss an error about the account itself.
+    f.mounted.passwordInput.fire('input');
+    assert.equal(error.hidden, field === 'password');
+    input.fire('input');
+    assert.equal(error.hidden, true);
+    assert.equal(input.getAttribute('aria-invalid'), null);
+    assert.equal(f.gate.querySelector('#acAccountErrorHint').hidden, true);
+    f.mounted.dispose();
+  });
+}
+
+test('missing account stays on sign-in and respects closed registration', async () => {
+  const f = view(); f.mounted.setPolicy({ mailReady: true, allowSelfRegistration: false });
+  f.mounted.accountInput.value = 'missing@example.test'; f.mounted.passwordInput.value = 'Wrong-password';
+  f.api.clientAccountAction = async () => ({ ok: false, code: 'ACCOUNT_NOT_FOUND' });
+  await f.mounted.form.fire('submit');
+  assert.equal(f.gate.querySelector('#acAccountError').hidden, false);
+  assert.equal(f.gate.querySelector('[data-auth-mode="register"]').hidden, true);
+  assert.equal(f.gate.querySelector('[data-auth-password]').hidden, false);
+  f.mode('emailCode');
+  assert.equal(f.gate.querySelector('#acAccountError').hidden, true);
+  assert.equal(f.mounted.accountInput.getAttribute('aria-invalid'), null);
+});
+
+test('non-credential sign-in failures keep form feedback and do not mark either field', async () => {
+  for (const code of ['AUTH_RATE_LIMITED', 'ACCOUNT_DISABLED', 'ACCOUNT_OR_PASSWORD_INVALID', 'HUB_UNREACHABLE']) {
+    const f = view(); f.mounted.setPolicy({ mailReady: true });
+    f.mounted.accountInput.value = 'person@example.test'; f.mounted.passwordInput.value = 'Wrong-password';
+    f.api.clientAccountAction = async () => ({ ok: false, code, error: 'Existing failure message' });
+    await f.mounted.form.fire('submit');
+    assert.equal(f.gate.querySelector('.soduwork-auth-status').textContent, 'Existing failure message');
+    assert.equal(f.mounted.accountInput.getAttribute('aria-invalid'), null);
+    assert.equal(f.mounted.passwordInput.getAttribute('aria-invalid'), null);
+    assert.equal(f.gate.querySelector('#acAccountError').hidden, true);
+    assert.equal(f.gate.querySelector('#acPasswordError').hidden, true);
+  }
 });
 
 test('old Hub policy explains version incompatibility and retains a password path', async () => {
