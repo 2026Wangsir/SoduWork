@@ -366,6 +366,37 @@ class EmailAuthTests(unittest.IsolatedAsyncioTestCase):
         async with SessionLocal() as session:
             self.assertEqual(await session.scalar(select(func.count()).select_from(models.User)), 1)
 
+    async def test_password_login_distinguishes_missing_account_and_wrong_password(self):
+        async with SessionLocal() as session:
+            session.add(models.User(id="password-feedback-user", username="known.employee",
+                email="known@example.test", email_normalized="known@example.test",
+                email_verified_at=email_auth.now(), password_hash=hash_password("Original-password-123"),
+                is_active=True))
+            await session.commit()
+        for route, key, known, missing in (
+            ("/login/password", "email", "known@example.test", "missing@example.test"),
+            ("/login", "account", "known.employee", "missing.employee"),
+        ):
+            for account, code, message in (
+                (missing, "ACCOUNT_NOT_FOUND", "未找到该账号，请检查输入是否正确。"),
+                (known, "PASSWORD_INCORRECT", "密码不正确，请重新输入。"),
+            ):
+                with self.subTest(route=route, code=code):
+                    response = await self.post(route, {key: account, "password": "Wrong-password"})
+                    self.assertEqual(response.status_code, 401, response.text)
+                    self.assertEqual(response.json()["detail"], {"code": code, "message": message})
+                    async with SessionLocal() as session:
+                        budget = await session.get(EmailRateLimit,
+                            email_auth._digest("account-rate\0password-account:" + account))
+                        self.assertEqual(budget.count, 1)
+        async with SessionLocal() as session:
+            self.assertEqual(await session.scalar(select(func.count()).select_from(models.User)), 1)
+            device = await session.get(models.Client, "email-device-1")
+            self.assertEqual(device.auth_state, "pending")
+            self.assertIsNone(device.user_ref)
+            user = await session.get(models.User, "password-feedback-user")
+            self.assertTrue(verify_password("Original-password-123", user.password_hash))
+
     async def test_email_shaped_legacy_username_password_login_without_otp_takeover(self):
         address = "legacy.person@example.test"
         async with SessionLocal() as session:
