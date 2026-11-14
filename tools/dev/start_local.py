@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from contextlib import closing, contextmanager
 import getpass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -322,13 +323,24 @@ def serve(state: Path, config: dict, args) -> None:
 
 
 def desktop_profile(state: Path) -> Path:
-    if sys.platform == 'darwin':
-        app_data = Path.home() / 'Library/Application Support'
-        if state.resolve() == (app_data / 'SoduWork/source-service').resolve():
-            # The existing Hub state is below the installed Electron profile.
-            # Keep its database in place and put the source desktop outside it.
-            return app_data / 'SoduWork Development/source-service-desktop'
-    return state / 'desktop-profile'
+    profile = state / 'desktop-profile'
+    if sys.platform != 'darwin':
+        return profile
+    app_data = Path.home() / 'Library/Application Support'
+    reserved = [(app_data / name).resolve() for name in ('SoduWork', 'soduwork')]
+    resolved_state = state.resolve()
+    if resolved_state == (app_data / 'SoduWork/source-service').resolve():
+        # Preserve the existing default profile and its enrolled credentials.
+        profile = app_data / 'SoduWork Development/source-service-desktop'
+    elif any(resolved_state.is_relative_to(installed) for installed in reserved):
+        # Keep Hub data and dependency caches in place; isolate each custom desktop.
+        namespace = hashlib.sha256(os.fsencode(resolved_state)).hexdigest()[:20]
+        profile = app_data / 'SoduWork Development' / ('source-service-desktop-' + namespace)
+    if any(profile.resolve().is_relative_to(installed) for installed in reserved):
+        # Check before the launcher creates directories or writes endpoint configuration.
+        raise StartupError('The source desktop profile resolves inside installed SoduWork data. '
+                           'Choose an independent directory without links into the installed profile.')
+    return profile
 
 
 def launch_desktop(state: Path, client: Path, env: dict, base: str, output) -> subprocess.Popen:
