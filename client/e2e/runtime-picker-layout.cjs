@@ -43,6 +43,13 @@ if (typeof electron === 'string') {
         footerVisible:p.querySelector('[data-runtime-more]')?.checkVisibility()??p.querySelector('#nchatRuntimeMore')?.checkVisibility()};
     })()`);
   }
+  async function iconSizes(popup) {
+    return js(`(()=>Object.fromEntries([...document.querySelectorAll(${JSON.stringify(popup)}+' [data-runtime]')].map(row=>{
+      const id=row.dataset.runtime, mark=row.querySelector('[data-agent-brand] img, [data-agent-brand] svg, [data-agent-brand] .agent-monogram');
+      const rect=mark?.getBoundingClientRect();
+      return [id, rect ? {width:rect.width,height:rect.height} : null];
+    })))()`);
+  }
   function check(g, count) {
     assert.ok(g.width <= 320.5 && g.height <= 400.5, JSON.stringify(g));
     assert.ok(g.left >= 15 && g.right <= g.vw - 15 && g.top >= 15 && g.bottom <= g.vh - 15, JSON.stringify(g));
@@ -79,9 +86,13 @@ if (typeof electron === 'string') {
         await until(`document.querySelector(${JSON.stringify(popup)})?.querySelectorAll('[data-runtime]').length===7`);
         await settle();
         const g=await geometry(trigger,popup);check(g,7);
+        const sizes=await iconSizes(popup);
+        assert.deepEqual(sizes.pi,{width:16,height:16},JSON.stringify(sizes));
+        assert.deepEqual(sizes.codex,{width:22,height:22},JSON.stringify(sizes));
+        assert.deepEqual(sizes['codex-harness'],{width:22,height:22},JSON.stringify(sizes));
         assert.ok(g.versions.every(v=>v.visible && v.text.startsWith('v')),JSON.stringify(g.versions));
         assert.equal(g.footerVisible,true);
-        report.checks.push({surface,width,height,zoom,...g});
+        report.checks.push({surface,width,height,zoom,...g,iconSizes:sizes});
         if(width===1600)await capture(surface+'-seven-runtimes');
         await click(trigger);
       }
