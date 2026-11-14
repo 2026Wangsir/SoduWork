@@ -186,13 +186,22 @@
       quotaNotice.append(message, close);
       document.body.appendChild(quotaNotice);
     }
-    var explanation = currentQuota && Number(currentQuota.limit) === 0
-      ? '管理员已暂停你的 AI 使用额度。请联系管理员调整后重试；已有对话仍可查看。'
-      : '本月 AI Token 额度已用完。请联系管理员调整后重试，或下月恢复后继续；已有对话仍可查看。';
     quotaNotice.dataset.noticeKey = noticeKey;
-    quotaNotice.querySelector('span').textContent = translate(explanation) + ' ' + quotaCopy(currentQuota);
+    renderQuotaNotice();
+  }
+
+  function renderQuotaNotice() {
+    if (!quotaNotice) return;
+    var noticeKey = JSON.stringify([currentUser?.id, currentQuota?.period, currentQuota?.mode, currentQuota?.limit]);
+    if (currentQuota?.exceeded !== true) dismissedQuotaNotice = '';
+    quotaNotice.hidden = currentQuota?.exceeded !== true || dismissedQuotaNotice === noticeKey;
+    if (quotaNotice.hidden) return;
+    quotaNotice.dataset.noticeKey = noticeKey;
+    var copy = global.SoduWorkQuota?.copy(currentQuota, translate, global.SoduWorkI18n?.getLocale?.() || 'zh-CN');
+    quotaNotice.querySelector('span').textContent = copy
+      ? [copy.title, copy.guidance, copy.used, copy.timing].filter(Boolean).join(' ')
+      : quotaCopy(currentQuota);
     quotaNotice.querySelector('button').setAttribute('aria-label', translate('关闭'));
-    quotaNotice.hidden = false;
   }
 
   /* Mask the password field after submission or clearing so plaintext is not left visible. */
@@ -390,6 +399,7 @@
     currentUser = user || currentUser;
     currentQuota = quota || currentQuota;
     global.SoduWorkQuotaNotice?.update({ user: currentUser, quota: currentQuota });
+    renderQuotaNotice();
     if (!currentUser) return;
     var name = text(currentUser.displayName).trim() || text(currentUser.username).trim() || '我的';
     ['#wsMine b', '#wsMine .ws-mine-name', '[data-soduwork-user-name]'].forEach(function (selector) {
@@ -402,12 +412,7 @@
   }
 
   function clearQuotaNotice() {
-    if (currentQuota && typeof currentQuota === 'object') {
-      currentQuota = { ...currentQuota, exceeded: false, reason: '', model: null, requestedModel: null };
-    }
-    global.SoduWorkQuotaNotice?.update({ user: currentUser, quota: currentQuota });
-    mountSettings();
-    return currentQuota;
+    return global.SoduWorkQuotaNotice?.refresh();
   }
 
   function renderAccountAvatar(node, name) {
@@ -890,6 +895,7 @@
     global.addEventListener('soduwork-profile-updated', function (event) { updateIdentity(event.detail, null); });
     global.addEventListener('soduwork-locale-change', function () {
       mountSettings();
+      renderQuotaNotice();
     });
     global.addEventListener('soduwork-device-auth', function (event) {
       var detail = event.detail || {};

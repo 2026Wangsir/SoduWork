@@ -5,10 +5,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function node() {
+function node(tag = '') {
   const attributes = new Map();
   const value = {
     children: [],
+    tag,
     dataset: {},
     hidden: false,
     isConnected: false,
@@ -22,15 +23,17 @@ function node() {
     },
     getAttribute(name) { return attributes.get(name) || null; },
     append(...children) { this.children.push(...children); },
+    appendChild(child) { this.children.push(child); },
     before(child) { this.parentElement?.children?.push(child); child.isConnected = true; },
-    addEventListener() {},
+    listeners: {},
+    addEventListener(name, handler) { this.listeners[name] = handler; },
     querySelector(selector) {
       const matches = child => {
         if (selector.startsWith('[data-')) {
           const key = selector.slice(6, -1).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
           return Object.hasOwn(child.dataset || {}, key);
         }
-        return false;
+        return child.tag === selector;
       };
       const visit = children => {
         for (const child of children || []) {
@@ -49,12 +52,13 @@ function node() {
 
 function fixture() {
   const calls = [];
-  const document = { createElement: () => node() };
+  const events = {};
+  const document = { createElement: tag => node(tag) };
   const ctx = {
     window: null,
     console,
     document,
-    addEventListener() {},
+    addEventListener(name, handler) { events[name] = handler; },
     SoduWorkI18n: { translateText: value => value, getLocale: () => 'zh-CN' },
     SoduWorkQuota: {
       detail: value => ({ code: 'TOKEN_QUOTA_EXCEEDED', quota: value.quota }),
@@ -73,7 +77,7 @@ function fixture() {
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../components/client-auth/quota-notice.js'), 'utf8'), ctx);
-  return { ctx, calls };
+  return { ctx, calls, events };
 }
 
 test('the built-in trial label follows the locale while custom plan names remain unchanged', () => {
@@ -95,17 +99,17 @@ test('the built-in trial label follows the locale while custom plan names remain
   assert.equal(card.querySelector('[data-quota-detail]').textContent.split('\n')[0], '试用');
 });
 
-test('额度恢复通知立即隐藏额度卡，并在后台确认最新额度', async () => {
+test('a recovery hint keeps the quota card until the Hub confirms the new allowance', async () => {
   const f = fixture(), composer = { parentElement: {}, previousElementSibling: null, before(card) { card.isConnected = true; this.card = card; } };
   const card = f.ctx.SoduWorkQuotaNotice.mount(composer);
-  f.ctx.SoduWorkQuotaNotice.show({ quota: { enabled: true, exceeded: true, used: 100, limit: 100 } });
+  f.ctx.SoduWorkQuotaNotice.update({ quota: { enabled: true, exceeded: true, used: 100, limit: 100 } });
   assert.equal(card.hidden, false);
   const refresh = f.ctx.SoduWorkQuotaNotice.markRestored();
-  assert.equal(card.hidden, true, '恢复通知处理后不应继续遮挡对话输入区');
-  assert.deepEqual(f.calls, ['clear']);
+  assert.equal(card.hidden, false, 'a notification cannot assert that quota has recovered');
+  assert.deepEqual(f.calls, []);
   await refresh;
   assert.equal(card.hidden, true);
-  assert.deepEqual(f.calls, ['clear', ['identity', false]]);
+  assert.deepEqual(f.calls, [['identity', false]]);
 });
 
 test('没有额度卡时恢复通知不会触发无意义的刷新请求', () => {
@@ -172,4 +176,131 @@ test('an allowed personal conversation does not hide another mounted composer qu
   notice.modelChanged();
   assert.equal(a.hidden, false, 'leaving a conversation clears its allowance presentation');
   assert.equal(b.hidden, false);
+});
+
+test('a delayed trial denial cannot replace a confirmed custom allowance', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const card = notice.mount({ parentElement: {}, before(card) { card.isConnected = true; } });
+  const quota = { enabled: true, exceeded: false, limit: 1000000000, used: 12855, planId: 'custom' };
+  notice.update({ quota });
+  let resolve;
+  f.ctx.SoduWorkAPI.clientAuthMe = () => new Promise(done => { resolve = done; });
+  assert.equal(notice.show({ quota: { enabled: true, exceeded: true, limit: 10, used: 12855, planId: 'trial' } }), true);
+  assert.equal(card.hidden, true);
+  const pending = notice.refresh();
+  await Promise.resolve();
+  resolve({ user: { id: 'user-a' }, quota });
+  await pending;
+  assert.equal(card.hidden, true);
+  assert.deepEqual(f.calls, [['identity', false]]);
+});
+
+test('failed recovery verification retains the warning and can be retried', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const card = notice.mount({ parentElement: {}, before(card) { card.isConnected = true; } });
+  notice.update({ quota: { enabled: true, exceeded: true, limit: 10, used: 12855 } });
+  let calls = 0;
+  f.ctx.SoduWorkAPI.clientAuthMe = async () => { calls++; throw Error('offline'); };
+  await notice.markRestored();
+  assert.equal(card.hidden, false);
+  assert.equal(notice.isBlocked(), true);
+  assert.equal(card.dataset.feedback, 'failed');
+  await notice.refreshIfBlocked();
+  assert.equal(calls, 2);
+  assert.deepEqual(f.calls, []);
+});
+
+test('a denial followed by a failed refresh shows uncertainty without restoring an old trial', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const card = notice.mount({ parentElement: {}, before(card) { card.isConnected = true; } });
+  const quota = { enabled: true, exceeded: false, limit: 1000000000, planId: 'custom' };
+  notice.update({ quota });
+  f.ctx.SoduWorkAPI.clientAuthMe = async () => { throw Error('offline'); };
+  notice.show({ quota: { enabled: true, exceeded: true, limit: 10, planId: 'trial' } });
+  // Repainting the same known identity must not acknowledge the unresolved denial.
+  notice.update({ quota });
+  await notice.refresh();
+  assert.equal(card.hidden, false);
+  assert.equal(card.querySelector('[data-quota-title]').textContent, '请刷新查看当前额度');
+  assert.equal(card.querySelector('[data-quota-detail]').textContent, '');
+  assert.equal(notice.isBlocked(), true);
+  f.ctx.SoduWorkAPI.clientAuthMe = async () => ({ quota: { ...quota } });
+  await notice.refreshIfBlocked();
+  assert.equal(card.hidden, true); assert.equal(notice.isBlocked(), false);
+});
+
+test('model allowance belongs to each composer and survives aggregate refreshes', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const composer = () => ({ parentElement: {}, before(card) { card.isConnected = true; } });
+  const one = composer(), two = composer(), a = notice.mount(one), b = notice.mount(two);
+  const quota = { enabled: true, exceeded: false, limit: 1000, used: 100, models: [
+    { provider: 'p', model: 'a', limit: 100, used: 100, remaining: 0, exceeded: true },
+    { provider: 'p', model: 'b', limit: 500, used: 0, remaining: 500, exceeded: false },
+  ] };
+  notice.update({ quota });
+  notice.modelChanged({ id: 'b', quotaProvider: 'p' }, 'pi', two);
+  notice.modelChanged({ id: 'a', quotaProvider: 'p' }, 'pi', one);
+  assert.equal(a.hidden, false); assert.equal(b.hidden, true);
+  notice.modelChanged({ id: 'b', quotaProvider: 'p' }, 'pi', two);
+  assert.equal(a.hidden, false); assert.equal(b.hidden, true);
+  assert.equal(notice.isBlocked(), true);
+  f.ctx.SoduWorkAPI.clientAuthMe = async () => ({ quota });
+  await notice.refresh();
+  assert.equal(a.hidden, false); assert.equal(b.hidden, true);
+  f.ctx.SoduWorkAPI.clientAuthMe = async () => ({ quota: { ...quota, models: quota.models.map(row => ({ ...row, exceeded: false })) } });
+  await notice.refresh();
+  assert.equal(a.hidden, true); assert.equal(b.hidden, true);
+  assert.equal(notice.isBlocked(), false);
+});
+
+test('a quota domain hint refreshes the current account without asserting restoration', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const card = notice.mount({ parentElement: {}, before(card) { card.isConnected = true; } });
+  notice.update({ quota: { enabled: true, exceeded: true, limit: 10 } });
+  f.events['soduwork-domain-changed']({ detail: { domain: 'quota' } });
+  assert.equal(card.hidden, false);
+  await notice.refresh();
+  assert.equal(card.hidden, true);
+  assert.deepEqual(f.calls, [['identity', false]]);
+});
+
+test('an old account refresh cannot repaint a new account card', async () => {
+  const f = fixture(), notice = f.ctx.SoduWorkQuotaNotice;
+  const card = notice.mount({ parentElement: {}, before(card) { card.isConnected = true; } });
+  notice.update({ quota: { enabled: true, exceeded: true, limit: 10 } });
+  let resolve;
+  f.ctx.SoduWorkAPI.clientAuthMe = () => new Promise(done => { resolve = done; });
+  const pending = notice.refresh(); await Promise.resolve();
+  f.ctx.SoduWorkAPI.clientAuthSnapshot = () => ({ user: { id: 'user-b' } });
+  f.events['soduwork-data-scope-changed']();
+  resolve({ user: { id: 'user-a' }, quota: { enabled: true, exceeded: true, limit: 10 } });
+  await pending;
+  assert.equal(card.hidden, true); assert.deepEqual(f.calls, []);
+});
+
+test('the legacy floating warning follows authoritative quota and keeps dismissal', () => {
+  const f = fixture(), document = f.ctx.document;
+  Object.assign(document, { readyState: 'loading', addEventListener() {},
+    documentElement: { classList: { add() {} } }, body: node(),
+    getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] });
+  f.ctx.SoduWorkQuota = require('../core/token-quota');
+  // Expose the private event handler without running the unrelated login form.
+  const source = fs.readFileSync(path.join(__dirname, '../components/client-auth/client-auth.js'), 'utf8')
+    .replace('global.ClientAuth = {', 'global.ClientAuth = { handleAuthEvent: show,');
+  vm.runInContext(source, f.ctx);
+  const auth = f.ctx.ClientAuth, user = { id: 'user-a' };
+  const quota = { enabled: true, exceeded: true, period: 'trial', limit: 10, used: 12855 };
+  auth.handleAuthEvent({ authenticated: true, state: 'quota', user, quota });
+  const toast = document.body.children[0];
+  assert.equal(toast.hidden, false);
+  assert.doesNotMatch(toast.querySelector('span').textContent, /下月恢复/);
+  toast.querySelector('button').listeners.click();
+  auth.updateIdentity(user, quota);
+  assert.equal(toast.hidden, true, 'ordinary identity updates retain dismissal');
+  auth.updateIdentity(user, { ...quota, limit: 1000000000, exceeded: false });
+  assert.equal(toast.hidden, true);
+  auth.handleAuthEvent({ authenticated: true, state: 'quota', user, quota });
+  assert.equal(toast.hidden, false);
+  auth.updateIdentity(user, { ...quota, limit: 1000000000, exceeded: false });
+  assert.equal(toast.hidden, true, 'the visible warning clears on verified recovery');
 });

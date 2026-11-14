@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..deps import require_perm
 from ..models import AppSetting, AuditLog, ModelDef, ModelProvider, User
-from ..services import client_access, quota_plans as qp, quota_usage, rbac
+from ..services import client_access, client_domain_events, quota_plans as qp, quota_usage, rbac
 from ..services.model_runtime import lock_setting
 
 router = APIRouter(prefix="/api/v1/admin/quotas", tags=["quotas"])
@@ -91,6 +91,12 @@ async def save_configuration(body: CatalogUpdate,
            {**plans, "defaultLimit": default_limit})
     await session.commit()
     client_access._policy_cache = None
+    previous = {plan["id"]: plan for plan in old["plans"]}
+    changed = {plan["id"] for plan in plans["plans"]
+               if plan["id"] != "trial" and plan != previous.get(plan["id"])}
+    await client_domain_events.quota_changed(session, plan_ids=changed, default_changed=(
+        policy["tokenLimitEnabled"] != old_policy["tokenLimitEnabled"] or
+        policy["monthlyTokenLimit"] != old_policy["monthlyTokenLimit"]))
     return {**plans, "defaultLimit": default_limit}
 
 
@@ -194,4 +200,5 @@ async def assign(uid: str, body: Assignment, user: User = Depends(require_perm("
     row.value = json.dumps(grant, ensure_ascii=False)
     record(session, user, "quota.member.assign", uid, old, grant)
     await session.commit()
+    await client_domain_events.quota_changed(session, uid)
     return {"ok": True, "revision": grant["revision"]}

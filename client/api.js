@@ -407,11 +407,11 @@
   function requireClientAuth(reason, payload) {
     var data = payload || {};
     if (data.code === 'TOKEN_QUOTA_EXCEEDED' && _clientUser && hasValidDeviceSession()) {
-      if (data.quota) _clientQuota = data.quota;
-      window.dispatchEvent(new CustomEvent('soduwork-client-auth-required', { detail: {
-        state: 'quota', authenticated: true, code: data.code, error: String(data.message || data.error || ''),
-        user: _clientUser, quota: _clientQuota
-      } }));
+      // A delayed request error may describe quota that an administrator has
+      // already restored. Keep the authenticated snapshot until a fresh read.
+      if (window.SoduWorkQuotaNotice?.show?.(data) !== true) {
+        void refreshNativeQuota({ hub: base(), clientId: device() });
+      }
       return;
     }
     invalidateRegistrations();
@@ -439,31 +439,17 @@
     }
   }
 
-  var _quotaRefreshFlight = null;
+  var _clientAuthMeFlight = null;
   function refreshNativeQuota(detail) {
     if (detail?.hub && detail.hub !== base() || detail?.clientId && detail.clientId !== device()) return;
     if (!_clientUser || !hasValidDeviceSession()) return;
     // Usage acknowledgements and admission failures may arrive after an admin
     // restores quota. They are refresh hints, never newer account truth.
-    var epoch = _registrationEpoch, hub = base();
-    if (_quotaRefreshFlight?.epoch === epoch && _quotaRefreshFlight.hub === hub) {
-      _quotaRefreshFlight.pending = true;
-      return _quotaRefreshFlight.promise;
-    }
-    var flight = { epoch: epoch, hub: hub, pending: false, promise: null };
-    _quotaRefreshFlight = flight;
-    flight.promise = (async function () {
-      do {
-        flight.pending = false;
-        await SoduWorkAPI.clientAuthMe();
-      } while (flight.pending && epoch === _registrationEpoch && hub === base());
-    })().catch(function () { /* Keep the last confirmed quota when offline. */ })
-      .finally(function () { if (_quotaRefreshFlight === flight) _quotaRefreshFlight = null; });
-    return flight.promise;
+    return SoduWorkAPI.clientAuthMe().catch(function () { /* Keep the last confirmed quota when offline. */ });
   }
   window.soduWorkAPI?.onDeviceAuthQuotaExceeded?.(refreshNativeQuota);
   window.soduWorkAPI?.onDeviceAuthQuotaChanged?.(function (detail) {
-    if (_clientQuota?.exceeded) return refreshNativeQuota(detail);
+    if (_clientQuota?.exceeded || window.SoduWorkQuotaNotice?.isBlocked?.()) return refreshNativeQuota(detail);
   });
 
   async function syncRunnerConfig(workRootNow, registration) {
@@ -2873,10 +2859,25 @@
 
     async clientAuthMe() {
       var epoch = _registrationEpoch, hub = base();
-      var result = await jfetch('/client-auth/me');
-      if (epoch !== _registrationEpoch || hub !== base()) throw staleTaskScope();
-      rememberSession({ user: result && result.user, quota: result && result.quota });
-      return result;
+      if (_clientAuthMeFlight?.epoch === epoch && _clientAuthMeFlight.hub === hub) {
+        _clientAuthMeFlight.pending = true;
+        return _clientAuthMeFlight.promise;
+      }
+      var flight = { epoch: epoch, hub: hub, pending: false, promise: null };
+      _clientAuthMeFlight = flight;
+      flight.promise = (async function () {
+        var result;
+        do {
+          flight.pending = false;
+          result = await jfetch('/client-auth/me');
+          if (epoch !== _registrationEpoch || hub !== base()) throw staleTaskScope();
+          // An overlapping refresh can follow an administrator changing quota.
+          // Read again before publishing or returning a potentially older result.
+        } while (flight.pending);
+        rememberSession({ user: result && result.user, quota: result && result.quota });
+        return result;
+      })().finally(function () { if (_clientAuthMeFlight === flight) _clientAuthMeFlight = null; });
+      return flight.promise;
     },
 
     /* After a password change, all account sessions are revoked; the caller must sign out immediately. */

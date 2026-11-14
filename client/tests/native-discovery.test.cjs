@@ -196,3 +196,22 @@ test('extended reconnect and lost capability acknowledgement trigger reconciliat
   assert.equal(wakes, afterLoss + 2, 'disconnect and authenticated reconnect both repair gaps');
   next.close();
 });
+
+test('quota changes use an authenticated v2 subscription and obsolete connections cannot deliver them', async () => {
+  const time = clock(), discovery = createDiscovery(time), id = identity();
+  const frames = [], wakes = [];
+  discovery.register('quota', value => wakes.push(value));
+  const socket = {readyState: 1, send: value => frames.push(JSON.parse(value))};
+  const connection = discovery.attach(socket, id, async () => id);
+  const hint = {type: 'native-discovery', topic: 'quota'};
+  connection.message(hint); await flush(); assert.equal(wakes.length, 0);
+  connection.message({type: 'ready'}); await flush();
+  assert.deepEqual(frames, [{t: 'native-discovery', protocol: 2, topics: ['quota']}]);
+  connection.message({type: 'native-discovery-ready', protocol: 2, topics: ['quota']}); await flush();
+  assert.equal(discovery.confirmed(id, 'quota'), true);
+  connection.message(hint); await flush(); assert.equal(wakes.at(-1), hint);
+  const replacement = discovery.attach(socket, identity('bob'), async () => identity('bob'));
+  const before = wakes.length;
+  connection.message(hint); await flush(); assert.equal(wakes.length, before);
+  replacement.close();
+});

@@ -12,7 +12,9 @@ async function fixture(bridge = {}, values = new Map([['soduwork_work_hub_url', 
       deviceAuthBootstrap: async () => ({ok: true, stored: true, authState: 'active', user: {id: 'alice'},
         clientId: 'desktop', session: 'fixture', expiresIn: 1800}), configureRunner: async () => ({ok: true}), ...bridge},
     fetch: async (url, options) => { requests.push({url, options}); return {ok: true, status: 200,
-      text: async () => JSON.stringify({id: 'project-one', name: 'Saved', revision: 1})}; },
+      text: async () => JSON.stringify(url.endsWith('/client-auth/me')
+        ? {user: {id: 'alice'}, quota: {enabled: true, exceeded: false, limit: 1000, used: 10}}
+        : {id: 'project-one', name: 'Saved', revision: 1})}; },
   };
   context.window = context; vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../api.js'), 'utf8'), context);
@@ -89,14 +91,17 @@ test('host HTTP failures preserve the renderer error metadata and reachability s
     error.message === 'Busy' && error.retryable === true && error.phase === 'read' && error.attemptId === 'fixture');
   assert.equal(f.api.online, true);
 });
-test('quota errors keep their structured authorization behavior and 401 does not force logout', async () => {
+test('cached quota errors retain their details but refresh account truth, while 401 does not force logout', async () => {
   let result = {ok: false, status: 403, online: true,
     body: {detail: {code: 'TOKEN_QUOTA_EXCEEDED', message: 'Quota exceeded', quota: {exceeded: true}}}};
   const f = await fixture({clientDomainRead: async () => result});
   await assert.rejects(f.api.myModels(), error => error.code === 'TOKEN_QUOTA_EXCEEDED' && error.payload.quota.exceeded);
   assert.equal(f.api.clientAuthSnapshot().user.id, 'alice');
   assert.equal(f.api.clientAuthSnapshot().state, 'active');
-  assert.equal(f.api.clientAuthSnapshot().quota.exceeded, true);
+  await new Promise(setImmediate);
+  assert.equal(f.api.clientAuthSnapshot().quota.exceeded, false);
+  assert.equal(f.api.clientAuthSnapshot().quota.limit, 1000);
+  assert.equal(f.requests.filter(row => row.url.endsWith('/client-auth/me')).length, 1);
   result = {ok: false, status: 401, online: true, body: {detail: {code: 'SESSION_EXPIRED'}}};
   await assert.rejects(f.api.myModels(), error => error.status === 401 && error.code === 'SESSION_EXPIRED');
   assert.equal(f.api.clientAuthSnapshot().state, 'active'); assert.equal(f.api.clientAuthSnapshot().user.id, 'alice');
@@ -156,4 +161,20 @@ test('notification reconciliation revalidates company access within the shared-c
     assert.deepEqual(visible.map(row => row.serverMessageId), ['coworker-history']);
     assert.equal(visible[0].text, 'Keep coworker history');
   }
+});
+
+test('quota domain wake-ups preserve renderer account boundaries and carry no quota snapshot', async () => {
+  let changed;
+  const f = await fixture({onClientDomainChanged: callback => { changed = callback; }});
+  const events = [];
+  f.context.dispatchEvent = event => events.push(event);
+  const scope = {hub: f.api.hubConfig().hub, clientId: 'desktop', userId: 'alice'};
+  for (const other of [{...scope, userId: 'bob'}, {...scope, clientId: 'other-device'},
+    {...scope, hub: 'https://other-hub.invalid'}]) changed({domain: 'quota', scope: other});
+  assert.equal(events.length, 0);
+  changed({domain: 'quota', scope, quota: {exceeded: false, limit: 999999}});
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'soduwork-domain-changed');
+  assert.deepEqual(Object.keys(events[0].detail), ['domain']);
+  assert.equal(events[0].detail.domain, 'quota');
 });

@@ -492,20 +492,14 @@ const Store={
     }
     if(ev.type==='config.patch'){this._applyConfigPatch(ev.patch);return;}
     if(ev.type==='notice'){
-      // An administrator may restore the account allowance through a system
-      // notification while this conversation is still open. Clear the stale
-      // card immediately and reconcile the authoritative quota in background.
+      // Notifications can prompt a refresh, but their text never grants quota.
       try {
-        const body = [ev.text, ev.bodyText, ev.message, ev.title].filter(Boolean).join(' ');
         const userId = String(window.SoduWorkAPI?.clientAuthSnapshot?.().user?.id || '');
         const recipientId = String(ev.recipientId || '');
         // A private notice for another member must never change this account's
         // composer state. System notices without a recipient remain eligible.
-        if (!recipientId || !userId || recipientId === userId) {
-          const restored = /(?:额度|配额|quota|allowance).*(?:恢复|已恢复|restor(?:e|ed|ation)|renew|replenish)|(?:恢复|restor(?:e|ed|ation)|renew|replenish).*(?:额度|配额|quota|allowance)/i.test(body);
-          const notice = window.SoduWorkQuotaNotice;
-          let refresh = restored ? notice?.markRestored?.() : notice?.refreshIfBlocked?.();
-          if (restored && refresh === false) refresh = notice?.refreshIfBlocked?.();
+        if (userId && (!recipientId || recipientId === userId)) {
+          const refresh = window.SoduWorkQuotaNotice?.refreshIfBlocked?.();
           if (refresh && typeof refresh.catch === 'function') refresh.catch(() => {});
         }
       } catch (_) {}

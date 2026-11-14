@@ -703,11 +703,14 @@ test('当前收件人的私信与正常系统通知仍然提醒', async () => {
   assert.equal(f.alerts.length, 2);
 });
 
-test('额度恢复系统通知触发当前对话额度状态静默刷新', () => {
+test('quota wording in a notice only requests verification, never asserts recovery', () => {
   const f = fixture(), refreshes = [];
-  f.ctx.SoduWorkQuotaNotice = { markRestored: () => { refreshes.push('restored'); } };
+  f.ctx.SoduWorkQuotaNotice = { markRestored: () => assert.fail('notice text cannot grant quota'),
+    refreshIfBlocked: () => { refreshes.push('refresh'); } };
   f.event({ type: 'notice', text: '额度已恢复，可继续使用 AI' });
-  assert.deepEqual(refreshes, ['restored']);
+  f.event({ type: 'notice', text: '额度尚未恢复' });
+  f.event({ type: 'notice', kind: 'mate_message', senderId: 'user-b', recipientId: 'user-a', text: 'When will my quota be restored?' });
+  assert.deepEqual(refreshes, ['refresh', 'refresh', 'refresh']);
 });
 
 test('其他账号的额度通知不影响当前对话额度卡', () => {
