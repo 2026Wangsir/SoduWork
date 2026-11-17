@@ -333,7 +333,7 @@ test('task handoff only shows approved, runnable methods and current-device agen
   assert.match(picker, /默认不用插件，可选择内置或已安装的插件/);
   assert.doesNotMatch(picker, /暂无可选插件，可以直接交给 Agent 执行/);
   assert.match(picker, /const ready = _fwpReady\(plugin, _fwdOptions\)/);
-  assert.match(picker, /_fwdPickerOption\(plugin\.bindingId, label, selectedId, !ready\)/);
+  assert.match(picker, /_fwdPickerOption\(plugin\.bindingId, _fwdLocalizedLabel\(parts\), selectedId, !ready, parts\)/);
   assert.match(options, /TaskPluginInput\.start\(tid/);
   assert.match(picker, /agentReason/);
   assert.match(css, /\.fwp-direct-use/);

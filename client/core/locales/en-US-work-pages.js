@@ -3,6 +3,8 @@
     '需求内容': 'Issue content',
     '执行设置': 'Execution settings',
     '选择插件': 'Select a plugin',
+    '暂不可用': 'Temporarily unavailable',
+    '未就绪': 'Not ready',
     '不用插件 · 直接执行': 'No plugin · Run directly',
     '默认不用插件，可选择内置或已安装的插件': 'Run without a plugin by default, or select a built-in or installed plugin.',
     '暂未取得安装信息，仅显示内置插件': 'Installation information is unavailable. Only built-in plugins are shown.',

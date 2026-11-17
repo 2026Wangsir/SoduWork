@@ -297,10 +297,22 @@ function _fwdPickedSummary(title, description, icon, badge = '') {
     esc(description) + '</small></span>' + (badge ? '<em>' + esc(badge) + '</em>' : '') + '</div>';
 }
 
-function _fwdPickerOption(value, label, selected, disabled = false) {
+function _fwdPickerOption(value, label, selected, disabled = false, parts = null) {
   return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +
+    (parts ? ' data-user-content data-fwd-label="' + esc(JSON.stringify(parts)) + '"' : '') +
     (disabled ? ' disabled' : '') + '>' + esc(label) + '</option>';
 }
+
+function _fwdLocalizedLabel(parts) {
+  return parts.map(part => part.ui ? window.SoduWorkI18n?.translateText?.(part.text) || part.text : part.text).join(' · ');
+}
+// Only app-owned portions of compound options change with the interface locale.
+// Repaint text in place so dispatch locks, selection and open menus stay intact.
+window.addEventListener?.('soduwork-locale-change', () => {
+  document.querySelectorAll('#fwdPluginSelect option[data-fwd-label],#fwdAgentSelect option[data-fwd-label]').forEach(option => {
+    option.textContent = _fwdLocalizedLabel(JSON.parse(option.dataset.fwdLabel));
+  });
+});
 
 function _fwdAgentPickerState(flow) {
   if (flow && !_fwpUsesRuntime(flow)) return {fixed:true, rows:[], value:''};
@@ -346,17 +358,21 @@ function _fwdRenderAIPickers(tid, box) {
   const missingMethod = !_fwdNoPlugin && !flow;
   const agentState = _fwdAgentPickerState(flow);
   const translate = value => window.SoduWorkI18n?.translateText?.(value) || value;
-  const pluginOptions = (missingMethod ? _fwdPickerOption('__unselected__', translate('请重新选择工作方式'), '__unselected__', true) : '') +
-    _fwdPickerOption('', translate('不用插件 · 直接执行'), missingMethod ? null : selectedId) + plugins.map(plugin => {
+  const pluginOptions = (missingMethod ? _fwdPickerOption('__unselected__', translate('请重新选择工作方式'), '__unselected__', true,
+    [{text:'请重新选择工作方式',ui:true}]) : '') +
+    _fwdPickerOption('', translate('不用插件 · 直接执行'), missingMethod ? null : selectedId, false,
+      [{text:'不用插件 · 直接执行',ui:true}]) + plugins.map(plugin => {
       const ready = _fwpReady(plugin, _fwdOptions);
-      const label = ready ? plugin.name : plugin.name + ' · ' + translate('暂不可用');
-      return _fwdPickerOption(plugin.bindingId, label, selectedId, !ready);
+      const parts = [{text:plugin.name}, ...ready ? [] : [{text:'暂不可用',ui:true}]];
+      return _fwdPickerOption(plugin.bindingId, _fwdLocalizedLabel(parts), selectedId, !ready, parts);
     }).join('');
   const placeholder = agentState.fixed ? '插件已指定 Agent' : agentState.stale ? '请重新选择 Agent' : '请选择可用 Agent';
   const agentOptions = (agentState.fixed || agentState.stale || agentState.value == null
-    ? _fwdPickerOption('__unselected__', translate(placeholder), '__unselected__', true) : '') + agentState.rows.map(row =>
-    _fwdPickerOption(row.value, [row.label, translate(row.locationLabel), row.available === false ? translate('未就绪') : ''].filter(Boolean).join(' · '),
-      agentState.stale ? null : agentState.value, row.available === false)).join('');
+    ? _fwdPickerOption('__unselected__', translate(placeholder), '__unselected__', true, [{text:placeholder,ui:true}]) : '') + agentState.rows.map(row => {
+      const parts = [{text:row.label}, {text:row.locationLabel,ui:true},
+        ...row.available === false ? [{text:'未就绪',ui:true}] : []].filter(part => part.text);
+      return _fwdPickerOption(row.value, _fwdLocalizedLabel(parts), agentState.stale ? null : agentState.value, row.available === false, parts);
+    }).join('');
   window.ForwardSelect?.destroy(box);
   box.innerHTML = '<section class="fwd-method-picker"><label class="fwd-picker-field"><span>选择插件</span>' +
     '<select id="fwdPluginSelect" aria-label="选择插件" aria-describedby="fwdPluginHint">' +
