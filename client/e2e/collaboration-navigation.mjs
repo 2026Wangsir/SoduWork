@@ -40,12 +40,10 @@ try {
   await p.call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   const expected = [
     { key: 'history', text: '需求池' },
-    { key: 'aidesk', text: 'AI 团队' },
   ];
   assert.deepEqual((await navigation()).find(group => group.label === '协作').entries, expected);
   for (const [key, title, selector] of [
     ['history', '需求池', '#hbTitleText'],
-    ['aidesk', 'AI 团队', '#aiDeskPanel .dk-title'],
   ]) {
     await click('.ws-nav-item[data-view="' + key + '"]');
     await p.waitFor(({ key, title, selector }) => {
@@ -59,7 +57,7 @@ try {
   }
   await click('[data-rail-menu="more"]');
   assert.equal(await p.run(() => document.querySelectorAll(
-    '#wsRailMoreMenu [data-rail-view="briefs"], #wsRailMoreMenu [data-rail-view="team"]'
+    '#wsRailMoreMenu [data-rail-view="briefs"], #wsRailMoreMenu [data-rail-view="team"], #wsRailMoreMenu [data-rail-view="aidesk"]'
   ).length), 0);
   await click('[data-rail-menu="more"]');
   await click('#wsMine');
@@ -68,8 +66,8 @@ try {
   assert.ok((await navigation()).every(group => group.entries.length > 0));
   await screenshot('mine');
   await click('#wsBack');
-  await p.waitFor(() => document.querySelector('#workspaceShell')?.dataset.view === 'aidesk', null, 10000);
-  report.checks.push('Team and Briefs menus hidden; no empty groups; return home restores AI team');
+  await p.waitFor(() => document.querySelector('#workspaceShell')?.dataset.view === 'history', null, 10000);
+  report.checks.push('AI Team, Team and Briefs menus hidden; return home restores the requirement board');
   await p.call('Page.reload', { ignoreCache: true });
   await p.waitFor(() => window.SoduWorkAPI?.online && document.querySelector('#wsNav [data-view="history"]'), null, 30000);
   assert.deepEqual((await navigation()).find(group => group.label === '协作').entries, expected);

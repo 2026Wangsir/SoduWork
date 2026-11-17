@@ -121,7 +121,7 @@ test('the home rail starts a new conversation and utility pages reclaim the side
   assert.match(source, /const CONVERSATION_KEYS = new Set\(\['create', 'pichat'\]\)/);
   assert.match(source, /const RAIL_MORE_ITEMS = \[/);
   assert.match(source, /\['create', '[^']+', 'home'\]/);
-  assert.match(source, /const RAIL_MORE_ITEMS = \[[\s\S]*?\['aidesk', 'AI [^']+', 'aidesk'\]/);
+  assert.match(source, /const RAIL_MORE_ITEMS = \[[\s\S]*?\['memory', '记忆', 'memory'\]/);
   assert.match(source, /data-rail-menu="more"/);
   assert.doesNotMatch(source, /data-rail-menu="collaboration"/);
   assert.match(source, /function syncWorkspaceLayout\(key\)/);

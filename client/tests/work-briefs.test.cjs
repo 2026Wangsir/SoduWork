@@ -6,19 +6,19 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('work briefs stay registered while team and briefs menus are temporarily hidden', () => {
+test('work briefs stay registered while team, AI Team and briefs menus are temporarily hidden', () => {
   const shell = read('components', 'workspace', 'workspace-shell.js');
   const boot = read('desk-boot.js');
   const html = read('desk.html');
   const specs = read('main', 'window-specs.js');
   const bridge = read('core', 'win-bridge.js');
   assert.match(shell, /briefs: \['简报'/);
-  assert.match(shell, /\['协作', \['history', 'aidesk'\], 'collaboration'\]/);
+  assert.match(shell, /\['协作', \['history'\], 'collaboration'\]/);
   assert.doesNotMatch(shell, /\['我的工作', \['briefs', 'memory', 'team'\]\]/);
   assert.match(shell, /const RAIL_MORE_ITEMS = \[/);
   const navigation = [...shell.matchAll(/const (?:HOME_GROUPS|SETTINGS_GROUPS|RAIL_ITEMS|RAIL_MORE_ITEMS) = \[([\s\S]*?)\n  \];/g)];
   assert.equal(navigation.length, 4);
-  for (const [, entries] of navigation) assert.doesNotMatch(entries, /'(?:briefs|team)'/);
+  for (const [, entries] of navigation) assert.doesNotMatch(entries, /'(?:briefs|team|aidesk)'/);
   assert.match(shell, /\['memory', '记忆', 'memory'\]/);
   assert.doesNotMatch(shell, /'approvals', 'history', 'team', 'aidesk', 'briefs'/);
   assert.match(boot, /briefs: 'briefPanel'/);

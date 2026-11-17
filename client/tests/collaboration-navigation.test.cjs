@@ -10,7 +10,10 @@ test('collaboration entries are ordered, unique and use the same page and window
   const home = vm.runInNewContext(shell.match(/const HOME_GROUPS = (\[[\s\S]*?\n  \]);/)[1]);
   const settings = vm.runInNewContext(shell.match(/const SETTINGS_GROUPS = (\[[\s\S]*?\n  \]);/)[1]);
   assert.equal(JSON.stringify(home.find(group => group[0] === '协作')[1]),
-    JSON.stringify(['history', 'aidesk']));
+    JSON.stringify(['history']));
+  const more = vm.runInNewContext(shell.match(/const RAIL_MORE_ITEMS = (\[[\s\S]*?\n  \]);/)[1]);
+  assert.equal(more.some(([key]) => key === 'aidesk'), false);
+  assert.equal(more.some(([key]) => key === 'memory'), true);
   assert.equal(home.flatMap(group => group[1]).filter(key => key === 'briefs').length, 0);
   for (const key of ['briefs', 'team', 'memory']) {
     assert.equal(settings.flatMap(group => group[1]).filter(item => item === key).length, 0);

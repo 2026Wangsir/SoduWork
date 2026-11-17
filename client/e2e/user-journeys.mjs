@@ -74,7 +74,7 @@ async function navigate(view, timeoutMs = 3000) {
       return true;
     });
     if (returned) {
-      await main.waitFor(() => document.querySelector('.ws-nav-item[data-view="aidesk"], .ws-nav-item[data-view="create"]'), null, timeoutMs);
+      await main.waitFor(() => document.querySelector('.ws-nav-item[data-view="create"]'), null, timeoutMs);
       clicked = await main.run((key) => {
         const button = document.querySelector('.ws-nav-item[data-view="' + key + '"]');
         if (!button) return false;
@@ -300,7 +300,7 @@ async function run() {
         errorVisible: visible(errorBox) && !!errorBox.textContent.trim(),
       };
     });
-    const expected = ['新对话', '自动化', '插件', '资料库', '通知', '需求池', 'AI 团队'];
+    const expected = ['新对话', '自动化', '插件', '资料库', '通知', '需求池'];
     assert(state.title.startsWith('SoduWork'), '窗口品牌不正确', state);
     assert(state.blankHidden && state.shellVisible, '主界面仍停在加载底板', state);
     assert(state.hub.includes('已连接'), '用户看不到明确的服务连接状态', state);
@@ -721,7 +721,7 @@ async function run() {
   });
 
   await journey('UJ-06', 'AI 办公区展示真实执行入口和状态', async () => {
-    await navigate('aidesk');
+    await main.run(() => WorkspaceHost.open('aidesk', {}));
     const office = await main.waitFor(() => {
       const panel = document.querySelector('#aiDeskPanel');
       if (!panel || !panel.classList.contains('show')) return false;

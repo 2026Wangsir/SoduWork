@@ -374,7 +374,7 @@ test('主框架侧栏与白色工作区保持轻微层级差', () => {
   assert.match(shellCss, /\.ws-recent\{[^}]*background:var\(--ws-side\)/s);
 });
 
-test('主菜单按产品入口扁平排序，AI 团队收进更多', () => {
+test('主菜单按产品入口扁平排序，更多保留记忆', () => {
   const shell = fs.readFileSync(
     path.join(__dirname, '../components/workspace/workspace-shell.js'), 'utf8');
   const shellCss = fs.readFileSync(
@@ -388,7 +388,7 @@ test('主菜单按产品入口扁平排序，AI 团队收进更多', () => {
     assert.ok(index > previous, key + ' should follow the requested order');
     previous = index;
   }
-  assert.match(shell, /const RAIL_MORE_ITEMS = \[[\s\S]*?\['aidesk', 'AI 团队', 'aidesk'\]/);
+  assert.match(shell, /const RAIL_MORE_ITEMS = \[[\s\S]*?\['memory', '记忆', 'memory'\]/);
   assert.doesNotMatch(shell, /const RAIL_COLLAB_ITEMS = \[/);
   assert.doesNotMatch(shell, /ws-rail-separator/);
   assert.match(shell, /const CONVERSATION_KEYS = new Set\(\['create', 'pichat'\]\)/);

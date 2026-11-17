@@ -131,7 +131,7 @@
   /* Main navigation lists frequent actions in priority order. */
   const HOME_GROUPS = [
     ['', ['schedules', 'skills', 'library', 'notices']],
-    ['协作', ['history', 'aidesk'], 'collaboration'],
+    ['协作', ['history'], 'collaboration'],
   ];
   /* Account navigation groups personal work, security and preferences. */
   const SETTINGS_GROUPS = [
@@ -159,7 +159,6 @@
   ];
   /* Team and briefs stay registered while their menu entries are temporarily hidden. */
   const RAIL_MORE_ITEMS = [
-    ['aidesk', 'AI 团队', 'aidesk'],
     ['memory', '记忆', 'memory'],
   ];
   const RAIL_MORE_KEYS = new Set(RAIL_MORE_ITEMS.map(([key]) => key));
