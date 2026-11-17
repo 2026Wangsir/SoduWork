@@ -168,7 +168,7 @@
     const dock = document.getElementById('edgeDock');
     if (!dock) return;
     /* Visibility follows the persisted preference; no temporary override is applied. */
-    if (cfg.dockVisible === false || cfg.tasksOn === false) {
+    if (cfg.dockVisible !== true || cfg.tasksOn === false) {
       // Explicit hiding ends the current gesture and clears pending frames, document listeners, and overlay drag mode.
       if (dragActive) onPointerUp();
       dock.classList.remove('show');

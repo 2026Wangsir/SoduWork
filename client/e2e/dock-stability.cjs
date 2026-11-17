@@ -88,6 +88,15 @@ app.whenReady().then(async () => {
     void 0;
   `);
 
+  await check('A missing dock preference hides the rail and explicit opt-in restores it', async item => {
+    item.evidence = await js(`(() => {
+      delete cfg.dockVisible; _syncSidebar();
+      const hidden = !dock.checkVisibility();
+      cfg.dockVisible = true; _syncSidebar();
+      return {hidden, visible: dock.checkVisibility(), retained: allButtonsPreserved()};
+    })()`);
+    assert.deepEqual(item.evidence, {hidden: true, visible: true, retained: true});
+  });
   await check('Four entry buttons and grip render once; repeated notification refresh retains every node', async item => {
     item.evidence = await js(`(async()=>{for(let i=0;i<100;i++)updateNoticeBadge();await pause(25);return{children:dock.children.length,actions:buttons.map(button=>button.dataset.act),allButtonsPreserved:allButtonsPreserved(),removals,additions};})()`);
     assert.equal(item.evidence.children, 5);

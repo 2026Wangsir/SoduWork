@@ -96,7 +96,7 @@ function syncDeskFlagChks() {
   [['dockVisibleChk', 'dockVisible'], ['petVisibleChk', 'petVisible'],
    ['trayVisibleChk', 'trayVisible']].forEach(([id, key]) => {
     const el = document.getElementById(id);
-    if (el) el.checked = cfg[key] !== false;
+    if (el) el.checked = key === 'dockVisible' ? cfg[key] === true : cfg[key] !== false;
   });
   const note = document.getElementById('trayOffNote');
   if (note) note.style.display = cfg.trayVisible !== false ? 'none' : '';
@@ -302,12 +302,12 @@ function _bindSettingsEvents() {
       cfg.petVisible = pv.checked; saveCfg();
       applyPetVisible();
       petSay && petSay(pv.checked ? '我回来啦~' :
-        (cfg.dockVisible === false ? '藏起来了，从托盘图标能把我叫回来' : '藏起来了，竖条还在'));
+        (cfg.dockVisible === true ? '藏起来了，竖条还在' : '藏起来了，从托盘图标能把我叫回来'));
     });
   }
   const dv = document.getElementById('dockVisibleChk');
   if (dv) {
-    dv.checked = cfg.dockVisible !== false;
+    dv.checked = cfg.dockVisible === true;
     dv.addEventListener('change', () => {
       cfg.dockVisible = dv.checked; saveCfg();
       applyDockVisible();
